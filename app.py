@@ -1,19 +1,8 @@
 import streamlit as st
 import pandas as pd
-import os
-from logic_programador import pantalla_programador
 
+# Configuracion de pagina
 st.set_page_config(page_title="MovilGo", layout="wide", page_icon="🚌")
-
-from logic_programador import pantalla_programador, pantalla_gestion_grupos
-
-st.sidebar.title("Menú MovilGo")
-opcion = st.sidebar.selectbox("Seleccione:", ["Programador", "Gestión de Grupos"])
-
-if opcion == "Programador":
-    pantalla_programador()
-elif opcion == "Gestión de Grupos":
-    pantalla_gestion_grupos()
 
 # --- LÓGICA DE SESIÓN ---
 if 'autenticado' not in st.session_state:
@@ -35,21 +24,18 @@ def login():
 if not st.session_state['autenticado']:
     login()
 else:
+    # IMPORTACIÓN DENTRO DEL CUERPO PARA EVITAR ERRORES DE CARGA INICIAL
+    import logic_programador as lp
+
     st.sidebar.title("MovilGo v1.1")
-    # Añadimos "Gestión de Grupos" como módulo independiente
-    opcion = st.sidebar.radio("Menú Principal", ["Inicio", "Empleados", "Gestión de Grupos", "Programador"])
+    opcion = st.sidebar.radio("Menú Principal", ["Inicio", "Gestión de Grupos", "Programador"])
 
     if opcion == "Inicio":
         st.title("Bienvenido al Sistema MovilGo")
+        st.info("Seleccione un módulo en el menú de la izquierda para comenzar.")
     
-    elif opcion == "Empleados":
-        # (Lógica de empleados que ya tienes)
-        pass
-
     elif opcion == "Gestión de Grupos":
-        from logic_programador import pantalla_gestion_grupos
-        pantalla_gestion_grupos()
+        lp.pantalla_gestion_grupos()
 
     elif opcion == "Programador":
-        from logic_programador import pantalla_programador
-        pantalla_programador()
+        lp.pantalla_programador()
