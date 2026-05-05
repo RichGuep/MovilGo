@@ -53,27 +53,33 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Blindaje Legal", output.getvalue(), contents.sha)
-        st.success("✅ Histórico sincronizado con éxito.")
+        repo.update_file("malla_historica.xlsx", "Malla Rotacion Ascendente", output.getvalue(), contents.sha)
+        st.success("✅ Histórico sincronizado.")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
-# --- 2. GESTIÓN DE GRUPOS ---
+# --- 2. MOTOR DE VALIDACIÓN DE ROTACIÓN ASCENDENTE ---
 
-def pantalla_gestion_grupos():
-    st.title("👥 Gestión de Grupos")
-    if 'df_cable' not in st.session_state:
-        try:
-            df_full = pd.read_excel("empleados.xlsx")
-            df_full.columns = df_full.columns.str.strip()
-            st.session_state.df_cable = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
-        except: st.error("Falta empleados.xlsx"); return
-    st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
+def es_cambio_saludable(turno_ayer, turno_hoy):
+    """
+    Define si el cambio de turno respeta la rotación ascendente (retraso de fase).
+    T1 (Mañana) -> T2 (Tarde) -> T3 (Noche) -> DESC/COMP
+    Cualquier salto hacia atrás (T3 a T1, T2 a T1, T3 a T2) es FALSO.
+    """
+    if turno_ayer in ["DESC", "COMP"]: return True # Tras descanso se puede reiniciar ciclo
+    if turno_hoy in ["DESC", "COMP"]: return True  # Ir a descanso siempre es saludable
+    
+    jerarquia = {"T1": 1, "T2": 2, "T3": 3}
+    
+    # Solo permitir si el valor de hoy es mayor o igual al de ayer (Ascendente)
+    if jerarquia[turno_hoy] >= jerarquia[turno_ayer]:
+        return True
+    return False
 
-# --- 3. PROGRAMADOR CON BLINDAJE LEGAL ---
+# --- 3. PROGRAMADOR PROFESIONAL ---
 
 def pantalla_programador():
-    st.title("📅 Programador 24/7 - Blindaje Legal Semanal")
+    st.title("📅 Programador 24/7 - Rotación Ascendente (Salud)")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     if 'malla_generada' not in st.session_state:
@@ -88,9 +94,9 @@ def pantalla_programador():
 
     c_f1, c_f2 = st.columns(2)
     f_ini = c_f1.date_input("Inicio", datetime.now())
-    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
+    f_fin = c_f2.date_input("Fin (Hasta 6 meses)", datetime.now() + timedelta(days=30))
 
-    if st.button("🚀 Generar Malla Legal Richard"):
+    if st.button("🚀 Generar Malla Saludable"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
@@ -104,58 +110,51 @@ def pantalla_programador():
             dia_idx = fecha.weekday()
             sem_iso = fecha.isocalendar()[1]
             es_fest = fecha in co_h
-            col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
+            col_name = f"{fecha.strftime('%a %d/%m')}"
 
-            # 1. IDENTIFICAR QUIÉN DEBE LIBRAR HOY (Leyes de Richard)
+            # 1. Gestión de Descansos (Prioridad para reiniciar ciclo)
             libranza = None
-            
-            # Sábado y Domingo son descansos de ley por ciclo
-            if dia_idx == 5: # Sábado
+            if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
                 deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
-            elif dia_idx == 6: # Domingo
+            elif dia_idx == 6:
                 libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
                 deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
             else:
-                # DÍAS DE SEMANA: Obligatorio pagar compensatorios pendientes
-                # Buscamos quién tiene deuda y NO está en T3 (para respetar el sueño post-noche)
-                candidatos = sorted(grupos_n, key=lambda x: deudas[x], reverse=True)
-                for g in candidatos:
-                    if deudas[g] > 0:
-                        # Si trabajó anoche (T3), no puede compensar hoy mismo por ley de fatiga
-                        if mem_t[g] != "T3":
-                            libranza = g
-                            deudas[g] -= 1
-                            break
+                # Pagar deudas obligatoriamente para resetear rotación si es necesario
+                for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
+                    if deudas[g] > 0 and mem_t[g] != "T3":
+                        libranza = g; deudas[g] -= 1; break
 
-            # 2. ASIGNACIÓN DE TURNOS A LOS ACTIVOS
+            # 2. Asignación de Turnos con Filtro Ascendente
             activos = [g for g in grupos_n if g != libranza]
             turnos_hoy = {}
             for g in activos:
                 idx_g = grupos_n.index(g)
-                # Rotación base
-                t_base = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
+                # Sugerencia por rotación matemática
+                t_sugerido = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
                 
-                # Regla de Oro: Si viene de T3, se queda en T3 o descansa (no T1/T2)
-                if mem_t[g] == "T3" and t_base in ["T1", "T2"]:
-                    t_base = "T3"
+                # VALIDACIÓN DE SALUD: Si el cambio es descendente, forzamos inercia
+                if not es_cambio_saludable(mem_t[g], t_sugerido):
+                    t_sugerido = mem_t[g] # Mantiene el turno actual hasta que llegue un descanso
                 
-                # Límite de 6 noches
-                if mem_n[g] >= 6 and t_base == "T3":
-                    t_base = "T1"
+                # Control extra: No más de 6 noches
+                if mem_n[g] >= 6 and t_sugerido == "T3":
+                    t_sugerido = "T1" # Esto generará una alerta en el validador para que Richard lo vea
                 
-                turnos_hoy[g] = t_base
+                turnos_hoy[g] = t_sugerido
 
-            # 3. MOTOR DE COBERTURA Y REFUERZO T2
-            # Paso A: Asegurar T1, T2, T3
+            # 3. Motor de Cobertura y Unicidad de T3
+            # Garantizar T1, T2, T3
             for tr in ["T1", "T2", "T3"]:
                 if tr not in turnos_hoy.values():
                     for gf in sorted(activos, key=lambda x: mem_n[x]):
                         if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
-                            if not (mem_t[gf] == "T3" and tr == "T1"):
+                            # Solo permite el cambio si es ascendente
+                            if es_cambio_saludable(mem_t[gf], tr):
                                 turnos_hoy[gf] = tr; break
 
-            # Paso B: Eliminar Doble Noche y enviar a T2 (Regla Richard)
+            # Forzar T2 si hay sobras (Regla Richard) y eliminar Doble T3
             actuales = list(turnos_hoy.values())
             while actuales.count("T3") > 1:
                 for g_n in activos:
@@ -163,27 +162,11 @@ def pantalla_programador():
                         turnos_hoy[g_n] = "T2"
                         actuales = list(turnos_hoy.values())
                         break
-                # Si persiste por inercia de T3, forzar al que menos noches lleve
-                if actuales.count("T3") > 1:
-                    g_f = sorted(activos, key=lambda x: mem_n[x])[0]
-                    turnos_hoy[g_f] = "T2"
-                    actuales = list(turnos_hoy.values())
 
-            # Paso C: Cualquier grupo extra va a T2 (Refuerzo Flotante)
-            for g_e in activos:
-                if turnos_hoy[g_e] != "T2" and actuales.count(turnos_hoy[g_e]) > 1:
-                    turnos_hoy[g_e] = "T2"
-                    actuales = list(turnos_hoy.values())
-
-            # 4. REGISTRO Y ACTUALIZACIÓN DE MEMORIA
+            # 4. Registro
             for g in grupos_n:
-                if g == libranza:
-                    t_f = "DESC" if dia_idx >= 5 else "COMP"
-                    n_a = 0
-                else:
-                    t_f = turnos_hoy.get(g, "T1")
-                    n_a = mem_n[g] + 1 if t_f == "T3" else 0
-                
+                t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+                n_a = mem_n[g] + 1 if t_f == "T3" else 0
                 resultados.append({
                     "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
                     "Fecha_Raw": pd.to_datetime(fecha), "Noches_Acum": n_a,
@@ -195,7 +178,6 @@ def pantalla_programador():
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
-    # --- VALIDADOR ORIGINAL ---
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
@@ -208,26 +190,16 @@ def pantalla_programador():
         st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
         st.divider()
-        st.subheader("🔍 Validador de Auditoría Legal Richard")
+        st.subheader("🔍 Validador Richard: Salud y Proyección")
         c1, c2 = st.columns(2)
-        with c1:
-            st.write("**✅ Verificación de Descansos**")
-            conteo = df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0)
-            st.table(conteo)
-            
-            # Alerta si alguien termina con deuda (significa que no se le pudo pagar en el rango)
-            ultimas = df_res.drop_duplicates('Grupo', keep='last')
-            for _, r in ultimas.iterrows():
-                if r['Deuda_Compensatorio'] > 0:
-                    st.error(f"🚨 {r['Grupo']} termina con {r['Deuda_Compensatorio']} compensatorio(s) sin pagar!")
-
         with c2:
-            st.write("**🛡️ Auditoría de Salud y Cobertura**")
             alertas = []
-            for fc in df_res["Fecha_Col"].unique():
-                tv = df_res[df_res["Fecha_Col"] == fc]["Turno"].values
-                if "T3" not in tv: alertas.append(f"{fc} (Sin Noche)")
-                if list(tv).count("T3") > 1: alertas.append(f"{fc} (Doble Noche)")
-
-            if not alertas: st.success("¡Operación Blindada! T3 único y Ley de Descanso cumplida.")
-            else: st.warning(f"Novedades: {', '.join(set(alertas[:5]))}")
+            for g in grupos_n:
+                h = df_res[df_res["Grupo"] == g].to_dict('records')
+                for i in range(1, len(h)):
+                    # Validador Estricto de Richard
+                    if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
+                        alertas.append(f"⚠️ {g}: Salto {h[i-1]['Turno']} -> {h[i]['Turno']} el {h[i]['Fecha_Col']}")
+            
+            if not alertas: st.success("¡Rotación Ascendente Perfecta! El personal dormirá mejor.")
+            else: st.error(f"Se detectaron rotaciones descendentes: {', '.join(set(alertas[:5]))}")
