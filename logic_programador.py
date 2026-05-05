@@ -6,7 +6,7 @@ import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. FUNCIONES DE APOYO ---
+# --- 1. FUNCIONES DE APOYO (LÓGICA DE GRUPOS Y GITHUB) ---
 
 def asignar_grupos_aleatorio(df_cable):
     """Mezcla y asigna personal respetando el mix contractual 2-7-3."""
@@ -32,6 +32,7 @@ def asignar_grupos_aleatorio(df_cable):
     return pd.DataFrame(grupos_finales)
 
 def guardar_en_github(df):
+    """Sincroniza el Excel directamente con el repositorio de GitHub."""
     try:
         if "GITHUB_TOKEN" not in st.secrets:
             st.error("❌ Token 'GITHUB_TOKEN' no encontrado."); return False
@@ -41,7 +42,7 @@ def guardar_en_github(df):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         contents = repo.get_contents("empleados.xlsx")
-        repo.update_file(path="empleados.xlsx", message="Update Grupos", 
+        repo.update_file(path="empleados.xlsx", message="Sincronización MovilGo", 
                          content=output.getvalue(), sha=contents.sha, branch="main")
         return True
     except Exception as e:
@@ -62,8 +63,7 @@ def pantalla_gestion_grupos():
             df_c = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
             if 'Grupo' not in df_c.columns: df_c['Grupo'] = "Sin Asignar"
             st.session_state.df_cable = df_c
-        except Exception as e:
-            st.error(f"Error: {e}"); return
+        except Exception as e: st.error(f"Error: {e}"); return
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -77,21 +77,20 @@ def pantalla_gestion_grupos():
         if st.button("🗑️ Reset"):
             st.session_state.df_cable['Grupo'] = "Sin Asignar"; st.rerun()
 
-    df_edit = st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True, hide_index=True)
+    df_edit = st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], 
+                             use_container_width=True, hide_index=True)
     if st.button("Aplicar Cambios Manuales"):
         st.session_state.df_cable.update(df_edit); st.success("Cambios aplicados")
 
-# --- 3. MÓDULO: PROGRAMADOR CON VALIDADOR ---
+# --- 3. MÓDULO: PROGRAMADOR CON COBERTURA DINÁMICA ---
 
 def pantalla_programador():
     st.title("📅 Programador Operativo 24/7")
-    
     if 'df_cable' not in st.session_state:
         st.warning("⚠️ Cargue los grupos primero."); return
 
     co_holidays = holidays.Colombia(years=[datetime.now().year, datetime.now().year + 1])
-
-    st.subheader("Rango de Programación")
+    st.subheader("Parámetros del Periodo")
     c_f1, c_f2 = st.columns(2)
     f_inicio = c_f1.date_input("Inicio", datetime.now())
     f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
@@ -111,42 +110,47 @@ def pantalla_programador():
             num_semana = fecha.isocalendar()[1]
             sem_par = (num_semana % 2 == 0)
             es_festivo = fecha in co_holidays
+            col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_festivo else ''}"
 
+            # 1. Definir quién libra hoy (Solo 1 por día)
             grupo_que_libra_hoy = None
-
-            # Asignación de descansos
-            if dia_idx == 5: # Sab
+            if dia_idx == 5: # Sábado
                 grupo_que_libra_hoy = "Grupo 1" if sem_par else "Grupo 2"
-                quien_trabaja = "Grupo 2" if sem_par else "Grupo 1"
-                dias_pendientes[quien_trabaja] += 1
-            elif dia_idx == 6: # Dom
+                dias_pendientes["Grupo 2" if sem_par else "Grupo 1"] += 1
+            elif dia_idx == 6: # Domingo
                 grupo_que_libra_hoy = "Grupo 3" if sem_par else "Grupo 4"
-                quien_trabaja = "Grupo 4" if sem_par else "Grupo 3"
-                dias_pendientes[quien_trabaja] += 1
-            else: # Lun-Vie: Compensatorios
+                dias_pendientes["Grupo 4" if sem_par else "Grupo 3"] += 1
+            elif dia_idx < 5: # Compensatorios Lun-Vie
                 for g in sorted(dias_pendientes, key=dias_pendientes.get, reverse=True):
                     if dias_pendientes[g] > 0:
                         grupo_que_libra_hoy = g
                         dias_pendientes[g] -= 1
                         break
 
-            activos = [g for g in grupos_lista if g != grupo_que_libra_hoy]
-            col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_festivo else ''}"
+            # 2. Asignación inicial de turnos y Cobertura Dinámica
+            turnos_dia = {}
+            grupos_activos = [g for g in grupos_lista if g != grupo_que_libra_hoy]
+            
+            for g_name in grupos_activos:
+                idx_grupo = grupos_lista.index(g_name)
+                idx_turno = (idx_grupo + num_semana) % 3
+                turnos_dia[g_name] = ["T1", "T2", "T3"][idx_turno]
+
+            # VALIDACIÓN: Garantizar T1, T2 y T3
+            turnos_asignados = list(turnos_dia.values())
+            for t_necesario in ["T1", "T2", "T3"]:
+                if t_necesario not in turnos_asignados:
+                    for g_activo in grupos_activos:
+                        if turnos_asignados.count(turnos_dia[g_activo]) > 1:
+                            turnos_dia[g_activo] = t_necesario
+                            turnos_asignados = list(turnos_dia.values())
+                            break
 
             for g_name in grupos_lista:
-                if g_name == grupo_que_libra_hoy:
-                    turno = "DESC" if dia_idx >= 5 else "COMP"
-                else:
-                    # Turno Estable Semanal
-                    idx_grupo = grupos_lista.index(g_name)
-                    idx_turno = (idx_grupo + num_semana) % 3
-                    turno = ["T1", "T2", "T3"][idx_turno]
-                
-                resultados.append({"Grupo": g_name, "Fecha_Col": col_name, "Turno": turno, "Fecha_Raw": fecha})
+                turno_f = ("DESC" if dia_idx >= 5 else "COMP") if g_name == grupo_que_libra_hoy else turnos_dia[g_name]
+                resultados.append({"Grupo": g_name, "Fecha_Col": col_name, "Turno": turno_f})
 
         df_res = pd.DataFrame(resultados)
-
-        # --- SECCIÓN 1: MATRIZ VISUAL ---
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
 
@@ -154,38 +158,21 @@ def pantalla_programador():
             colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
             return f'background-color: {colors.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
-        st.subheader("📊 Matriz de Turnos")
+        st.subheader("📊 Matriz de Turnos Unificada")
         st.dataframe(matriz.style.map(style_c), use_container_width=True)
 
-        # --- SECCIÓN 2: VALIDACIÓN Y AUDITORÍA ---
+        # 3. VALIDADOR DE AUDITORÍA
         st.divider()
-        st.subheader("🔍 Validador de Cumplimiento")
-        
-        col_aud1, col_aud2 = st.columns(2)
-
-        with col_aud1:
-            st.write("**✅ Cantidad de Descansos Otorgados**")
-            # Contar DESC y COMP por grupo
-            conteo_descansos = df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0)
-            st.table(conteo_descansos)
-
-        with col_aud2:
-            st.write("**🛡️ Verificación de Cobertura Diaria**")
-            # Verificar que cada día tenga T1, T2 y T3
-            dias_con_error = []
-            for fecha_col in df_res["Fecha_Col"].unique():
-                turnos_del_dia = df_res[df_res["Fecha_Col"] == fecha_col]["Turno"].values
+        c_aud1, c_aud2 = st.columns(2)
+        with c_aud1:
+            st.write("**✅ Descansos Otorgados**")
+            st.table(df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0))
+        with c_aud2:
+            st.write("**🛡️ Verificación de Cobertura**")
+            dias_err = []
+            for fc in df_res["Fecha_Col"].unique():
+                tv = df_res[df_res["Fecha_Col"] == fc]["Turno"].values
                 for t in ["T1", "T2", "T3"]:
-                    if t not in turnos_del_dia:
-                        dias_con_error.append(f"{fecha_col} (Falta {t})")
-
-            if not dias_con_error:
-                st.success("¡Perfecto! Todos los días tienen cubiertos los turnos T1, T2 y T3.")
-            else:
-                st.error(f"⚠️ Errores de cobertura en: {', '.join(dias_con_error)}")
-
-        # --- SECCIÓN 3: ALERTAS DE DEUDAS ---
-        if any(v > 0 for v in dias_pendientes.values()):
-            with st.expander("⚠️ Días de compensatorio pendientes por asignar"):
-                for g, d in dias_pendientes.items():
-                    if d > 0: st.warning(f"Al **{g}** se le deben {d} día(s) que no alcanzaron a compensarse en el rango seleccionado.")
+                    if t not in tv: dias_err.append(f"{fc}({t})")
+            if not dias_err: st.success("¡Cobertura Total Garantizada!")
+            else: st.error(f"Faltan turnos en: {', '.join(dias_err)}")
