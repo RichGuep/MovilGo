@@ -53,7 +53,7 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Final Richard v10", output.getvalue(), contents.sha)
+        repo.update_file("malla_historica.xlsx", "Actualizacion Malla Final", output.getvalue(), contents.sha)
         st.success("✅ Histórico sincronizado en GitHub.")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
@@ -124,9 +124,9 @@ def pantalla_programador():
 
     c_f1, c_f2 = st.columns(2)
     f_ini = c_f1.date_input("Inicio", datetime.now())
-    f_fin = c_f2.date_input("Fin (Hasta 6 meses)", datetime.now() + timedelta(days=30))
+    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=30))
 
-    if st.button("🚀 Generar Malla de Salud"):
+    if st.button("🚀 Generar Malla Richard"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
@@ -151,7 +151,6 @@ def pantalla_programador():
                 libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
                 deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
             else:
-                # Prioridad legal: Pagar deuda de semana pasada
                 for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
                     if deudas[g] > 0 and mem_t[g] != "T3":
                         libranza = g; deudas[g] -= 1; break
@@ -163,11 +162,9 @@ def pantalla_programador():
                 idx_g = grupos_n.index(g)
                 t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
                 
-                # CANDADO ESTRICTO: Inercia ante rotación descendente
                 if not es_rotacion_valida(mem_t[g], t_sug):
                     t_sug = mem_t[g]
                 
-                # Límite 6 noches
                 if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
                 turnos_hoy[g] = t_sug
 
@@ -225,7 +222,7 @@ def pantalla_programador():
         st.dataframe(df_full[["Fecha", "Nombre", "Cargo", "Cedula", "Hora Inicio", "Hora Fin", "Grupo"]], use_container_width=True, hide_index=True)
 
         st.divider()
-        st.subheader("🔍 Auditoría Mensual de Descansos")
+        st.subheader("🔍 Auditoría de Descansos por Mes")
         resumen_mes = df_full[df_full['Turno'].isin(['DESC', 'COMP'])].drop_duplicates(['Grupo', 'Fecha_Raw'])
         if not resumen_mes.empty:
             st.table(resumen_mes.groupby(['Mes', 'Grupo', 'Turno']).size().unstack(fill_value=0))
