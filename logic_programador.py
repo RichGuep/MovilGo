@@ -32,18 +32,17 @@ def asignar_grupos_aleatorio(df_cable):
     return pd.DataFrame(grupos_finales)
 
 def guardar_en_github(df):
-    """Sincroniza el Excel con el repositorio de GitHub."""
+    """Sincroniza el Excel con GitHub."""
     try:
         if "GITHUB_TOKEN" not in st.secrets:
-            st.error("❌ Token 'GITHUB_TOKEN' no encontrado.")
-            return False
+            st.error("❌ Token 'GITHUB_TOKEN' no encontrado."); return False
         g = Github(st.secrets["GITHUB_TOKEN"])
         repo = g.get_repo("RichGuep/movilgo")
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         contents = repo.get_contents("empleados.xlsx")
-        repo.update_file(path="empleados.xlsx", message="Actualización Grupos", 
+        repo.update_file(path="empleados.xlsx", message="Update Grupos", 
                          content=output.getvalue(), sha=contents.sha, branch="main")
         return True
     except Exception as e:
@@ -74,7 +73,7 @@ def pantalla_gestion_grupos():
             st.rerun()
     with c2:
         if st.button("💾 Guardar en GitHub"):
-            if guardar_en_github(st.session_state.df_cable): st.success("¡Guardado!")
+            if guardar_en_github(st.session_state.df_cable): st.success("¡Sincronizado!")
     with c3:
         if st.button("🗑️ Reset"):
             st.session_state.df_cable['Grupo'] = "Sin Asignar"; st.rerun()
@@ -83,13 +82,13 @@ def pantalla_gestion_grupos():
     if st.button("Aplicar Cambios Manuales"):
         st.session_state.df_cable.update(df_edit); st.success("Cambios aplicados")
 
-# --- 3. MÓDULO: PROGRAMADOR CON COMPENSATORIO FLEXIBLE ---
+# --- 3. MÓDULO: PROGRAMADOR CON ESTABILIDAD SEMANAL ---
 
 def pantalla_programador():
     st.title("📅 Programador Operativo 24/7")
     
     if 'df_cable' not in st.session_state:
-        st.warning("⚠️ Configure los grupos primero."); return
+        st.warning("⚠️ Cargue los grupos primero."); return
 
     co_holidays = holidays.Colombia(years=[datetime.now().year, datetime.now().year + 1])
 
@@ -106,42 +105,43 @@ def pantalla_programador():
 
         resultados = []
         grupos_lista = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-        
-        # RASTREO DE DEUDAS DE COMPENSATORIO
-        # Guardamos cuántos días le debemos a cada grupo
         dias_pendientes = {g: 0 for g in grupos_lista}
 
         for fecha in lista_fechas:
             dia_idx = fecha.weekday() # 0=Lun, 5=Sab, 6=Dom
             es_fin_semana = dia_idx >= 5
             es_festivo = fecha in co_holidays
-            sem_par = (fecha.isocalendar()[1] % 2 == 0)
+            
+            # Identificador único de la semana (ISO) para fijar el turno
+            num_semana = fecha.isocalendar()[1]
+            sem_par = (num_semana % 2 == 0)
 
             grupo_que_libra_hoy = None
 
-            # --- A. ASIGNACIÓN DE DESCANSOS CONTRACTUALES ---
+            # --- A. ASIGNACIÓN DE DESCANSOS ---
             if dia_idx == 5: # Sábado
                 grupo_que_libra_hoy = "Grupo 1" if sem_par else "Grupo 2"
                 quien_trabaja = "Grupo 2" if sem_par else "Grupo 1"
-                dias_pendientes[quien_trabaja] += 1 # Gana un COMP
+                dias_pendientes[quien_trabaja] += 1
             
             elif dia_idx == 6: # Domingo
                 grupo_que_libra_hoy = "Grupo 3" if sem_par else "Grupo 4"
                 quien_trabaja = "Grupo 4" if sem_par else "Grupo 3"
-                dias_pendientes[quien_trabaja] += 1 # Gana un COMP
+                dias_pendientes[quien_trabaja] += 1
 
-            # --- B. ASIGNACIÓN DE COMPENSATORIOS FLEXIBLES (Lunes a Viernes) ---
+            # --- B. COMPENSATORIOS FLEXIBLES ---
             else:
-                # Buscamos quién tiene deudas pendientes (Prioridad al que más se le debe)
-                # Solo permitimos que descanse 1 grupo por día para no dejar huecos
                 for g in sorted(dias_pendientes, key=dias_pendientes.get, reverse=True):
                     if dias_pendientes[g] > 0:
                         grupo_que_libra_hoy = g
-                        dias_pendientes[g] -= 1 # Se salda 1 día
+                        dias_pendientes[g] -= 1
                         break
 
-            # --- C. REPARTICIÓN DE TURNOS ---
-            activos = [g for g in grupos_lista if g != grupo_que_libra_hoy]
+            # --- C. ASIGNACIÓN DE TURNO FIJO SEMANAL ---
+            # Definimos el orden de turnos por semana para cada grupo
+            # Esto asegura que durante toda la semana el grupo tenga el mismo horario
+            activos_reales = [g for g in grupos_lista if g != grupo_que_libra_hoy]
+            
             col_name = f"{fecha.strftime('%a').capitalize()} {fecha.strftime('%d/%m')}"
             if es_festivo: col_name += " 🇨🇴"
 
@@ -149,9 +149,14 @@ def pantalla_programador():
                 if g_name == grupo_que_libra_hoy:
                     turno = "DESC" if es_fin_semana else "COMP"
                 else:
-                    pos = activos.index(g_name)
-                    shift = (fecha.day + fecha.month) % 3 # Rotación más variada
-                    turno = ["T1", "T2", "T3"][(pos + shift) % 3]
+                    # Lógica de Turno Fijo Semanal:
+                    # El turno depende únicamente del nombre del grupo y el número de la semana.
+                    # No depende del día del mes, así no cambia de lunes a viernes.
+                    idx_grupo = grupos_lista.index(g_name)
+                    # Rotación: cada semana el grupo pasa al siguiente turno (T1 -> T2 -> T3)
+                    idx_turno = (idx_grupo + num_semana) % 3
+                    opciones_turno = ["T1", "T2", "T3"]
+                    turno = opciones_turno[idx_turno]
                 
                 resultados.append({"Grupo": g_name, "Fecha_Col": col_name, "Turno": turno})
 
@@ -163,6 +168,6 @@ def pantalla_programador():
             colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
             return f'background-color: {colors.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
-        st.subheader("📊 Matriz de Cobertura Flexible 24/7")
+        st.subheader("📊 Matriz de Cobertura Estable (Turnos Semanales)")
         st.dataframe(matriz.style.map(style_c), use_container_width=True)
-        st.info("💡 Nota: Los compensatorios (COMP) se asignan automáticamente de Lunes a Viernes al primer grupo disponible con días pendientes.")
+        st.success("✅ Los turnos ahora son fijos durante toda la semana para garantizar estabilidad laboral.")
