@@ -6,7 +6,7 @@ import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. FUNCIONES DE APOYO (MIX 2-7-3 Y GITHUB) ---
+# --- 1. FUNCIONES DE APOYO ---
 
 def asignar_grupos_aleatorio(df_cable):
     df = df_cable.copy()
@@ -33,7 +33,7 @@ def guardar_en_github(df):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         contents = repo.get_contents("empleados.xlsx")
-        repo.update_file(path="empleados.xlsx", message="Sincronización Bienestar", content=output.getvalue(), sha=contents.sha, branch="main")
+        repo.update_file(path="empleados.xlsx", message="Sincronización Optimizada", content=output.getvalue(), sha=contents.sha, branch="main")
         return True
     except Exception as e:
         st.error(f"❌ Error GitHub: {e}"); return False
@@ -71,10 +71,10 @@ def pantalla_gestion_grupos():
     if st.button("Aplicar Cambios Manuales"):
         st.session_state.df_cable.update(df_edit); st.success("Cambios aplicados")
 
-# --- 3. MÓDULO: PROGRAMADOR CON SALUD LABORAL ---
+# --- 3. MÓDULO: PROGRAMADOR OPTIMIZADO (MÁXIMO UN T3) ---
 
 def pantalla_programador():
-    st.title("📅 Programador 24/7 con Bienestar Laboral")
+    st.title("📅 Programador 24/7 - Eficiencia Operativa")
     if 'df_cable' not in st.session_state:
         st.warning("⚠️ Cargue los grupos primero."); return
 
@@ -84,7 +84,7 @@ def pantalla_programador():
     f_inicio = c_f1.date_input("Inicio", datetime.now())
     f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
 
-    if st.button("🚀 Generar Matriz Protegida"):
+    if st.button("🚀 Generar Matriz Eficiente"):
         lista_fechas = []
         curr = f_inicio
         while curr <= f_fin:
@@ -93,7 +93,6 @@ def pantalla_programador():
         resultados = []
         grupos_lista = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
         dias_pendientes = {g: 0 for g in grupos_lista}
-        # Diccionario para saber qué turno hizo el grupo el día anterior
         ultimo_turno = {g: "DESC" for g in grupos_lista}
 
         for fecha in lista_fechas:
@@ -103,7 +102,7 @@ def pantalla_programador():
             es_festivo = fecha in co_holidays
             col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_festivo else ''}"
 
-            # 1. Definir descanso/compensatorio
+            # 1. Gestión de Descansos
             grupo_que_libra_hoy = None
             if dia_idx == 5: # Sáb
                 grupo_que_libra_hoy = "Grupo 1" if sem_par else "Grupo 2"
@@ -113,54 +112,61 @@ def pantalla_programador():
                 dias_pendientes["Grupo 4" if sem_par else "Grupo 3"] += 1
             elif dia_idx < 5:
                 for g in sorted(dias_pendientes, key=dias_pendientes.get, reverse=True):
-                    if dias_pendientes[g] > 0:
-                        # VALIDACIÓN DE SALUD: No puede compensar hoy si ayer hizo T3 (necesita dormir)
-                        if ultimo_turno[g] != "T3":
-                            grupo_que_libra_hoy = g
-                            dias_pendientes[g] -= 1
-                            break
+                    if dias_pendientes[g] > 0 and ultimo_turno[g] != "T3":
+                        grupo_que_libra_hoy = g
+                        dias_pendientes[g] -= 1
+                        break
 
-            # 2. Asignación de Turnos con Regla de Bienestar (No T3 -> T1/T2 sin descanso)
+            # 2. Asignación con restricción de UN SOLO T3
             turnos_dia = {}
             grupos_activos = [g for g in grupos_lista if g != grupo_que_libra_hoy]
             
+            # Repartimos turnos base
             for g_name in grupos_activos:
                 idx_grupo = grupos_lista.index(g_name)
                 idx_turno = (idx_grupo + num_semana) % 3
-                turno_sugerido = ["T1", "T2", "T3"][idx_turno]
-
-                # --- PROTECCIÓN BIENESTAR ---
-                # Si ayer hizo T3 y hoy le sugieren T1 o T2, forzamos que siga en T3 
-                # (estabilidad) o que descanse. Pero como debe cubrir, mantenemos T3.
-                if ultimo_turno[g_name] == "T3" and turno_sugerido in ["T1", "T2"]:
-                    turno_sugerido = "T3" 
+                turno_sug = ["T1", "T2", "T3"][idx_turno]
                 
-                turnos_dia[g_name] = turno_sugerido
+                # Regla Bienestar: No T3 -> T1/T2 sin descanso
+                if ultimo_turno[g_name] == "T3" and turno_sug in ["T1", "T2"]:
+                    turno_sug = "T3"
+                turnos_dia[g_name] = turno_sug
 
-            # 3. Cobertura Dinámica (Garantizar T1, T2, T3)
-            asignados = list(turnos_dia.values())
+            # --- CORRECCIÓN DE DUPLICADOS T3 Y COBERTURA ---
+            # Asegurar T1, T2 y T3 cubiertos, pero T3 máximo 1 vez
+            final_turnos = list(turnos_dia.values())
+            
+            # Si hay más de un T3, mover los sobrantes a T1 o T2
+            while final_turnos.count("T3") > 1:
+                for g_act in grupos_activos:
+                    if turnos_dia[g_act] == "T3":
+                        # Solo lo cambiamos si NO viene de un T3 ayer (por bienestar)
+                        # O si es obligatorio para que solo haya uno.
+                        # El que tenga más antigüedad en T3 o por orden de lista se mueve a T1
+                        if final_turnos.count("T3") > 1:
+                            turnos_dia[g_act] = "T1"
+                            final_turnos = list(turnos_dia.values())
+
+            # Asegurar que T1, T2 y T3 existan al menos una vez
             for t_req in ["T1", "T2", "T3"]:
-                if t_req not in asignados:
+                if t_req not in final_turnos:
+                    # Buscamos un grupo para que cubra el faltante
+                    # Preferiblemente uno que tenga un turno duplicado (ej. dos T1)
                     for g_act in grupos_activos:
-                        # Si hay un turno duplicado (ej. dos T3 por la regla de bienestar)
-                        # uno debe cambiar para cubrir el hueco, siempre que no rompa la regla T3->T1
-                        if asignados.count(turnos_dia[g_act]) > 1:
+                        if final_turnos.count(turnos_dia[g_act]) > 1:
+                            # Validamos que si el faltante es T1/T2, el grupo no venga de T3 ayer
                             if not (ultimo_turno[g_act] == "T3" and t_req in ["T1", "T2"]):
                                 turnos_dia[g_act] = t_req
-                                asignados = list(turnos_dia.values())
+                                final_turnos = list(turnos_dia.values())
                                 break
 
-            # 4. Registro y actualización de histórico
+            # 3. Registro
             for g_name in grupos_lista:
-                if g_name == grupo_que_libra_hoy:
-                    turno_final = "DESC" if dia_idx >= 5 else "COMP"
-                else:
-                    turno_final = turnos_dia[g_name]
-                
-                resultados.append({"Grupo": g_name, "Fecha_Col": col_name, "Turno": turno_final})
-                ultimo_turno[g_name] = turno_final
+                t_f = ("DESC" if dia_idx >= 5 else "COMP") if g_name == grupo_que_libra_hoy else turnos_dia[g_name]
+                resultados.append({"Grupo": g_name, "Fecha_Col": col_name, "Turno": t_f})
+                ultimo_turno[g_name] = t_f
 
-        # --- VISUALIZACIÓN ---
+        # --- RENDERIZADO Y AUDITORÍA ---
         df_res = pd.DataFrame(resultados)
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
@@ -169,21 +175,21 @@ def pantalla_programador():
             colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
             return f'background-color: {colors.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
-        st.subheader("📊 Matriz de Turnos con Protección de Sueño")
+        st.subheader("📊 Matriz Optimizada (Fuerza en T1/T2)")
         st.dataframe(matriz.style.map(style_c), use_container_width=True)
 
-        # Validador
         st.divider()
         c_aud1, c_aud2 = st.columns(2)
         with c_aud1:
             st.write("**✅ Descansos Otorgados**")
             st.table(df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0))
         with c_aud2:
-            st.write("**🛡️ Verificación de Cobertura**")
-            dias_err = []
+            st.write("**🛡️ Auditoría de Cobertura**")
+            errores = []
             for fc in df_res["Fecha_Col"].unique():
                 tv = df_res[df_res["Fecha_Col"] == fc]["Turno"].values
                 for t in ["T1", "T2", "T3"]:
-                    if t not in tv: dias_err.append(f"{fc}({t})")
-            if not dias_err: st.success("¡Cobertura Total Garantizada!")
-            else: st.error(f"Faltan turnos en: {', '.join(dias_err)}")
+                    if t not in tv: errores.append(f"{fc}({t})")
+                if list(tv).count("T3") > 1: errores.append(f"{fc}(Doble T3 ⚠️)")
+            if not errores: st.success("¡Cobertura Óptima!")
+            else: st.error(f"Revisar: {', '.join(errores)}")
