@@ -85,19 +85,24 @@ def pantalla_gestion_grupos():
                 col = [c for c in df_full.columns if clave in c.lower()]
                 if col: df_full = df_full.rename(columns={col[0]: oficial})
             st.session_state.df_cable = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
-        except: st.error("Cargar empleados.xlsx"); return
+        except: st.error("No se pudo cargar empleados.xlsx"); return
     
     if st.button("🎲 Mezclar Grupos Aleatorio"):
         st.session_state.df_cable = asignar_grupos_aleatorio(st.session_state.df_cable)
         st.rerun()
-    st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
+    st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True, hide_index=True)
 
 # --- 3. PROGRAMADOR PROFESIONAL ---
 
 def pantalla_programador():
     st.title("📅 Programador 24/7 - Protección de Fatiga")
     
-    if 'malla_generada' not in st.session_state: st.session_state.malla_generada = None
+    # Definir variables base al inicio para evitar UnboundLocalError
+    grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    
+    if 'malla_generada' not in st.session_state: 
+        st.session_state.malla_generada = None
+    
     repo = conectar_github()
     if not repo: return
 
@@ -107,7 +112,7 @@ def pantalla_programador():
 
     c_f1, c_f2 = st.columns(2)
     f_inicio = c_f1.date_input("Inicio", datetime.now())
-    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=31))
+    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
 
     if st.button("🚀 Generar Matriz Optimizada"):
         st.cache_data.clear()
@@ -117,7 +122,6 @@ def pantalla_programador():
             lista_fechas.append(curr); curr += timedelta(days=1)
 
         resultados = []
-        grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
         deudas = {g: 0 for g in grupos}
         memoria = estado_base.copy()
         co_holidays = holidays.Colombia(years=[2024, 2025, 2026])
@@ -150,22 +154,22 @@ def pantalla_programador():
                 t_base = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
                 
                 # --- BLINDAJE DE SALUD: INERCIA T3 ---
-                # Si ayer fue T3, prohibido T1 o T2. Se queda en T3.
+                # Si ayer fue T3, prohibido pasar a T1 o T2 el mismo día
                 if memoria[g] == "T3" and t_base in ["T1", "T2"]:
                     t_base = "T3"
                 turnos_dia[g] = t_base
 
-            # --- MOTOR DE COBERTURA OBLIGATORIA (T1, T2, T3) ---
+            # --- MOTOR DE COBERTURA OBLIGATORIA ---
             # 1. Asegurar máximo UN T3
             actuales = list(turnos_dia.values())
             while actuales.count("T3") > 1:
                 for g in activos:
                     if turnos_dia[g] == "T3" and memoria[g] != "T3":
-                        turnos_dia[g] = "T2" # Mover a Tarde (más seguro)
+                        turnos_dia[g] = "T2" 
                         actuales = list(turnos_dia.values())
                         break
             
-            # 2. Asegurar que T1 y T2 estén presentes
+            # 2. Asegurar cobertura de T1, T2 y T3
             for t_req in ["T1", "T2", "T3"]:
                 if t_req not in turnos_dia.values():
                     for g_c in activos:
@@ -184,6 +188,7 @@ def pantalla_programador():
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
+    # --- MOSTRAR RESULTADOS Y VALIDADOR ---
     if st.session_state.malla_generada is not None:
         df_m = st.session_state.malla_generada
         matriz = df_m.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
@@ -200,7 +205,8 @@ def pantalla_programador():
         c1, c2 = st.columns(2)
         with c1:
             st.write("**✅ Conteo de Descansos**")
-            st.table(df_m[df_m['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0))
+            conteo = df_m[df_m['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0)
+            st.table(conteo)
         with c2:
             st.write("**🛡️ Auditoría de Seguridad**")
             alertas = []
@@ -208,11 +214,13 @@ def pantalla_programador():
                 tv = df_m[df_m["Fecha_Col"] == fc]["Turno"].values
                 for t in ["T1", "T2", "T3"]:
                     if t not in tv: alertas.append(f"{fc} (Falta {t})")
+            
+            # Chequeo T3 -> T1/T2
             for g in grupos:
                 h = df_m[df_m["Grupo"] == g]["Turno"].tolist()
                 for i in range(1, len(h)):
                     if h[i-1] == "T3" and h[i] in ["T1", "T2"]: 
-                        alertas.append(f"⚠️ {g} Choque Horario")
+                        alertas.append(f"⚠️ {g} Riesgo Fatiga")
 
-            if not alertas: st.success("¡Operación Segura y Cobertura 100%!")
+            if not alertas: st.success("¡Operación Segura y Cobertura Completa!")
             else: st.error(f"Novedades: {', '.join(alertas)}")
