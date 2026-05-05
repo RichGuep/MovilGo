@@ -5,8 +5,7 @@ import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. CONEXIÓN Y PERSISTENCIA GITHUB ---
-
+# --- 1. CONEXIÓN GITHUB ---
 def conectar_github():
     try:
         if "GITHUB_TOKEN" not in st.secrets:
@@ -53,15 +52,14 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Final Richard v11", output.getvalue(), contents.sha)
-        st.success("✅ Histórico sincronizado en GitHub.")
+        repo.update_file("malla_historica.xlsx", "Malla Richard vFinal", output.getvalue(), contents.sha)
+        st.success("✅ GitHub Actualizado.")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
-# --- 2. MOTOR DE SALUD Y HORARIOS ---
-
+# --- 2. LÓGICA DE ROTACIÓN Y HORARIOS ---
 def es_rotacion_valida(ayer, hoy):
-    """Bloquea saltos descendentes: T3->T1, T3->T2, T2->T1."""
+    """Bloquea T3->T1, T3->T2, T2->T1 (Rotación Ascendente)"""
     if ayer in ["DESC", "COMP", "OFF"]: return True
     if hoy in ["DESC", "COMP", "OFF"]: return True
     niveles = {"T1": 1, "T2": 2, "T3": 3}
@@ -71,23 +69,7 @@ def obtener_horarios(turno):
     h = {"T1": ("05:30", "13:30"), "T2": ("13:30", "21:30"), "T3": ("21:30", "05:30")}
     return h.get(turno, ("OFF", "OFF"))
 
-# --- 3. PANTALLA: GESTIÓN DE GRUPOS ---
-
-def asignar_grupos_aleatorio(df_cable):
-    df = df_cable.copy()
-    masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).to_dict('records')
-    tecnicos_a = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).to_dict('records')
-    tecnicos_b = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).to_dict('records')
-    grupos_finales = []
-    num_grupo = 1
-    while len(masters) >= 2 and len(tecnicos_a) >= 7 and len(tecnicos_b) >= 3:
-        for _ in range(2): p = masters.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
-        for _ in range(7): p = tecnicos_a.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
-        for _ in range(3): p = tecnicos_b.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
-        num_grupo += 1
-    for s in (masters + tecnicos_a + tecnicos_b): s['Grupo'] = "Reserva"; grupos_finales.append(s)
-    return pd.DataFrame(grupos_finales)
-
+# --- 3. PANTALLA GESTIÓN ---
 def pantalla_gestion_grupos():
     st.title("👥 Gestión de Grupos")
     if 'df_cable' not in st.session_state:
@@ -95,17 +77,14 @@ def pantalla_gestion_grupos():
             df = pd.read_excel("empleados.xlsx")
             df.columns = df.columns.str.strip()
             st.session_state.df_cable = df[df['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
-        except: st.error("Falta empleados.xlsx"); return
-    
-    if st.button("🎲 Mezclar Grupos"):
-        st.session_state.df_cable = asignar_grupos_aleatorio(st.session_state.df_cable)
-        st.rerun()
+        except:
+            st.error("Falta empleados.xlsx")
+            return
     st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
 
-# --- 4. PANTALLA: PROGRAMADOR ---
-
+# --- 4. PANTALLA PROGRAMADOR ---
 def pantalla_programador():
-    st.title("📅 Programador Maestro Richard")
+    st.title("📅 Programador Richard - Rotación Ascendente")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     if 'df_cable' not in st.session_state:
@@ -118,9 +97,9 @@ def pantalla_programador():
 
     c1, c2 = st.columns(2)
     f_ini = c1.date_input("Inicio", datetime.now())
-    f_fin = c2.date_input("Fin (Hasta 6 meses)", datetime.now() + timedelta(days=30))
+    f_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
-    if st.button("🚀 Generar Malla Richard"):
+    if st.button("🚀 Generar Malla"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
@@ -135,7 +114,7 @@ def pantalla_programador():
             s_iso = fecha.isocalendar()[1]
             f_col = fecha.strftime('%a %d/%m')
 
-            # --- A. LIBRANZAS Y COMPENSATORIOS ---
+            # Libranzas y Compensatorios (Prioridad: Pago en semana siguiente)
             lib = None
             if d_idx == 5:
                 lib = "Grupo 1" if s_iso % 2 == 0 else "Grupo 2"
@@ -144,47 +123,49 @@ def pantalla_programador():
                 lib = "Grupo 3" if s_iso % 2 == 0 else "Grupo 4"
                 m_d["Grupo 4" if s_iso % 2 == 0 else "Grupo 3"] += 1
             else:
-                # Prioridad legal Richard: Pagar deuda en semana siguiente
                 for g in sorted(grupos_n, key=lambda x: m_d[x], reverse=True):
                     if m_d[g] > 0 and m_t[g] != "T3":
-                        lib = g; m_d[g] -= 1; break
+                        lib = g
+                        m_d[g] -= 1
+                        break
 
-            # --- B. TURNOS CON CANDADO DE SALUD ---
+            # Asignación de Turnos con Candado de Salud
             activos = [g for g in grupos_n if g != lib]
             hoy_t = {}
             for g in activos:
                 idx = grupos_n.index(g)
                 sug = ["T1", "T2", "T3"][(idx + s_iso) % 3]
                 
-                # REGLA ORO: Si es salto hacia atrás, inercia (mismo turno ayer)
+                # REGLA ORO: Si es salto hacia atrás (T3 a T1), aplicar inercia (mismo turno ayer)
                 if not es_rotacion_valida(m_t[g], sug):
                     sug = m_t[g]
                 
-                # Límite 6 noches
-                if m_n[g] >= 6 and sug == "T3": sug = "T1"
+                if m_n[g] >= 6 and sug == "T3":
+                    sug = "T1"
                 hoy_t[g] = sug
 
-            # --- C. COBERTURA Y REFUERZO T2 ---
+            # Cobertura y Refuerzo T2
             for tr in ["T1", "T2", "T3"]:
                 if tr not in hoy_t.values():
                     for gf in sorted(activos, key=lambda x: m_n[x]):
                         if list(hoy_t.values()).count(hoy_t[gf]) > 1:
                             if es_rotacion_valida(m_t[gf], tr):
-                                hoy_t[gf] = tr; break
+                                hoy_t[gf] = tr
+                                break
 
-            # Prohibir Doble T3
+            # Solo una noche (T3) y el extra a T2
             while list(hoy_t.values()).count("T3") > 1:
                 for gn in activos:
                     if hoy_t[gn] == "T3" and m_t[gn] != "T3":
-                        hoy_t[gn] = "T2"; break
+                        hoy_t[gn] = "T2"
+                        break
+            
+            # Cualquier duplicado en T1 se mueve a T2
+            for g_f in activos:
+                if hoy_t[g_f] == "T1" and list(hoy_t.values()).count("T1") > 1:
+                    hoy_t[g_f] = "T2"
 
-            # Todo excedente a T2
-            act_list = list(hoy_t.values())
-            for ge in activos:
-                if hoy_t[ge] != "T2" and act_list.count(hoy_t[ge]) > 1:
-                    hoy_t[ge] = "T2"; act_list = list(hoy_t.values())
-
-            # --- D. REGISTRO ---
+            # Registro Diario
             for g in grupos_n:
                 t_f = ("DESC" if d_idx >= 5 else "COMP") if g == lib else hoy_t.get(g, "T1")
                 h_i, h_f = obtener_horarios(t_f)
@@ -199,7 +180,8 @@ def pantalla_programador():
                         "Mes": fecha.strftime('%B %Y'), "Fecha_Raw": pd.to_datetime(fecha),
                         "Noches_Acum": n_a, "Deuda_Compensatorio": m_d[g]
                     })
-                m_t[g] = t_f; m_n[g] = n_a
+                m_t[g] = t_f
+                m_n[g] = n_a
 
         st.session_state.malla_generada = pd.DataFrame(resultados)
         guardar_malla_en_historico(st.session_state.malla_generada)
@@ -213,7 +195,7 @@ def pantalla_programador():
         mat = df_m.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         st.dataframe(mat.style.map(lambda v: f'background-color: {{"T1":"#1f77b4","T2":"#2ca02c","T3":"#7f7f7f","DESC":"#ff4b4b","COMP":"#ffa500"}.get(v,"#31333F")}; color:white'), use_container_width=True)
 
-        st.subheader("📋 Malla Detallada")
+        st.subheader("📋 Malla Detallada (Nombre, Cargo, Horas)")
         st.dataframe(df[["Fecha", "Nombre", "Cargo", "Cedula", "Hora Inicio", "Hora Fin", "Grupo"]], use_container_width=True, hide_index=True)
 
         st.divider()
