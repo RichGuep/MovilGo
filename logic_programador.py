@@ -19,7 +19,6 @@ def conectar_github():
         return None
 
 def obtener_ultimo_estado_github(repo):
-    """Obtiene el cierre del mes anterior para dar continuidad"""
     try:
         contents = repo.get_contents("malla_historica.xlsx")
         df_hist = pd.read_excel(io.BytesIO(contents.decoded_content))
@@ -50,8 +49,8 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Cobertura Total", output.getvalue(), contents.sha)
-        st.success("✅ Histórico sincronizado.")
+        repo.update_file("malla_historica.xlsx", "Malla Optimizada V3", output.getvalue(), contents.sha)
+        st.success("✅ Histórico sincronizado en GitHub.")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
@@ -86,10 +85,10 @@ def pantalla_gestion_grupos():
         st.rerun()
     st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
 
-# --- 3. PROGRAMADOR CON COBERTURA TOTAL Y BLINDAJE ---
+# --- 3. PROGRAMADOR CON CONTROL DE DOBLE NOCHE ---
 
 def pantalla_programador():
-    st.title("📅 Programador 24/7 - Cobertura Garantizada")
+    st.title("📅 Programador 24/7 - Cobertura Única Noche")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     if 'malla_generada' not in st.session_state:
@@ -98,7 +97,7 @@ def pantalla_programador():
     repo = conectar_github()
     if not repo: return
 
-    with st.expander("👁️ Cierre Anterior (GitHub)"):
+    with st.expander("👁️ Cierre Anterior"):
         estado_ayer_dict = obtener_ultimo_estado_github(repo)
         st.write(estado_ayer_dict)
 
@@ -106,7 +105,7 @@ def pantalla_programador():
     f_ini = c_f1.date_input("Inicio", datetime.now())
     f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
 
-    if st.button("🚀 Generar Malla Estricta"):
+    if st.button("🚀 Generar Malla Optimizada"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
@@ -121,7 +120,7 @@ def pantalla_programador():
             es_fest = fecha in co_h
             col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # 1. Libranza (Garantiza 3 activos)
+            # 1. Definir Libranza
             libranza = None
             if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -140,40 +139,45 @@ def pantalla_programador():
             for g in activos:
                 idx_g = grupos_n.index(g)
                 t_base = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
-                # Blindaje salud incondicional
+                # Blindaje salud
                 if memoria_t[g] == "T3" and t_base in ["T1", "T2"]: t_base = "T3"
-                if memoria_n[g] >= 7 and t_base == "T3": t_base = "T1"
+                if memoria_n[g] >= 7 and t_base == "T3"]: t_base = "T1"
                 turnos_hoy[g] = t_base
 
-            # 3. MOTOR DE COBERTURA OBLIGATORIA (Corrige duplicados para tapar huecos)
+            # --- AJUSTE ESTRICTO: NO DOBLE NOCHE ---
+            actuales = list(turnos_hoy.values())
+            while actuales.count("T3") > 1:
+                # Si hay más de un T3, el que NO venga de T3 ayer se mueve a T2 obligatoriamente
+                for g_act in activos:
+                    if turnos_hoy[g_act] == "T3" and memoria_t[g_act] != "T3" and actuales.count("T3") > 1:
+                        turnos_hoy[g_act] = "T2"
+                        actuales = list(turnos_hoy.values())
+                        break
+                # Si AMBOS vienen de T3 ayer (caso raro), movemos al que lleve menos noches
+                if actuales.count("T3") > 1:
+                    g_mejor = sorted(activos, key=lambda x: memoria_n[x])[0]
+                    turnos_hoy[g_mejor] = "T2"
+                    actuales = list(turnos_hoy.values())
+
+            # --- GARANTIZAR T1 Y T2 ---
             for t_req in ["T1", "T2", "T3"]:
                 if t_req not in turnos_hoy.values():
-                    # Buscamos a los que están repetidos
-                    for g_c in sorted(activos, key=lambda x: (memoria_t[x] == "T3")):
-                        turno_actual = turnos_hoy[g_c]
-                        if list(turnos_hoy.values()).count(turno_actual) > 1:
-                            # Validamos salud: No pasar a T1/T2 si viene de T3
-                            if not (memoria_t[g_c] == "T3" and t_req in ["T1", "T2"]):
+                    for g_c in activos:
+                        if list(turnos_hoy.values()).count(turnos_hoy[g_c]) > 1:
+                            if not (memoria_t[g_c] == "T3" and t_req == "T1"):
                                 turnos_hoy[g_c] = t_req
                                 break
-                    
-                    # Si aún falta el turno (caso extremo de salud), forzamos la cobertura
-                    if t_req not in turnos_hoy.values():
-                        for g_f in activos:
-                            if list(turnos_hoy.values()).count(turnos_hoy[g_f]) > 1:
-                                turnos_hoy[g_f] = t_req
-                                break
 
-            # 4. Registro y actualización de memoria
+            # 3. Registro
             for g in grupos_n:
-                t_final = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
-                n_acum = memoria_n[g] + 1 if t_final == "T3" else 0
-                memoria_n[g] = n_acum
+                t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+                n_a = memoria_n[g] + 1 if t_f == "T3" else 0
+                memoria_n[g] = n_a
                 resultados.append({
-                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_final, 
-                    "Fecha_Raw": pd.to_datetime(fecha), "Noches_Acum": n_acum
+                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
+                    "Fecha_Raw": pd.to_datetime(fecha), "Noches_Acum": n_a
                 })
-                memoria_t[g] = t_final
+                memoria_t[g] = t_f
 
         st.session_state.malla_generada = pd.DataFrame(resultados)
         guardar_malla_en_historico(st.session_state.malla_generada)
@@ -190,7 +194,6 @@ def pantalla_programador():
 
         st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
-        st.divider()
         st.subheader("🛡️ Validador de Auditoría")
         alertas = []
         for fc in df_m["Fecha_Col"].unique():
@@ -199,5 +202,5 @@ def pantalla_programador():
                 if t not in tv: alertas.append(f"{fc} (Falta {t})")
             if list(tv).count("T3") > 1: alertas.append(f"{fc} (Doble Noche)")
 
-        if not alertas: st.success("✅ ¡Cobertura 100% y Salud Protegida!")
+        if not alertas: st.success("✅ ¡Malla Perfecta: Sin Doble Noche y Cobertura Total!")
         else: st.error(f"Novedades: {', '.join(alertas)}")
