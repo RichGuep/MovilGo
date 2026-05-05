@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 import holidays
-import time
 from datetime import datetime, timedelta
 from github import Github
 
@@ -10,7 +9,6 @@ from github import Github
 
 def asignar_grupos_aleatorio(df_cable):
     df = df_cable.copy()
-    # Separar por perfiles (Asegúrate de que los nombres de los cargos coincidan con tu Excel)
     masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).to_dict('records')
     tecnicos_a = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).to_dict('records')
     tecnicos_b = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).to_dict('records')
@@ -39,7 +37,7 @@ def guardar_en_github(df):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         contents = repo.get_contents("empleados.xlsx")
-        repo.update_file(path="empleados.xlsx", message="Sincronización MovilGo Pro", 
+        repo.update_file(path="empleados.xlsx", message="Sincronización Estable", 
                          content=output.getvalue(), sha=contents.sha, branch="main")
         return True
     except Exception as e:
@@ -60,7 +58,7 @@ def pantalla_gestion_grupos():
             df_c = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
             if 'Grupo' not in df_c.columns: df_c['Grupo'] = "Sin Asignar"
             st.session_state.df_cable = df_c
-        except Exception as e: st.error(f"Error cargando Excel: {e}"); return
+        except Exception as e: st.error(f"Error: {e}"); return
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -69,57 +67,33 @@ def pantalla_gestion_grupos():
             st.rerun()
     with c2:
         if st.button("💾 Guardar en GitHub"):
-            if guardar_en_github(st.session_state.df_cable): st.success("¡Grupos guardados en GitHub!")
+            if guardar_en_github(st.session_state.df_cable): st.success("¡Sincronizado!")
     with c3:
-        if st.button("🗑️ Resetear Grupos"):
+        if st.button("🗑️ Reset"):
             st.session_state.df_cable['Grupo'] = "Sin Asignar"; st.rerun()
     
-    df_edit = st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], 
-                             use_container_width=True, hide_index=True)
+    df_edit = st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True, hide_index=True)
     if st.button("Aplicar Cambios Manuales"):
-        st.session_state.df_cable.update(df_edit); st.success("Cambios aplicados localmente")
+        st.session_state.df_cable.update(df_edit); st.success("Cambios aplicados")
 
-# --- 3. PROGRAMADOR CON BARRA DE PROGRESO Y REGLAS DE SALUD ---
+# --- 3. PROGRAMADOR ESTABLE 24/7 ---
 
 def pantalla_programador():
-    st.title("📅 Programador 24/7 - MovilGo Pro")
+    st.title("📅 Programador Operativo 24/7")
     
     if 'df_cable' not in st.session_state:
-        st.warning("⚠️ Primero configure los grupos en el menú de Gestión."); return
+        st.warning("⚠️ Cargue los grupos primero."); return
 
-    # --- PARAMETRIZADOR DE EXCEPCIONES ---
-    with st.expander("🛠️ Parametrizador de Descansos Manuales"):
-        if 'excepciones' not in st.session_state: st.session_state.excepciones = []
-        col_ex1, col_ex2, col_ex3 = st.columns(3)
-        g_exc = col_ex1.selectbox("Grupo", ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"])
-        f_exc_ini = col_ex2.date_input("Inicio", datetime.now())
-        f_exc_fin = col_ex3.date_input("Fin", datetime.now())
-
-        if st.button("➕ Añadir Regla de Descanso"):
-            rango = []
-            curr_e = f_exc_ini
-            while curr_e <= f_exc_fin:
-                rango.append(curr_e.strftime('%Y-%m-%d'))
-                curr_e += timedelta(days=1)
-            st.session_state.excepciones.append({"grupo": g_exc, "fechas": rango})
-            st.success(f"Novedad registrada para {g_exc}")
-
-        if st.session_state.excepciones:
-            for exc in st.session_state.excepciones:
-                st.caption(f"• {exc['grupo']}: {exc['fechas'][0]} al {exc['fechas'][-1]}")
-            if st.button("🗑️ Limpiar Reglas"):
-                st.session_state.excepciones = []; st.rerun()
-
-    # --- GENERACIÓN ---
     co_holidays = holidays.Colombia(years=[2024, 2025, 2026])
-    c_f1, c_f2 = st.columns(2)
-    f_inicio = c_f1.date_input("Fecha Inicio Matriz", datetime.now())
-    f_fin = c_f2.date_input("Fecha Fin Matriz", datetime.now() + timedelta(days=21))
 
-    if st.button("🚀 Generar Matriz con Reglas"):
-        # Interfaz de progreso
-        progreso_bar = st.progress(0)
-        status_text = st.empty()
+    st.subheader("Rango de Programación")
+    c_f1, c_f2 = st.columns(2)
+    f_inicio = c_f1.date_input("Inicio", datetime.now())
+    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
+
+    if st.button("🚀 Generar Programación"):
+        # Barra de progreso simple
+        bar = st.progress(0)
         
         lista_fechas = []
         curr = f_inicio
@@ -131,118 +105,104 @@ def pantalla_programador():
         deudas = {g: 0 for g in grupos}
         historial = {g: "DESC" for g in grupos}
 
-        total_dias = len(lista_fechas)
-        
         for i, fecha in enumerate(lista_fechas):
-            # Actualizar progreso
-            porcentaje = int((i + 1) / total_dias * 100)
-            progreso_bar.progress(porcentaje)
-            status_text.text(f"Procesando día {i+1} de {total_dias}...")
-
-            dia_semana = fecha.weekday()
+            bar.progress((i + 1) / len(lista_fechas))
+            
+            dia_idx = fecha.weekday()
             sem_iso = fecha.isocalendar()[1]
             es_festivo = fecha in co_holidays
-            f_str = fecha.strftime('%Y-%m-%d')
             col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_festivo else ''}"
 
-            # 1. Chequeo de Excepciones Manuales
-            libres_hoy = [exc['grupo'] for exc in st.session_state.excepciones if f_str in exc['fechas']]
-            
-            # 2. Descansos Automáticos (Sáb/Dom/Comp)
-            libranza_auto = None
-            if dia_semana == 5: # Sab
-                libranza_auto = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
+            # 1. Libranzas
+            libranza = None
+            if dia_idx == 5: # Sab
+                libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
                 deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
-            elif dia_semana == 6: # Dom
-                libranza_auto = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
+            elif dia_idx == 6: # Dom
+                libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
                 deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
-            elif dia_semana < 5: # Compensatorios Lun-Vie
+            else:
+                # Compensatorios (Prioridad: no darlo justo después de T3)
                 for g in sorted(deudas, key=deudas.get, reverse=True):
-                    if deudas[g] > 0 and historial[g] != "T3" and g not in libres_hoy:
-                        libranza_auto = g
+                    if deudas[g] > 0 and historial[g] != "T3":
+                        libranza = g
                         deudas[g] -= 1
                         break
-            
-            if libranza_auto: libres_hoy.append(libranza_auto)
-            libres_hoy = list(set(libres_hoy)) # Quitar duplicados
 
-            # 3. Asignación de Turnos (Máximo 1 T3 y Protección T3->T1)
-            activos = [g for g in grupos if g not in libres_hoy]
-            turnos_dia = {}
+            # 2. Asignación de Turnos (Protección T3->T1 integrada)
+            activos = [g for g in grupos if g != libranza]
+            turnos_hoy = {}
             
             for g in activos:
                 idx_g = grupos.index(g)
-                t_base = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
-                # Protección Bienestar: No T1 después de T3
-                if historial[g] == "T3" and t_base == "T1": t_base = "T3"
-                turnos_dia[g] = t_base
-
-            # Ajuste Cobertura
-            asignados = list(turnos_dia.values())
-            while asignados.count("T3") > 1: # No duplicar noches
-                for g in activos:
-                    if turnos_dia[g] == "T3" and historial[g] != "T3":
-                        turnos_dia[g] = "T1"
-                        asignados = list(turnos_dia.values())
-                        break
-                    break
-            
-            # Asegurar T1, T2, T3
-            if len(activos) >= 3:
-                for tr in ["T1", "T2", "T3"]:
-                    if tr not in asignados:
-                        for g in activos:
-                            if asignados.count(turnos_dia[g]) > 1:
-                                if not (historial[g] == "T3" and tr == "T1"):
-                                    turnos_dia[g] = tr
-                                    asignados = list(turnos_dia.values())
-                                    break
-
-            for g in grupos:
-                if g in libres_hoy:
-                    turno_f = "EXC" if any(f_str in exc['fechas'] and exc['grupo'] == g for exc in st.session_state.excepciones) else ("DESC" if dia_semana >= 5 else "COMP")
-                else:
-                    turno_f = turnos_dia.get(g, "T1")
+                # Turno estable semanal
+                t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
                 
-                resultados.append({"Grupo": g, "Fecha_Col": col_name, "Turno": turno_f})
-                historial[g] = turno_f
+                # Bloqueo Salud: No T1/T2 después de T3
+                if historial[g] == "T3" and t_sug in ["T1", "T2"]:
+                    t_sug = "T3"
+                turnos_hoy[g] = t_sug
 
-        # Finalizar indicadores
-        progreso_bar.empty()
-        status_text.empty()
-        st.success("✅ Matriz generada con éxito siguiendo todas las reglas de salud y cobertura.")
+            # 3. Ajuste de Cobertura (Garantizar T1, T2, T3 y solo un T3)
+            # Primero: Limitar a un solo T3 (el que venga de amanecida tiene prioridad para quedarse en T3)
+            actuales = list(turnos_hoy.values())
+            while actuales.count("T3") > 1:
+                for g in activos:
+                    if turnos_hoy[g] == "T3" and historial[g] != "T3" and actuales.count("T3") > 1:
+                        turnos_hoy[g] = "T2" # Mover a Tarde (más seguro que T1)
+                        actuales = list(turnos_hoy.values())
+            
+            # Segundo: Asegurar que existan T1, T2, T3
+            for tr in ["T1", "T2", "T3"]:
+                if tr not in actuales:
+                    for g in activos:
+                        if actuales.count(turnos_hoy[g]) > 1:
+                            # Validar que el cambio no viole salud
+                            if not (historial[g] == "T3" and tr == "T1"):
+                                turnos_hoy[g] = tr
+                                actuales = list(turnos_hoy.values())
+                                break
 
-        # --- VISUALIZACIÓN ---
+            # 4. Registro
+            for g in grupos:
+                t_final = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+                resultados.append({"Grupo": g, "Fecha_Col": col_name, "Turno": t_final})
+                historial[g] = t_final
+
+        bar.empty()
+        
+        # --- RENDERIZADO ---
         df_res = pd.DataFrame(resultados)
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
         
-        def style_matrix(val):
-            c = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500", "EXC": "#9467bd"}
+        def color_t(val):
+            c = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
             return f'background-color: {c.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
-        st.dataframe(matriz.style.map(style_matrix), use_container_width=True)
+        st.subheader("📊 Matriz de Turnos")
+        st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
         # --- VALIDADOR ---
         st.divider()
-        c_aud1, c_aud2 = st.columns(2)
-        with c_aud1:
-            st.write("**📊 Resumen de Descansos**")
-            st.table(df_res[df_res['Turno'].isin(['DESC', 'COMP', 'EXC'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0))
-        with c_aud2:
-            st.write("**🛡️ Auditoría Operativa**")
-            alertas = []
+        st.subheader("🔍 Validador de Auditoría")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.write("**✅ Descansos Otorgados**")
+            st.table(df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0))
+        with c2:
+            st.write("**🛡️ Auditoría de Cobertura**")
+            errores = []
             for fc in df_res["Fecha_Col"].unique():
                 tv = df_res[df_res["Fecha_Col"] == fc]["Turno"].values
                 for t in ["T1", "T2", "T3"]:
-                    if t not in tv: alertas.append(f"{fc}(Sin {t})")
-                if list(tv).count("T3") > 1: alertas.append(f"{fc}(Doble T3)")
+                    if t not in tv: errores.append(f"{fc}({t})")
             
-            # Chequeo salud
+            # Verificación salud
             for g in grupos:
                 h = df_res[df_res["Grupo"] == g]["Turno"].tolist()
-                for d in range(1, len(h)):
-                    if h[d-1] == "T3" and h[d] == "T1": alertas.append(f"⚠️ Fatiga {g}")
+                for i in range(1, len(h)):
+                    if h[i-1] == "T3" and h[i] == "T1": errores.append(f"⚠️ {g}(T3->T1)")
 
-            if not alertas: st.success("Operación 100% Optimizada.")
-            else: st.error(f"Revisar: {', '.join(alertas)}")
+            if not errores: st.success("¡Operación Segura y Completa!")
+            else: st.error(f"Alertas: {', '.join(errores)}")
