@@ -23,35 +23,14 @@ def obtener_ultimo_estado_github(repo):
             regs = df_hist[df_hist['Grupo'] == g].sort_values('Fecha_Raw')
             if not regs.empty:
                 u = regs.iloc[-1]
-                estado[g] = {
-                    "u": u['Turno'], 
-                    "n": int(u.get('Noches_Acum', 0)), 
-                    "d": int(u.get('Deuda_Compensatorio', 0))
-                }
+                estado[g] = {"u": u['Turno'], "n": int(u.get('Noches_Acum', 0)), "d": int(u.get('Deuda_Compensatorio', 0))}
             else:
                 estado[g] = {"u": "DESC", "n": 0, "d": 0}
         return estado
     except:
         return {g: {"u": "DESC", "n": 0, "d": 0} for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
 
-def guardar_malla_en_historico(df_nueva):
-    repo = conectar_github()
-    if not repo: return
-    try:
-        try:
-            contents = repo.get_contents("malla_historica.xlsx")
-            df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
-            df_final = pd.concat([df_previo, df_nueva]).drop_duplicates(subset=['Grupo', 'Fecha_Raw'], keep='last')
-        except:
-            df_final = df_nueva
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_final.to_excel(writer, index=False)
-        contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Richard Blindaje Semanal", output.getvalue(), contents.sha)
-    except: pass
-
-# --- 2. LÓGICA DE TURNOS ---
+# --- 2. LÓGICA DE SALUD Y HORARIOS ---
 def es_rotacion_valida(ayer, hoy):
     if ayer in ["DESC", "COMP", "OFF"]: return True
     if hoy in ["DESC", "COMP", "OFF"]: return True
@@ -62,7 +41,7 @@ def obtener_horarios(turno):
     h = {"T1": ("05:30", "13:30"), "T2": ("13:30", "21:30"), "T3": ("21:30", "05:30")}
     return h.get(turno, ("OFF", "OFF"))
 
-# --- 3. PANTALLAS ---
+# --- 3. PANTALLA GESTIÓN ---
 def pantalla_gestion_grupos():
     st.title("👥 Gestión de Grupos")
     if 'df_cable' not in st.session_state:
@@ -72,11 +51,12 @@ def pantalla_gestion_grupos():
         except: st.error("Falta empleados.xlsx"); return
     st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
 
+# --- 4. PROGRAMADOR CON BLINDAJE SEMANAL ---
 def pantalla_programador():
-    st.title("📅 Programador Richard - Blindaje Legal Semanal")
+    st.title("📅 Programador Richard - Blindaje Legal 7 Días")
     
     if 'malla_generada' not in st.session_state: st.session_state.malla_generada = None
-    if 'df_cable' not in st.session_state: st.warning("⚠️ Cargue empleados en Gestión de Grupos."); return
+    if 'df_cable' not in st.session_state: st.warning("⚠️ Cargue empleados."); return
 
     repo = conectar_github()
     estado_base = obtener_ultimo_estado_github(repo)
@@ -85,7 +65,7 @@ def pantalla_programador():
     f_ini = c1.date_input("Inicio", datetime.now())
     f_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
-    if st.button("🚀 Generar Malla (Descanso Inmediato)"):
+    if st.button("🚀 Generar Malla Blindada"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
@@ -97,27 +77,28 @@ def pantalla_programador():
         for fecha in lista_fechas:
             d_idx, s_iso, f_col = fecha.weekday(), fecha.isocalendar()[1], fecha.strftime('%a %d/%m')
             
-            # --- MOTOR DE DESCANSOS Y COMPENSATORIOS ---
+            # --- MOTOR DE DESCANSOS IMPLACABLE ---
             lib = None
-            # 1. Descansos de Ley (Fin de semana)
-            if d_idx == 5: # Sábado
+            
+            # 1. Sábados y Domingos: Descansos por ciclo
+            if d_idx == 5: 
                 lib = "Grupo 1" if s_iso % 2 == 0 else "Grupo 2"
-                m_d["Grupo 2" if s_iso % 2 == 0 else "Grupo 1"] += 1 # El que no libra genera deuda
-            elif d_idx == 6: # Domingo
+                # El grupo que DEBÍA descansar y trabajó, genera deuda inmediata
+                m_d["Grupo 2" if s_iso % 2 == 0 else "Grupo 1"] += 1 
+            elif d_idx == 6: 
                 lib = "Grupo 3" if s_iso % 2 == 0 else "Grupo 4"
                 m_d["Grupo 4" if s_iso % 2 == 0 else "Grupo 3"] += 1
             else:
-                # 2. PAGO DE COMPENSATORIOS (Obligatorio en la semana siguiente)
-                # Ordenamos por deuda (los que deben descansar ya)
+                # 2. Lunes a Viernes: PAGO OBLIGATORIO DE DEUDA
+                # Si alguien debe un día, DESCANSA HOY (si no viene de T3)
+                # Ordenamos para que el que más debe, descanse primero en la semana
                 for g in sorted(m_d, key=m_d.get, reverse=True):
-                    if m_d[g] > 0:
-                        # Regla: No se puede compensar saliendo de Noche (T3) para respetar sueño
-                        if m_t[g] != "T3":
-                            lib = g
-                            m_d[g] -= 1
-                            break
+                    if m_d[g] > 0 and m_t[g] != "T3":
+                        lib = g
+                        m_d[g] -= 1 # Deuda saldada
+                        break
 
-            # --- ASIGNACIÓN DE TURNOS ACTIVOS ---
+            # --- ASIGNACIÓN DE TURNOS (CANDADO DE SALUD) ---
             activos = [g for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"] if g != lib]
             hoy_t = {}
             alertas_dia = {}
@@ -126,19 +107,19 @@ def pantalla_programador():
                 idx = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"].index(g)
                 sug = ["T1", "T2", "T3"][(idx + s_iso) % 3]
                 
-                # Candado de Salud: Rotación siempre hacia adelante
+                # Respetar rotación ascendente (No T3 -> T1)
                 if not es_rotacion_valida(m_t[g], sug): sug = m_t[g]
                 if m_n[g] >= 6 and sug == "T3": sug = "T1"
                 
                 hoy_t[g] = sug
                 alertas_dia[g] = "" if es_rotacion_valida(m_t[g], sug) else f"⚠️ {m_t[g]} -> {sug}"
 
-            # Garantizar T3 único y Refuerzo T2
+            # T3 único y Refuerzo T2
             while list(hoy_t.values()).count("T3") > 1:
                 for gn in activos:
                     if hoy_t[gn] == "T3" and m_t[gn] != "T3": hoy_t[gn] = "T2"; break
 
-            # Registro final del día
+            # Registro final
             for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
                 t_f = ("DESC" if d_idx >= 5 else "COMP") if g == lib else hoy_t.get(g, "T1")
                 h_i, h_f = obtener_horarios(t_f)
@@ -151,37 +132,36 @@ def pantalla_programador():
                         "Cedula": p['Cedula'], "Hora Inicio": h_i, "Hora Fin": h_f, "Grupo": g, 
                         "Turno": t_f, "Fecha_Col": f_col, "Mes": fecha.strftime('%B %Y'), 
                         "Noches_Acum": n_a, "Alerta": alertas_dia.get(g, ""), 
-                        "Deuda_Compensatorio": m_d[g], "Fecha_Raw": pd.to_datetime(fecha)
+                        "Deuda_Pendiente": m_d[g], "Fecha_Raw": pd.to_datetime(fecha)
                     })
                 m_t[g], m_n[g] = t_f, n_a
 
         st.session_state.malla_generada = pd.DataFrame(resultados)
-        guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
-    # --- RENDERIZADO VISUAL ---
+    # --- VISTA FINAL ---
     if st.session_state.get('malla_generada') is not None:
         df = st.session_state.malla_generada
         df_m = df.drop_duplicates(['Grupo', 'Fecha_Raw'])
         
-        st.subheader("📊 Matriz de Turnos Colorida")
+        st.subheader("📊 Matriz de Turnos (Colores)")
         mat = df_m.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         def estilo_turnos(v):
             colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
             return f'background-color: {colors.get(v, "#31333F")}; color: white; font-weight: bold; border: 1px solid white'
         st.dataframe(mat.style.map(estilo_turnos), use_container_width=True)
 
-        st.subheader("🔍 Auditoría de Deudas y Salud")
+        st.subheader("🔍 Auditoría Richard: Descansos y Deudas")
         c1, c2 = st.columns(2)
         with c1:
-            st.write("**Resumen de Descansos Otorgados:**")
+            st.write("**Conteo de Descansos (Debe haber 4 o 5 por mes):**")
             res = df[df['Turno'].isin(['DESC', 'COMP'])].drop_duplicates(['Grupo', 'Fecha_Raw'])
             if not res.empty: st.table(res.groupby(['Mes', 'Grupo', 'Turno']).size().unstack(fill_value=0))
         with c2:
-            st.write("**Estado de Deuda (Pendiente por pagar):**")
-            # Mostramos la deuda final del periodo generado
-            deuda_final = df_m.drop_duplicates('Grupo', keep='last')[['Grupo', 'Deuda_Compensatorio']]
+            st.write("**Deuda al final del periodo (Debe ser 0):**")
+            # Esto muestra cuántos días se quedaron debiendo. Si es > 0, hay que revisar.
+            deuda_final = df_m.drop_duplicates('Grupo', keep='last')[['Grupo', 'Deuda_Pendiente']]
             st.table(deuda_final)
 
-        st.subheader("📋 Malla Operativa Detallada")
-        st.dataframe(df[["Fecha", "Nombre", "Cargo", "Cedula", "Hora Inicio", "Hora Fin", "Grupo", "Turno", "Deuda_Compensatorio"]], use_container_width=True, hide_index=True)
+        st.subheader("📋 Malla Detallada (Nombre / Cédula / Horas)")
+        st.dataframe(df[["Fecha", "Nombre", "Cargo", "Cedula", "Hora Inicio", "Hora Fin", "Grupo", "Turno", "Deuda_Pendiente"]], hide_index=True)
