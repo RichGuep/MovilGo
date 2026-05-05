@@ -2,13 +2,14 @@ import streamlit as st
 import pandas as pd
 import random
 import io
+import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# --- FUNCIONES DE APOYO ---
+# --- 1. FUNCIONES LÓGICAS DE APOYO ---
 
 def asignar_grupos_aleatorio(df_cable):
-    """Mezcla y asigna personal respetando el mix 2-7-3."""
+    """Mezcla y asigna personal respetando el mix contractual 2-7-3."""
     df = df_cable.copy()
     masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).to_dict('records')
     tecnicos_a = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).to_dict('records')
@@ -31,44 +32,54 @@ def asignar_grupos_aleatorio(df_cable):
     return pd.DataFrame(grupos_finales)
 
 def guardar_en_github(df):
-    """Sincroniza el Excel con GitHub."""
+    """Sincroniza el Excel directamente con el repositorio de GitHub."""
     try:
         if "GITHUB_TOKEN" not in st.secrets:
-            st.error("Falta GITHUB_TOKEN en Secrets.")
+            st.error("❌ Token 'GITHUB_TOKEN' no encontrado en Secrets.")
             return False
+        
         g = Github(st.secrets["GITHUB_TOKEN"])
-        repo = g.get_repo("RichGuep/movilgo") # Asegura que sea tu usuario/repo
+        # RECUERDA: Cambia 'RichGuep/movilgo' por tu usuario/repo real
+        repo = g.get_repo("RichGuep/movilgo")
+        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
+        
         contents = repo.get_contents("empleados.xlsx")
-        repo.update_file(path="empleados.xlsx", message="Sincronización Grupos MovilGo", 
-                         content=output.getvalue(), sha=contents.sha, branch="main")
+        repo.update_file(
+            path="empleados.xlsx", 
+            message="Actualización de Grupos desde MovilGo", 
+            content=output.getvalue(), 
+            sha=contents.sha, 
+            branch="main"
+        )
         return True
     except Exception as e:
-        st.error(f"Error GitHub: {e}")
+        st.error(f"❌ Error GitHub: {e}")
         return False
 
-# --- MÓDULO: GESTIÓN DE GRUPOS ---
+# --- 2. MÓDULO: GESTIÓN DE GRUPOS ---
 
 def pantalla_gestion_grupos():
     st.title("👥 Gestión de Grupos - Cablemovil")
-    
+    st.info("Configura la estructura 2-7-3 antes de generar la programación.")
+
     if 'df_cable' not in st.session_state:
         try:
             df_full = pd.read_excel("empleados.xlsx")
             df_full.columns = df_full.columns.str.strip()
-            # Normalización rápida
+            # Mapeo flexible para evitar KeyErrors
             mapeo = {'Cedula': 'cedu', 'Nombre': 'nomb', 'Cargo': 'carg', 'Empresa': 'empr'}
-            for oficial, busqueda in mapeo.items():
-                col = [c for c in df_full.columns if busqueda in c.lower()]
+            for oficial, clave in mapeo.items():
+                col = [c for c in df_full.columns if clave in c.lower()]
                 if col: df_full = df_full.rename(columns={col[0]: oficial})
             
             df_c = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
             if 'Grupo' not in df_c.columns: df_c['Grupo'] = "Sin Asignar"
             st.session_state.df_cable = df_c
         except Exception as e:
-            st.error(f"Error: {e}"); return
+            st.error(f"⚠️ Error cargando base de datos: {e}"); return
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -76,100 +87,95 @@ def pantalla_gestion_grupos():
             st.session_state.df_cable = asignar_grupos_aleatorio(st.session_state.df_cable)
             st.rerun()
     with c2:
-        if st.button("💾 Sincronizar GitHub"):
-            if guardar_en_github(st.session_state.df_cable): st.success("¡Guardado!")
+        if st.button("💾 Guardar en GitHub"):
+            if guardar_en_github(st.session_state.df_cable): st.success("¡Sincronizado!")
     with c3:
-        if st.button("🗑️ Reset"):
+        if st.button("🗑️ Resetear"):
             st.session_state.df_cable['Grupo'] = "Sin Asignar"; st.rerun()
 
     df_edit = st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], 
                              use_container_width=True, hide_index=True)
     if st.button("Aplicar Cambios Manuales"):
-        st.session_state.df_cable.update(df_edit); st.success("Cambios aplicados")
+        st.session_state.df_cable.update(df_edit); st.success("Cambios aplicados localmente")
 
-# --- MÓDULO: PROGRAMADOR ---
+# --- 3. MÓDULO: PROGRAMADOR 24/7 ---
 
 def pantalla_programador():
     st.title("📅 Programador Operativo 24/7")
     
     # Verificación de Grupos
+    if 'df_cable' not in st.session_state:
+        st.warning("⚠️ Carga la base de datos en 'Gestión de Grupos'.")
+        return
+    
     grupos_validos = [g for g in st.session_state.df_cable['Grupo'].unique() if "Grupo" in str(g)]
     if len(grupos_validos) < 4:
-        st.warning("⚠️ Se requieren al menos 4 grupos configurados para esta lógica.")
+        st.warning("⚠️ Se requieren 4 grupos (G1 a G4) para la rotación 24/7.")
         return
 
-    st.subheader("Configuración del Periodo")
-    c_f1, c_f2 = st.columns(2)
-    f_inicio = c_f1.date_input("Fecha Inicio", datetime.now())
-    f_fin = c_f2.date_input("Fecha Fin", datetime.now() + timedelta(days=28))
+    # Festivos Colombia
+    co_holidays = holidays.Colombia(years=[datetime.now().year, datetime.now().year + 1])
 
-    if st.button("🚀 Generar Matriz de Cobertura"):
+    st.subheader("Selección de Periodo")
+    col_f1, col_f2 = st.columns(2)
+    f_inicio = col_f1.date_input("Desde", datetime.now())
+    f_fin = col_f2.date_input("Hasta", datetime.now() + timedelta(days=14))
+
+    if st.button("🚀 Generar Matriz de Turnos"):
         lista_fechas = []
         curr = f_inicio
         while curr <= f_fin:
             lista_fechas.append(curr); curr += timedelta(days=1)
 
         resultados = []
-        grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+        grupos_lista = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
         
         for fecha in lista_fechas:
             es_sab = (fecha.weekday() == 5)
             es_dom = (fecha.weekday() == 6)
             es_lun = (fecha.weekday() == 0)
+            es_festivo = fecha in co_holidays
             sem_par = (fecha.isocalendar()[1] % 2 == 0)
 
-            # LÓGICA DE COBERTURA: Solo 1 grupo descansa por día
+            # Lógica Richard: 1 grupo descansa, 3 trabajan para cubrir T1, T2, T3
             grupo_descansa = None
             if es_sab:
                 grupo_descansa = "Grupo 1" if sem_par else "Grupo 2"
             elif es_dom:
                 grupo_descansa = "Grupo 3" if sem_par else "Grupo 4"
             elif es_lun:
-                # Compensatorio intercalado para G1 y G2 que trabajaron el domingo
                 grupo_descansa = "Grupo 1" if not sem_par else "Grupo 2"
 
-            # Asignación de turnos a los grupos activos
-            grupos_activos = [g for g in grupos if g != grupo_descansa]
-            # Turnos fijos para los 3 activos del día
-            for i, g_name in enumerate(grupos):
+            grupos_activos = [g for g in grupos_lista if g != grupo_descansa]
+            
+            # Formato de columna
+            dia_str = fecha.strftime('%a').capitalize()
+            col_name = f"{dia_str} {fecha.strftime('%d/%m')}"
+            if es_festivo: col_name += " 🇨🇴"
+
+            for g_name in grupos_lista:
                 if g_name == grupo_descansa:
                     turno = "DESC" if not es_lun else "COMP"
                 else:
-                    # Rotación de T1, T2, T3 entre los 3 activos
                     pos = grupos_activos.index(g_name)
-                    # La rotación cambia cada semana para que no sea el mismo turno
                     shift = fecha.isocalendar()[1] % 3
-                    opciones = ["T1", "T2", "T3"]
-                    turno = opciones[(pos + shift) % 3]
+                    turno = ["T1", "T2", "T3"][(pos + shift) % 3]
                 
-                resultados.append({
-                    "Fecha": fecha.strftime('%d/%b'), 
-                    "Día": fecha.strftime('%a'), 
-                    "Grupo": g_name, 
-                    "Turno": turno
-                })
+                resultados.append({"Grupo": g_name, "Fecha_Col": col_name, "Turno": turno})
 
         df_res = pd.DataFrame(resultados)
-        
-        # Visualización por bloques de 7 días
-        fechas_unicas = df_res["Fecha"].unique()
-        for i in range(0, len(fechas_unicas), 7):
-            bloque_fechas = fechas_unicas[i:i+7]
-            df_bloque = df_res[df_res["Fecha"].isin(bloque_fechas)]
-            pivot = df_bloque.pivot(index="Grupo", columns="Fecha", values="Turno")
-            
-            def style_c(val):
-                colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", 
-                          "DESC": "#ff4b4b", "COMP": "#ffa500"}
-                return f'background-color: {colors.get(val, "#444")}; color: white; font-weight: bold'
-            
-            st.write(f"**Bloque: {bloque_fechas[0]} al {bloque_fechas[-1]}**")
-            st.dataframe(pivot.style.map(style_c), use_container_width=True)
+        matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
+        matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
 
-    st.sidebar.success("""
-    **Estrategia 24/7 Activada:**
-    - **Sábados:** G1 y G2 intercalan descanso.
-    - **Domingos:** G3 y G4 intercalan descanso.
-    - **Lunes:** G1 y G2 intercalan compensatorio.
-    - **Resultado:** Siempre hay 3 grupos activos para cubrir T1, T2 y T3.
-    """)
+        def style_c(val):
+            colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
+            return f'background-color: {colors.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
+
+        st.subheader("📊 Matriz Unificada de Turnos")
+        st.dataframe(matriz.style.map(style_c), use_container_width=True)
+        
+        # Detalle de festivos
+        festivos_p = [f"{f.strftime('%d/%b')}: {co_holidays.get(f)}" for f in lista_fechas if f in co_holidays]
+        if festivos_p:
+            with st.expander("🇨🇴 Festivos detectados en el periodo"):
+                for fp in festivos_p: st.write(fp)
