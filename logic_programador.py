@@ -32,7 +32,6 @@ def asignar_grupos_aleatorio(df_cable):
     return pd.DataFrame(grupos_finales)
 
 def guardar_en_github(df):
-    """Sincroniza el Excel con GitHub."""
     try:
         if "GITHUB_TOKEN" not in st.secrets:
             st.error("❌ Token 'GITHUB_TOKEN' no encontrado."); return False
@@ -82,7 +81,7 @@ def pantalla_gestion_grupos():
     if st.button("Aplicar Cambios Manuales"):
         st.session_state.df_cable.update(df_edit); st.success("Cambios aplicados")
 
-# --- 3. MÓDULO: PROGRAMADOR CON ESTABILIDAD SEMANAL ---
+# --- 3. MÓDULO: PROGRAMADOR CON VALIDADOR ---
 
 def pantalla_programador():
     st.title("📅 Programador Operativo 24/7")
@@ -97,7 +96,7 @@ def pantalla_programador():
     f_inicio = c_f1.date_input("Inicio", datetime.now())
     f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
 
-    if st.button("🚀 Generar Matriz Operativa"):
+    if st.button("🚀 Generar y Validar Programación"):
         lista_fechas = []
         curr = f_inicio
         while curr <= f_fin:
@@ -108,59 +107,46 @@ def pantalla_programador():
         dias_pendientes = {g: 0 for g in grupos_lista}
 
         for fecha in lista_fechas:
-            dia_idx = fecha.weekday() # 0=Lun, 5=Sab, 6=Dom
-            es_fin_semana = dia_idx >= 5
-            es_festivo = fecha in co_holidays
-            
-            # Identificador único de la semana (ISO) para fijar el turno
+            dia_idx = fecha.weekday()
             num_semana = fecha.isocalendar()[1]
             sem_par = (num_semana % 2 == 0)
+            es_festivo = fecha in co_holidays
 
             grupo_que_libra_hoy = None
 
-            # --- A. ASIGNACIÓN DE DESCANSOS ---
-            if dia_idx == 5: # Sábado
+            # Asignación de descansos
+            if dia_idx == 5: # Sab
                 grupo_que_libra_hoy = "Grupo 1" if sem_par else "Grupo 2"
                 quien_trabaja = "Grupo 2" if sem_par else "Grupo 1"
                 dias_pendientes[quien_trabaja] += 1
-            
-            elif dia_idx == 6: # Domingo
+            elif dia_idx == 6: # Dom
                 grupo_que_libra_hoy = "Grupo 3" if sem_par else "Grupo 4"
                 quien_trabaja = "Grupo 4" if sem_par else "Grupo 3"
                 dias_pendientes[quien_trabaja] += 1
-
-            # --- B. COMPENSATORIOS FLEXIBLES ---
-            else:
+            else: # Lun-Vie: Compensatorios
                 for g in sorted(dias_pendientes, key=dias_pendientes.get, reverse=True):
                     if dias_pendientes[g] > 0:
                         grupo_que_libra_hoy = g
                         dias_pendientes[g] -= 1
                         break
 
-            # --- C. ASIGNACIÓN DE TURNO FIJO SEMANAL ---
-            # Definimos el orden de turnos por semana para cada grupo
-            # Esto asegura que durante toda la semana el grupo tenga el mismo horario
-            activos_reales = [g for g in grupos_lista if g != grupo_que_libra_hoy]
-            
-            col_name = f"{fecha.strftime('%a').capitalize()} {fecha.strftime('%d/%m')}"
-            if es_festivo: col_name += " 🇨🇴"
+            activos = [g for g in grupos_lista if g != grupo_que_libra_hoy]
+            col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_festivo else ''}"
 
             for g_name in grupos_lista:
                 if g_name == grupo_que_libra_hoy:
-                    turno = "DESC" if es_fin_semana else "COMP"
+                    turno = "DESC" if dia_idx >= 5 else "COMP"
                 else:
-                    # Lógica de Turno Fijo Semanal:
-                    # El turno depende únicamente del nombre del grupo y el número de la semana.
-                    # No depende del día del mes, así no cambia de lunes a viernes.
+                    # Turno Estable Semanal
                     idx_grupo = grupos_lista.index(g_name)
-                    # Rotación: cada semana el grupo pasa al siguiente turno (T1 -> T2 -> T3)
                     idx_turno = (idx_grupo + num_semana) % 3
-                    opciones_turno = ["T1", "T2", "T3"]
-                    turno = opciones_turno[idx_turno]
+                    turno = ["T1", "T2", "T3"][idx_turno]
                 
-                resultados.append({"Grupo": g_name, "Fecha_Col": col_name, "Turno": turno})
+                resultados.append({"Grupo": g_name, "Fecha_Col": col_name, "Turno": turno, "Fecha_Raw": fecha})
 
         df_res = pd.DataFrame(resultados)
+
+        # --- SECCIÓN 1: MATRIZ VISUAL ---
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
 
@@ -168,6 +154,38 @@ def pantalla_programador():
             colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
             return f'background-color: {colors.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
-        st.subheader("📊 Matriz de Cobertura Estable (Turnos Semanales)")
+        st.subheader("📊 Matriz de Turnos")
         st.dataframe(matriz.style.map(style_c), use_container_width=True)
-        st.success("✅ Los turnos ahora son fijos durante toda la semana para garantizar estabilidad laboral.")
+
+        # --- SECCIÓN 2: VALIDACIÓN Y AUDITORÍA ---
+        st.divider()
+        st.subheader("🔍 Validador de Cumplimiento")
+        
+        col_aud1, col_aud2 = st.columns(2)
+
+        with col_aud1:
+            st.write("**✅ Cantidad de Descansos Otorgados**")
+            # Contar DESC y COMP por grupo
+            conteo_descansos = df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0)
+            st.table(conteo_descansos)
+
+        with col_aud2:
+            st.write("**🛡️ Verificación de Cobertura Diaria**")
+            # Verificar que cada día tenga T1, T2 y T3
+            dias_con_error = []
+            for fecha_col in df_res["Fecha_Col"].unique():
+                turnos_del_dia = df_res[df_res["Fecha_Col"] == fecha_col]["Turno"].values
+                for t in ["T1", "T2", "T3"]:
+                    if t not in turnos_del_dia:
+                        dias_con_error.append(f"{fecha_col} (Falta {t})")
+
+            if not dias_con_error:
+                st.success("¡Perfecto! Todos los días tienen cubiertos los turnos T1, T2 y T3.")
+            else:
+                st.error(f"⚠️ Errores de cobertura en: {', '.join(dias_con_error)}")
+
+        # --- SECCIÓN 3: ALERTAS DE DEUDAS ---
+        if any(v > 0 for v in dias_pendientes.values()):
+            with st.expander("⚠️ Días de compensatorio pendientes por asignar"):
+                for g, d in dias_pendientes.items():
+                    if d > 0: st.warning(f"Al **{g}** se le deben {d} día(s) que no alcanzaron a compensarse en el rango seleccionado.")
