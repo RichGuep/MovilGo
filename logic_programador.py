@@ -39,40 +39,40 @@ def asignar_grupos_aleatorio(df_cable):
     return pd.DataFrame(grupos_finales)
 
 def guardar_en_github(df):
-    """
-    Sincroniza el DataFrame directamente con el archivo empleados.xlsx en GitHub.
-    """
     try:
         if "GITHUB_TOKEN" not in st.secrets:
-            st.error("❌ Token de GitHub no configurado en Secrets.")
+            st.error("❌ No configuraste el secreto 'GITHUB_TOKEN' en Streamlit.")
             return False
             
         token = st.secrets["GITHUB_TOKEN"]
         g = Github(token)
         
-        # --- AJUSTA ESTO CON TUS DATOS ---
-        repo_name = "TU_USUARIO/TU_REPOSITORIO" 
+        # USA EXACTAMENTE TU USUARIO Y NOMBRE DE REPO
+        repo_name = "RichGuep/movilgo" # <-- REVISA ESTO CON LUPA
         repo = g.get_repo(repo_name)
         
-        # Convertir a Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         content = output.getvalue()
 
-        # Obtener SHA del archivo actual para actualizarlo
-        contents = repo.get_contents("empleados.xlsx")
-        
-        repo.update_file(
-            path="empleados.xlsx",
-            message="Actualización automática de grupos - MovilGo",
-            content=content,
-            sha=contents.sha,
-            branch="main"
-        )
-        return True
+        # Intenta obtener el archivo. Si el 404 es aquí, es que el archivo se llama diferente
+        try:
+            contents = repo.get_contents("empleados.xlsx")
+            repo.update_file(
+                path="empleados.xlsx",
+                message="Actualización automática de grupos - MovilGo",
+                content=content,
+                sha=contents.sha,
+                branch="main"
+            )
+            return True
+        except Exception as file_error:
+            st.error(f"❌ El repositorio existe, pero no encontré el archivo 'empleados.xlsx': {file_error}")
+            return False
+
     except Exception as e:
-        st.error(f"❌ Error de conexión con GitHub: {e}")
+        st.error(f"❌ Error de acceso al repositorio (404): Verifica que el nombre '{repo_name}' sea correcto y el Token tenga permisos.")
         return False
 
 def pantalla_programador():
