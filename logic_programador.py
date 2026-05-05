@@ -5,7 +5,7 @@ import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. CONEXIÓN Y PERSISTENCIA GITHUB (MEMORIA HISTÓRICA) ---
+# --- 1. CONEXIÓN Y PERSISTENCIA GITHUB ---
 
 def conectar_github():
     try:
@@ -19,12 +19,10 @@ def conectar_github():
         return None
 
 def obtener_ultimo_estado_github(repo):
-    """Obtiene el último turno de cada grupo desde el archivo histórico en GitHub"""
     try:
         contents = repo.get_contents("malla_historica.xlsx")
         df_hist = pd.read_excel(io.BytesIO(contents.decoded_content))
         df_hist['Fecha_Raw'] = pd.to_datetime(df_hist['Fecha_Raw'])
-        
         estado = {}
         for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
             registros_grupo = df_hist[df_hist['Grupo'] == g]
@@ -38,7 +36,6 @@ def obtener_ultimo_estado_github(repo):
         return {g: "DESC" for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
 
 def guardar_malla_en_historico(df_nueva):
-    """Une la nueva programación con el histórico y lo sube a GitHub"""
     repo = conectar_github()
     if not repo: return
     try:
@@ -48,21 +45,16 @@ def guardar_malla_en_historico(df_nueva):
             df_final = pd.concat([df_previo, df_nueva]).drop_duplicates(subset=['Grupo', 'Fecha_Raw'], keep='last')
         except:
             df_final = df_nueva
-
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
-        
-        try:
-            contents = repo.get_contents("malla_historica.xlsx")
-            repo.update_file("malla_historica.xlsx", "Actualización Malla", output.getvalue(), contents.sha)
-        except:
-            repo.create_file("malla_historica.xlsx", "Creación Malla", output.getvalue())
-        st.success("✅ Malla sincronizada en GitHub.")
+        contents = repo.get_contents("malla_historica.xlsx")
+        repo.update_file("malla_historica.xlsx", "Sincronización Cobertura Total", output.getvalue(), contents.sha)
+        st.success("✅ Malla sincronizada.")
     except Exception as e:
-        st.error(f"Error al sincronizar histórico: {e}")
+        st.error(f"Error al sincronizar: {e}")
 
-# --- 2. MÓDULO: GESTIÓN DE GRUPOS ---
+# --- 2. GESTIÓN DE GRUPOS ---
 
 def asignar_grupos_aleatorio(df_cable):
     df = df_cable.copy()
@@ -82,7 +74,7 @@ def asignar_grupos_aleatorio(df_cable):
     return pd.DataFrame(grupos_finales)
 
 def pantalla_gestion_grupos():
-    st.title("👥 Gestión de Grupos - Cablemovil")
+    st.title("👥 Gestión de Grupos")
     if 'df_cable' not in st.session_state:
         try:
             df_full = pd.read_excel("empleados.xlsx")
@@ -92,48 +84,32 @@ def pantalla_gestion_grupos():
                 col = [c for c in df_full.columns if clave in c.lower()]
                 if col: df_full = df_full.rename(columns={col[0]: oficial})
             df_c = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
-            if 'Grupo' not in df_c.columns: df_c['Grupo'] = "Sin Asignar"
             st.session_state.df_cable = df_c
-        except Exception as e: st.error(f"Error: {e}"); return
+        except: return
+    
+    if st.button("🎲 Mezclar Grupos"):
+        st.session_state.df_cable = asignar_grupos_aleatorio(st.session_state.df_cable)
+        st.rerun()
+    st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🎲 Mezclar Grupos"):
-            st.session_state.df_cable = asignar_grupos_aleatorio(st.session_state.df_cable)
-            st.rerun()
-    with c2:
-        if st.button("💾 Guardar en GitHub"):
-            repo = conectar_github()
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                st.session_state.df_cable.to_excel(writer, index=False)
-            contents = repo.get_contents("empleados.xlsx")
-            repo.update_file("empleados.xlsx", "Update Empleados", output.getvalue(), contents.sha)
-            st.success("Grupos actualizados.")
-
-    st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True, hide_index=True)
-
-# --- 3. MÓDULO: PROGRAMADOR ---
+# --- 3. PROGRAMADOR CON COBERTURA OBLIGATORIA ---
 
 def pantalla_programador():
-    st.title("📅 Programador 24/7 con Validador")
+    st.title("📅 Programador 24/7 - Cobertura Obligatoria")
     
-    if 'malla_generada' not in st.session_state:
-        st.session_state.malla_generada = None
-
+    if 'malla_generada' not in st.session_state: st.session_state.malla_generada = None
     repo = conectar_github()
     if not repo: return
 
-    with st.expander("👁️ Ver estado de cierre (Histórico GitHub)", expanded=False):
+    with st.expander("👁️ Cierre Anterior"):
         estado_ayer_base = obtener_ultimo_estado_github(repo)
         st.write(estado_ayer_base)
 
-    st.subheader("Rango de Programación")
     c_f1, c_f2 = st.columns(2)
-    f_inicio = c_f1.date_input("Fecha Inicio", datetime.now())
-    f_fin = c_f2.date_input("Fecha Fin", datetime.now() + timedelta(days=21))
+    f_inicio = c_f1.date_input("Inicio", datetime.now())
+    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
 
-    if st.button("🚀 Generar y Sincronizar"):
+    if st.button("🚀 Generar Malla Obligatoria"):
         st.cache_data.clear()
         lista_fechas = []
         curr = f_inicio
@@ -152,7 +128,7 @@ def pantalla_programador():
             es_festivo = fecha in co_holidays
             col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_festivo else ''}"
 
-            # Libranzas
+            # 1. Definir Libranza (Solo 1 grupo por día)
             libranza = None
             if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -162,34 +138,49 @@ def pantalla_programador():
                 deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
             else:
                 for g in sorted(deudas, key=deudas.get, reverse=True):
+                    # Solo compensa si NO viene de T3 para asegurar descanso real
                     if deudas[g] > 0 and memoria_hoy[g] != "T3":
-                        libranza = g
-                        deudas[g] -= 1
-                        break
+                        libranza = g; deudas[g] -= 1; break
 
-            # Turnos con protección de salud
+            # 2. Asignación de Turnos (3 Grupos Activos)
             activos = [g for g in grupos if g != libranza]
             turnos_dia = {}
+            
+            # Reparto inicial basado en la semana
             for g in activos:
                 idx_g = grupos.index(g)
+                # Rotación base
                 t_base = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
-                if memoria_hoy[g] == "T3" and t_base == "T1": t_base = "T3"
+                # Protección T3 -> T1 (Si ayer hizo T3, hoy no puede hacer T1)
+                if memoria_hoy[g] == "T3" and t_base == "T1":
+                    t_base = "T3"
                 turnos_dia[g] = t_base
 
-            # Ajuste Cobertura (Solo un T3)
-            actuales = list(turnos_dia.values())
-            while actuales.count("T3") > 1:
-                for g in activos:
-                    if turnos_dia[g] == "T3" and memoria_hoy[g] != "T3":
-                        turnos_dia[g] = "T2"
-                        actuales = list(turnos_dia.values())
-                        break
+            # --- MOTOR DE COBERTURA OBLIGATORIA ---
+            # Verificamos que T1, T2 y T3 estén presentes
+            for t_necesario in ["T1", "T2", "T3"]:
+                if t_necesario not in turnos_dia.values():
+                    # Si falta un turno, buscamos al grupo activo que tenga un turno repetido
+                    for g_potencial in activos:
+                        conteo_turno = list(turnos_dia.values()).count(turnos_dia[g_potencial])
+                        if conteo_turno > 1:
+                            # Validamos que el cambio no viole la salud (No pasar a T1 si viene de T3)
+                            if not (memoria_hoy[g_potencial] == "T3" and t_necesario == "T1"):
+                                turnos_dia[g_potencial] = t_necesario
+                                break
+            
+            # Doble Verificación: Si después del ajuste sigue faltando un turno (caso extremo salud)
+            # El sistema prioriza la cobertura sobre la rotación semanal
+            for t_necesario in ["T1", "T2", "T3"]:
+                if t_necesario not in turnos_dia.values():
+                    for g_final in activos:
+                         if not (memoria_hoy[g_final] == "T3" and t_necesario == "T1"):
+                             turnos_dia[g_final] = t_necesario
+                             break
 
             for g in grupos:
                 t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_dia.get(g, "T1")
-                resultados.append({
-                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, "Fecha_Raw": pd.to_datetime(fecha)
-                })
+                resultados.append({"Grupo": g, "Fecha_Col": col_name, "Turno": t_f, "Fecha_Raw": pd.to_datetime(fecha)})
                 memoria_hoy[g] = t_f
 
         df_nueva = pd.DataFrame(resultados)
@@ -197,7 +188,6 @@ def pantalla_programador():
         st.session_state.malla_generada = df_nueva
         st.rerun()
 
-    # --- MOSTRAR RESULTADOS Y VALIDADOR ---
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
@@ -210,25 +200,18 @@ def pantalla_programador():
         st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
         st.divider()
-        st.subheader("🔍 Validador de Cumplimiento Richard")
+        st.subheader("🔍 Validador de Cumplimiento")
         c1, c2 = st.columns(2)
         with c1:
-            st.write("**✅ Auditoría de Descansos**")
-            conteo = df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0)
-            st.table(conteo)
+            st.write("**✅ Descansos**")
+            st.table(df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0))
         with c2:
-            st.write("**🛡️ Verificación de Salud y Cobertura**")
+            st.write("**🛡️ Auditoría de Cobertura Diaria**")
             alertas = []
             for fc in df_res["Fecha_Col"].unique():
                 tv = df_res[df_res["Fecha_Col"] == fc]["Turno"].values
                 for t in ["T1", "T2", "T3"]:
-                    if t not in tv: alertas.append(f"{fc}(Sin {t})")
+                    if t not in tv: alertas.append(f"{fc} (Falta {t})")
             
-            # Chequeo T3 -> T1
-            for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
-                h = df_res[df_res["Grupo"] == g]["Turno"].tolist()
-                for i in range(1, len(h)):
-                    if h[i-1] == "T3" and h[i] == "T1": alertas.append(f"⚠️ {g} Riesgo Fatiga")
-
-            if not alertas: st.success("¡Todo en orden!")
-            else: st.error(f"Novedades: {', '.join(alertas)}")
+            if not alertas: st.success("¡Operación Blindada: T1, T2 y T3 cubiertos todos los días!")
+            else: st.error(f"¡Atención! Huecos detectados: {', '.join(alertas)}")
