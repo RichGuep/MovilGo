@@ -5,13 +5,11 @@ from datetime import time
 
 def asignar_grupos_aleatorio(df_cable):
     """
-    Lógica para armar grupos de 12 personas respetando:
-    2 Master, 7 Tecnicos A, 3 Tecnicos B.
+    Mezcla y asigna grupos de 12 (2 Master, 7 Tec A, 3 Tec B).
     """
-    # Limpieza de datos básica para asegurar match de cargos
     df = df_cable.copy()
     
-    # Separar por categorías usando filtros de texto
+    # Separar por categorías con búsqueda flexible
     masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).to_dict('records')
     tecnicos_a = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).to_dict('records')
     tecnicos_b = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).to_dict('records')
@@ -19,7 +17,6 @@ def asignar_grupos_aleatorio(df_cable):
     grupos_finales = []
     num_grupo = 1
 
-    # Bucle de construcción de grupos
     while len(masters) >= 2 and len(tecnicos_a) >= 7 and len(tecnicos_b) >= 3:
         for _ in range(2): 
             p = masters.pop()
@@ -38,10 +35,10 @@ def asignar_grupos_aleatorio(df_cable):
         
         num_grupo += 1
 
-    # Manejo de sobrantes
+    # Sobrantes
     sobrantes = masters + tecnicos_a + tecnicos_b
     for s in sobrantes:
-        s['Grupo'] = "Sin Asignar / Reserva"
+        s['Grupo'] = "Reserva"
     
     grupos_finales.extend(sobrantes)
     return pd.DataFrame(grupos_finales)
@@ -49,45 +46,67 @@ def asignar_grupos_aleatorio(df_cable):
 def pantalla_programador():
     st.title("📅 Programador MovilGo - Cablemovil")
 
-    # 1. Carga de datos desde el Excel (usando el estado de la sesión)
+    # 1. CARGA Y LIMPIEZA DE DATOS (Corrección del KeyError)
     if 'df_cable' not in st.session_state:
         try:
             df_full = pd.read_excel("empleados.xlsx")
-            # Filtramos solo la empresa que nos interesa para este módulo
-            st.session_state.df_cable = df_full[df_full['Empresa'] == 'Cablemovil'].copy()
+            
+            # Limpiar espacios en los nombres de las columnas
+            df_full.columns = df_full.columns.str.strip()
+            
+            # Mapeo inteligente para normalizar nombres de columnas
+            # Busca columnas que contengan estas palabras clave
+            mapeo = {
+                'Cedula': [c for c in df_full.columns if 'cedu' in c.lower() or 'id' in c.lower()],
+                'Nombre': [c for c in df_full.columns if 'nomb' in c.lower()],
+                'Cargo': [c for c in df_full.columns if 'carg' in c.lower()],
+                'Empresa': [c for c in df_full.columns if 'empr' in c.lower()]
+            }
+            
+            for oficial, encontrados in mapeo.items():
+                if encontrados:
+                    df_full = df_full.rename(columns={encontrados[0]: oficial})
+            
+            # Filtrar solo Cablemovil
+            df_cable = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
+            
+            # Asegurar que la columna 'Grupo' existe
+            if 'Grupo' not in df_cable.columns:
+                df_cable['Grupo'] = "Sin Asignar"
+            
+            st.session_state.df_cable = df_cable
+
         except Exception as e:
-            st.error(f"⚠️ No se pudo cargar 'empleados.xlsx'. Asegúrate de que el archivo existe. Error: {e}")
+            st.error(f"⚠️ Error al procesar el Excel: {e}")
             return
 
-    # 2. Definición de Turnos (Referencia visual)
-    st.info("🕒 **Horarios Establecidos:** T1 (05:30-13:30) | T2 (13:30-21:30) | T3 (21:30-05:30)")
+    # 2. INTERFAZ
+    st.info("🕒 T1: 05:30-13:30 | T2: 13:30-21:30 | T3: 21:30-05:30")
 
-    # 3. Acciones de Grupos
-    st.subheader("🛠️ Configuración de Grupos de Trabajo")
-    
-    col1, col2, col3 = st.columns([1, 1, 2])
-    
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("🎲 Mezclar y Asignar Grupos"):
+        if st.button("🎲 Mezclar Grupos (2-7-3)"):
             st.session_state.df_cable = asignar_grupos_aleatorio(st.session_state.df_cable)
-            st.success("Grupos generados exitosamente.")
-
+            st.rerun()
     with col2:
-        if st.button("🗑️ Limpiar Grupos"):
+        if st.button("🗑️ Resetear"):
             st.session_state.df_cable['Grupo'] = "Sin Asignar"
             st.rerun()
 
-    # 4. Visualización y Edición Manual
-    st.write("### Distribución del Personal")
+    # 3. EDITOR DE DATOS
+    # Solo mostramos las columnas normalizadas
+    columnas_a_mostrar = ['Cedula', 'Nombre', 'Cargo', 'Grupo']
     
-    # Configuramos el editor para que solo la columna 'Grupo' sea editable
+    # Validamos que todas existan antes de mostrar el editor
+    cols_presentes = [c for c in columnas_a_mostrar if c in st.session_state.df_cable.columns]
+    
     df_editado = st.data_editor(
-        st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']],
+        st.session_state.df_cable[cols_presentes],
         column_config={
             "Grupo": st.column_config.SelectboxColumn(
-                "Asignación de Grupo",
-                options=["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4", "Sin Asignar / Reserva"],
-                required=True,
+                "Grupo",
+                options=["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4", "Reserva"],
+                required=True
             ),
             "Cedula": st.column_config.Column(disabled=True),
             "Nombre": st.column_config.Column(disabled=True),
@@ -95,56 +114,36 @@ def pantalla_programador():
         },
         use_container_width=True,
         hide_index=True,
-        key="editor_grupos"
+        key="editor_tabla"
     )
 
-    # Actualizamos el estado de la sesión con cambios manuales si los hay
-    if st.button("💾 Validar y Guardar Selección"):
+    # Botón para sincronizar cambios manuales
+    if st.button("💾 Confirmar Cambios Manuales"):
         st.session_state.df_cable.update(df_editado)
-        st.success("Cambios guardados en la memoria de la sesión.")
+        st.success("Cambios guardados en sesión.")
 
-    # 5. Resumen de Validación Laboral
+    # 4. RESUMEN DE VALIDACIÓN
     st.divider()
-    st.subheader("📊 Validación de Perfiles por Grupo")
+    st.subheader("📊 Validación de Grupos")
     
-    if 'Grupo' in st.session_state.df_cable.columns:
-        resumen = []
-        for g in sorted(st.session_state.df_cable['Grupo'].unique()):
-            if "Sin Asignar" in g: continue
-            
-            data_g = st.session_state.df_cable[st.session_state.df_cable['Grupo'] == g]
-            m = len(data_g[data_g['Cargo'].str.contains('Master', case=False, na=False)])
-            a = len(data_g[data_g['Cargo'].str.contains('Tecnico A', case=False, na=False)])
-            b = len(data_g[data_g['Cargo'].str.contains('Tecnico B', case=False, na=False)])
-            
-            resumen.append({
-                "Grupo": g,
-                "Total": len(data_g),
-                "Masters (Req: 2)": m,
-                "Tec A (Req: 7)": a,
-                "Tec B (Req: 3)": b,
-                "Estado": "✅ OK" if (m==2 and a==7 and b==3) else "⚠️ Incompleto"
-            })
+    df_actual = st.session_state.df_cable
+    resumen = []
+    for g in sorted(df_actual['Grupo'].unique()):
+        if g == "Sin Asignar" or g == "Reserva": continue
         
-        if resumen:
-            st.table(pd.DataFrame(resumen))
-        else:
-            st.write("No hay grupos asignados aún.")
-
-    # 6. Programación Mensual (Visualización de Turnos)
-    st.divider()
-    st.subheader("🗓️ Asignación de Turnos Semanales")
-    st.write("Define qué turno le corresponde a cada grupo en las semanas del mes:")
+        subset = df_actual[df_actual['Grupo'] == g]
+        m = len(subset[subset['Cargo'].str.contains('Master', case=False, na=False)])
+        a = len(subset[subset['Cargo'].str.contains('Tecnico A', case=False, na=False)])
+        b = len(subset[subset['Cargo'].str.contains('Tecnico B', case=False, na=False)])
+        
+        resumen.append({
+            "Grupo": g,
+            "Integrantes": len(subset),
+            "Masters (2)": m,
+            "Tec A (7)": a,
+            "Tec B (3)": b,
+            "Estado": "✅ OK" if (m==2 and a==7 and b==3) else "⚠️ Revisar"
+        })
     
-    semanas = ["Semana 1", "Semana 2", "Semana 3", "Semana 4"]
-    grupos_activos = [g for g in st.session_state.df_cable['Grupo'].unique() if "Grupo" in g]
-    
-    if grupos_activos:
-        # Crear una matriz de turnos para los grupos
-        cols_sem = st.columns(len(semanas))
-        for i, sem in enumerate(cols_sem):
-            sem.write(f"**{semanas[i]}**")
-            for grp in sorted(grupos_activos):
-                st.selectbox(f"{grp} - {semanas[i]}", ["T1", "T2", "T3", "Descanso"], key=f"turno_{grp}_{i}")
-    else:
-        st.info("Asigna grupos primero para ver la programación de turnos.")
+    if resumen:
+        st.table(pd.DataFrame(resumen))
