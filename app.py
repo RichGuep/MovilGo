@@ -5,6 +5,16 @@ from logic_programador import pantalla_programador
 
 st.set_page_config(page_title="MovilGo", layout="wide", page_icon="🚌")
 
+from logic_programador import pantalla_programador, pantalla_gestion_grupos
+
+st.sidebar.title("Menú MovilGo")
+opcion = st.sidebar.selectbox("Seleccione:", ["Programador", "Gestión de Grupos"])
+
+if opcion == "Programador":
+    pantalla_programador()
+elif opcion == "Gestión de Grupos":
+    pantalla_gestion_grupos()
+
 # --- LÓGICA DE SESIÓN ---
 if 'autenticado' not in st.session_state:
     st.session_state['autenticado'] = False
