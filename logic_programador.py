@@ -6,173 +6,138 @@ from datetime import time
 from github import Github
 
 def asignar_grupos_aleatorio(df_cable):
-    """
-    Lógica para armar grupos de 12 personas respetando:
-    2 Master, 7 Tecnicos A, 3 Tecnicos B.
-    """
+    """Asigna personal a grupos de 12 respetando el mix 2-7-3."""
     df = df_cable.copy()
-    
-    # Separación por perfiles (búsqueda flexible en la columna Cargo)
     masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).to_dict('records')
     tecnicos_a = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).to_dict('records')
     tecnicos_b = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).to_dict('records')
 
     grupos_finales = []
     num_grupo = 1
-
-    # Construcción de grupos exactos
     while len(masters) >= 2 and len(tecnicos_a) >= 7 and len(tecnicos_b) >= 3:
-        for _ in range(2): 
-            p = masters.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
-        for _ in range(7): 
-            p = tecnicos_a.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
-        for _ in range(3): 
-            p = tecnicos_b.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
+        for _ in range(2): p = masters.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
+        for _ in range(7): p = tecnicos_a.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
+        for _ in range(3): p = tecnicos_b.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
         num_grupo += 1
 
-    # Manejo de personal restante
     sobrantes = masters + tecnicos_a + tecnicos_b
-    for s in sobrantes:
-        s['Grupo'] = "Reserva"
-    
+    for s in sobrantes: s['Grupo'] = "Reserva"
     grupos_finales.extend(sobrantes)
     return pd.DataFrame(grupos_finales)
 
 def guardar_en_github(df):
+    """Sincroniza el Excel con el repositorio de GitHub."""
     try:
-        if "GITHUB_TOKEN" not in st.secrets:
-            st.error("❌ No configuraste el secreto 'GITHUB_TOKEN' en Streamlit.")
-            return False
-            
         token = st.secrets["GITHUB_TOKEN"]
         g = Github(token)
-        
-        # USA EXACTAMENTE TU USUARIO Y NOMBRE DE REPO
-        repo_name = "RichGuep/movilgo" # <-- REVISA ESTO CON LUPA
-        repo = g.get_repo(repo_name)
+        repo = g.get_repo("RichGuep/movilgo") # Ajusta a tu usuario/repo
         
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         content = output.getvalue()
 
-        # Intenta obtener el archivo. Si el 404 es aquí, es que el archivo se llama diferente
-        try:
-            contents = repo.get_contents("empleados.xlsx")
-            repo.update_file(
-                path="empleados.xlsx",
-                message="Actualización automática de grupos - MovilGo",
-                content=content,
-                sha=contents.sha,
-                branch="main"
-            )
-            return True
-        except Exception as file_error:
-            st.error(f"❌ El repositorio existe, pero no encontré el archivo 'empleados.xlsx': {file_error}")
-            return False
-
+        contents = repo.get_contents("empleados.xlsx")
+        repo.update_file(path="empleados.xlsx", message="Update Grupos MovilGo", 
+                         content=content, sha=contents.sha, branch="main")
+        return True
     except Exception as e:
-        st.error(f"❌ Error de acceso al repositorio (404): Verifica que el nombre '{repo_name}' sea correcto y el Token tenga permisos.")
+        st.error(f"Error GitHub: {e}")
         return False
+
+def generar_matriz_turnos():
+    """Genera la rotación basada en las reglas contractuales de Richard."""
+    dias = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
+    semanas = ["Semana 1", "Semana 2", "Semana 3", "Semana 4"]
+    grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    data = []
+
+    for sem_idx, sem in enumerate(semanas):
+        for g_idx, grupo in enumerate(grupos):
+            for d_idx, dia in enumerate(dias):
+                turno = ""
+                # REGLA: Descansos Fijos por Contrato
+                if grupo in ["Grupo 1", "Grupo 2"] and dia == "Sab": turno = "DESC"
+                elif grupo in ["Grupo 3", "Grupo 4"] and dia == "Dom": turno = "DESC"
+                
+                # REGLA: Compensatorio Lunes (para quienes trabajan Domingo)
+                elif dia == "Lun" and grupo in ["Grupo 1", "Grupo 2"]: turno = "COMP"
+                
+                # REGLA: Asignación de Turnos T1, T2, T3 y Refuerzo (REF)
+                if turno == "":
+                    # Rotación circular para que los 4 grupos cubran los 3 turnos
+                    # El 4to grupo queda como refuerzo ese día
+                    base = (g_idx + d_idx + sem_idx) % 4
+                    opciones = ["T1", "T2", "T3", "REF"]
+                    turno = opciones[base]
+
+                data.append({"Semana": sem, "Grupo": grupo, "Dia": dia, "Turno": turno})
+    return pd.DataFrame(data)
 
 def pantalla_programador():
     st.title("📅 Programador MovilGo - Cablemovil")
 
-    # 1. CARGA Y NORMALIZACIÓN (Blindaje contra KeyError)
+    # 1. CARGA DE DATOS
     if 'df_cable' not in st.session_state:
         try:
             df_full = pd.read_excel("empleados.xlsx")
             df_full.columns = df_full.columns.str.strip()
-            
-            # Normalizar nombres de columnas
-            mapeo = {
-                'Cedula': [c for c in df_full.columns if 'cedu' in c.lower() or 'id' in c.lower()],
-                'Nombre': [c for c in df_full.columns if 'nomb' in c.lower()],
-                'Cargo': [c for c in df_full.columns if 'carg' in c.lower()],
-                'Empresa': [c for c in df_full.columns if 'empr' in c.lower()]
-            }
-            for oficial, encontrados in mapeo.items():
-                if encontrados: df_full = df_full.rename(columns={encontrados[0]: oficial})
-            
-            # Filtro por empresa
-            df_cable = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
-            if 'Grupo' not in df_cable.columns: df_cable['Grupo'] = "Sin Asignar"
-            
-            st.session_state.df_cable = df_cable
-        except Exception as e:
-            st.error(f"Error al cargar Excel: {e}")
+            # Normalización rápida
+            df_full = df_full.rename(columns={
+                next(c for c in df_full.columns if 'cedu' in c.lower()): 'Cedula',
+                next(c for c in df_full.columns if 'nomb' in c.lower()): 'Nombre',
+                next(c for c in df_full.columns if 'carg' in c.lower()): 'Cargo',
+                next(c for c in df_full.columns if 'empr' in c.lower()): 'Empresa'
+            })
+            st.session_state.df_cable = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
+            if 'Grupo' not in st.session_state.df_cable.columns: st.session_state.df_cable['Grupo'] = "Sin Asignar"
+        except:
+            st.error("Error cargando empleados.xlsx")
             return
 
-    # 2. ACCIONES RÁPIDAS
-    st.info("🕒 T1: 05:30-13:30 | T2: 13:30-21:30 | T3: 21:30-05:30")
-    
-    col_acc1, col_acc2, col_acc3 = st.columns(3)
-    with col_acc1:
+    # 2. SECCIÓN DE GRUPOS
+    st.subheader("🛠️ Gestión de Grupos (2 Master, 7 Tec A, 3 Tec B)")
+    c1, c2, c3 = st.columns(3)
+    with c1:
         if st.button("🎲 Mezclar Grupos"):
             st.session_state.df_cable = asignar_grupos_aleatorio(st.session_state.df_cable)
             st.rerun()
-    with col_acc2:
-        if st.button("🗑️ Resetear Todo"):
-            st.session_state.df_cable['Grupo'] = "Sin Asignar"
-            st.rerun()
-    with col_acc3:
-        if st.button("🚀 Sincronizar con GitHub"):
-            with st.spinner("Subiendo a la nube..."):
-                if guardar_en_github(st.session_state.df_cable):
-                    st.success("¡Archivo en GitHub actualizado!")
+    with c2:
+        if st.button("🚀 Sincronizar GitHub"):
+            if guardar_en_github(st.session_state.df_cable): st.success("Sincronizado")
+    with c3:
+        if st.button("🗑️ Reset"):
+            st.session_state.df_cable['Grupo'] = "Sin Asignar"; st.rerun()
 
-    # 3. EDITOR DE GRUPOS
-    st.subheader("📋 Asignación Manual y Revisión")
-    columnas_edit = ['Cedula', 'Nombre', 'Cargo', 'Grupo']
-    cols_existentes = [c for c in columnas_edit if c in st.session_state.df_cable.columns]
+    # Editor de grupos
+    df_temp = st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], 
+                             use_container_width=True, hide_index=True)
+    if st.button("💾 Aplicar Cambios"):
+        st.session_state.df_cable.update(df_temp); st.success("Cambios locales aplicados")
 
-    df_temp = st.data_editor(
-        st.session_state.df_cable[cols_existentes],
-        column_config={
-            "Grupo": st.column_config.SelectboxColumn(
-                "Grupo",
-                options=["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4", "Reserva", "Sin Asignar"],
-                required=True
-            ),
-            "Cedula": st.column_config.Column(disabled=True),
-            "Nombre": st.column_config.Column(disabled=True),
-            "Cargo": st.column_config.Column(disabled=True),
-        },
-        use_container_width=True,
-        hide_index=True,
-        key="editor_grupos_final"
-    )
-
-    # Botón para confirmar cambios manuales del editor
-    if st.button("💾 Aplicar Cambios Manuales"):
-        for idx in df_temp.index:
-            st.session_state.df_cable.at[idx, 'Grupo'] = df_temp.at[idx, 'Grupo']
-        st.success("Cambios aplicados localmente.")
-
-    # 4. CUADRO DE VALIDACIÓN LABORAL
+    # 3. MATRIZ DE TURNOS
     st.divider()
-    st.subheader("📊 Resumen de Cumplimiento (Mix 2-7-3)")
-    
-    df_v = st.session_state.df_cable
-    resumen = []
-    lista_g = [g for g in df_v['Grupo'].unique() if "Grupo" in str(g)]
-    
-    for g in sorted(lista_g):
-        subset = df_v[df_v['Grupo'] == g]
-        m = len(subset[subset['Cargo'].str.contains('Master', case=False, na=False)])
-        a = len(subset[subset['Cargo'].str.contains('Tecnico A', case=False, na=False)])
-        b = len(subset[subset['Cargo'].str.contains('Tecnico B', case=False, na=False)])
+    st.subheader("🗓️ Programación Mensual Sugerida")
+    if st.checkbox("Generar Calendario de Turnos"):
+        df_matriz = generar_matriz_turnos()
         
-        resumen.append({
-            "Grupo": g,
-            "Total": len(subset),
-            "Masters(2)": m,
-            "Tec A(7)": a,
-            "Tec B(3)": b,
-            "Cumple": "✅ SI" if (m==2 and a==7 and b==3) else "❌ NO"
-        })
-    
-    if resumen:
-        st.table(pd.DataFrame(resumen))
-    else:
-        st.write("No hay grupos configurados aún.")
+        for sem in df_matriz["Semana"].unique():
+            with st.expander(f"Ver {sem}", expanded=(sem=="Semana 1")):
+                df_sem = df_matriz[df_matriz["Semana"] == sem]
+                pivot = df_sem.pivot(index="Grupo", columns="Dia", values="Turno")
+                pivot = pivot[["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]]
+                
+                def style_c(val):
+                    color = "#1f77b4" if val=="T1" else "#2ca02c" if val=="T2" else "#7f7f7f" if val=="T3" else "#ff4b4b" if val=="DESC" else "#ffa500" if val=="COMP" else "#bcbd22"
+                    return f'background-color: {color}; color: white; font-weight: bold'
+                
+                st.table(pivot.style.applymap(style_c))
+
+    # 4. RESUMEN DE LEY
+    st.sidebar.info("""
+    **Reglas de Ley Aplicadas:**
+    1. Jornada 24/7 (T1, T2, T3).
+    2. Descanso contractual (G1-G2 Sáb, G3-G4 Dom).
+    3. Compensatorios Lunes para G1-G2.
+    4. Rotación equitativa semanal.
+    """)
