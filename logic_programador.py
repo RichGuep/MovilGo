@@ -5,7 +5,7 @@ import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. PERSISTENCIA GITHUB ---
+# --- 1. PERSISTENCIA Y MEMORIA GITHUB ---
 
 def conectar_github():
     try:
@@ -53,7 +53,7 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Final Richard T2", output.getvalue(), contents.sha)
+        repo.update_file("malla_historica.xlsx", "Malla Refuerzo T2 Final", output.getvalue(), contents.sha)
         st.success("✅ Histórico sincronizado.")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
@@ -126,11 +126,11 @@ def pantalla_programador():
                 idx_g = grupos_n.index(g)
                 t_base = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
                 if mem_t[g] == "T3" and t_base in ["T1", "T2"]: t_base = "T3"
-                if mem_n[g] >= 6 and t_base == "T3"]: t_base = "T1"
+                if mem_n[g] >= 6 and t_base == "T3": t_base = "T1"
                 turnos_hoy[g] = t_base
 
             # 3. MOTOR DE COBERTURA ESTRICTA
-            # Paso A: Asegurar T1, T2 y T3
+            # Paso A: Asegurar presencia de T1, T2 y T3
             for tr in ["T1", "T2", "T3"]:
                 if tr not in turnos_hoy.values():
                     for gf in sorted(activos, key=lambda x: mem_n[x]):
@@ -146,10 +146,14 @@ def pantalla_programador():
                         turnos_hoy[g_n] = "T2"
                         actuales = list(turnos_hoy.values())
                         break
+                if actuales.count("T3") > 1: # Si persiste, mover al que menos noches lleve
+                    g_force = sorted(activos, key=lambda x: mem_n[x])[0]
+                    turnos_hoy[g_force] = "T2"
+                    actuales = list(turnos_hoy.values())
             
-            # Paso C: Refuerzo a T2 si alguien sobra
+            # Paso C: Refuerzo a T2 si alguien sobra en T1
             for g_e in activos:
-                if turnos_hoy[g_e] != "T2" and actuales.count(turnos_hoy[g_e]) > 1:
+                if turnos_hoy[g_e] == "T1" and actuales.count("T1") > 1:
                     turnos_hoy[g_e] = "T2"
                     actuales = list(turnos_hoy.values())
 
@@ -168,7 +172,7 @@ def pantalla_programador():
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
-    # --- VALIDADOR ---
+    # --- VALIDADOR ORIGINAL ---
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
