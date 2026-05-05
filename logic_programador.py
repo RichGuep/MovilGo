@@ -46,6 +46,7 @@ def guardar_malla_en_historico(df_nueva):
         try:
             contents = repo.get_contents("malla_historica.xlsx")
             df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
+            # Mantenemos solo el registro más reciente por Grupo y Fecha
             df_final = pd.concat([df_previo, df_nueva]).drop_duplicates(subset=['Grupo', 'Fecha_Raw'], keep='last')
         except:
             df_final = df_nueva
@@ -53,24 +54,18 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Saludable Richard V4", output.getvalue(), contents.sha)
-        st.success("✅ Histórico sincronizado en GitHub.")
+        repo.update_file("malla_historica.xlsx", "Malla Richard V4 Corregida", output.getvalue(), contents.sha)
+        st.success("✅ Histórico sincronizado.")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
 # --- 2. LÓGICA DE SALUD Y ROTACIÓN ---
 
 def es_cambio_saludable(ayer, hoy):
-    """
-    Solo permite rotaciones hacia adelante: T1 -> T2 -> T3.
-    Cualquier salto hacia atrás requiere un día de descanso (DESC/COMP).
-    """
     if ayer in ["DESC", "COMP"]: return True
     if hoy in ["DESC", "COMP"]: return True
-    
     jerarquia = {"T1": 1, "T2": 2, "T3": 3}
-    # Solo es saludable si el turno de hoy es igual o mayor al de ayer
-    return jerarquia[hoy] >= jerarquia[ayer]
+    return jerarquia.get(hoy, 0) >= jerarquia.get(ayer, 0)
 
 # --- 3. PROGRAMADOR ---
 
@@ -90,7 +85,7 @@ def pantalla_programador():
 
     c_f1, c_f2 = st.columns(2)
     f_ini = c_f1.date_input("Inicio", datetime.now())
-    f_fin = c_f2.date_input("Fin (Proyección Larga)", datetime.now() + timedelta(days=31))
+    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=31))
 
     if st.button("🚀 Generar Malla de Salud"):
         st.cache_data.clear()
@@ -108,7 +103,7 @@ def pantalla_programador():
             es_fest = fecha in co_h
             col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # 1. Libranza (Garantizar al menos 3 activos)
+            # 1. Libranza y Compensatorios
             libranza = None
             if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -117,30 +112,22 @@ def pantalla_programador():
                 libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
                 deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
             else:
-                # Prioridad máxima: Pagar deudas de la semana pasada
                 for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
                     if deudas[g] > 0 and mem_t[g] != "T3":
                         libranza = g; deudas[g] -= 1; break
 
-            # 2. Asignación con Inercia y Salud
+            # 2. Turnos con Inercia
             activos = [g for g in grupos_n if g != libranza]
             turnos_hoy = {}
             for g in activos:
                 idx_g = grupos_n.index(g)
-                # Sugerencia matemática semanal
                 t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
-                
-                # REGLA DE INERCIA: Si el cambio es descendente, continua en el turno de ayer
                 if not es_cambio_saludable(mem_t[g], t_sug):
                     t_sug = mem_t[g]
-                
-                # Límite 6 noches
                 if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
-                
                 turnos_hoy[g] = t_sug
 
-            # 3. MOTOR DE COBERTURA Y REFUERZO FLOTANTE T2
-            # Asegurar presencia de T1, T2 y T3
+            # 3. Cobertura y Unicidad de Noche
             for tr in ["T1", "T2", "T3"]:
                 if tr not in turnos_hoy.values():
                     for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
@@ -148,39 +135,39 @@ def pantalla_programador():
                             if es_cambio_saludable(mem_t[gf], tr):
                                 turnos_hoy[gf] = tr; break
             
-            # ELIMINAR DOBLE NOCHE Y ASIGNAR FLOTANTE A T2
             actuales = list(turnos_hoy.values())
-            # Si hay 2 T3, el que no sea inercia va a T2
             while actuales.count("T3") > 1:
                 for g_n in activos:
                     if turnos_hoy[g_n] == "T3" and (mem_t[g_n] != "T3" or actuales.count("T3") > 1):
-                        turnos_hoy[g_n] = "T2"
-                        actuales = list(turnos_hoy.values()); break
-            
-            # Si hay alguien sobrando en T1, lo mandamos a reforzar T2 (Flotante)
-            for g_f in activos:
-                if turnos_hoy[g_f] == "T1" and actuales.count("T1") > 1:
-                    turnos_hoy[g_f] = "T2"
-                    actuales = list(turnos_hoy.values())
+                        turnos_hoy[g_n] = "T2"; actuales = list(turnos_hoy.values()); break
 
-            # 4. Registro y actualización
+            # 4. Registro Diario (Sin duplicados por Grupo/Fecha)
             for g in grupos_n:
                 t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
                 n_a = mem_n[g] + 1 if t_f == "T3" else 0
                 resultados.append({
-                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
-                    "Fecha_Raw": pd.to_datetime(fecha), "Noches_Acum": n_a,
+                    "Grupo": g, 
+                    "Fecha_Col": col_name, 
+                    "Turno": t_f, 
+                    "Fecha_Raw": pd.to_datetime(fecha), 
+                    "Noches_Acum": n_a,
                     "Deuda_Compensatorio": deudas[g]
                 })
                 mem_t[g] = t_f; mem_n[g] = n_a
 
-        st.session_state.malla_generada = pd.DataFrame(resultados)
+        # Creamos el DataFrame y eliminamos cualquier duplicado antes de guardarlo en session_state
+        df_final = pd.DataFrame(resultados).drop_duplicates(subset=['Grupo', 'Fecha_Raw'], keep='last')
+        st.session_state.malla_generada = df_final
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada
-        matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
+        
+        # ELIMINACIÓN CRÍTICA DE DUPLICADOS PARA EVITAR EL ERROR DE PIVOT
+        matriz_data = df_res.drop_duplicates(subset=['Grupo', 'Fecha_Col'])
+        
+        matriz = matriz_data.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
         
         def color_t(val):
@@ -190,15 +177,14 @@ def pantalla_programador():
         st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
         st.divider()
-        st.subheader("🔍 Validador Richard: Salud y Legal")
-        c1, c2 = st.columns(2)
-        with c2:
-            alertas = []
-            for g in grupos_n:
-                h = df_res[df_res["Grupo"] == g].to_dict('records')
-                for i in range(1, len(h)):
-                    if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
-                        alertas.append(f"⚠️ {g}: Salto {h[i-1]['Turno']} a {h[i]['Turno']}")
-            
-            if not alertas: st.success("¡Rotación Ascendente Perfecta! Salud Protegida.")
-            else: st.error(f"Novedades: {', '.join(set(alertas[:5]))}")
+        st.subheader("🔍 Validador Richard")
+        
+        alertas = []
+        for g in grupos_n:
+            h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
+            for i in range(1, len(h)):
+                if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
+                    alertas.append(f"⚠️ {g}: Salto {h[i-1]['Turno']} a {h[i]['Turno']}")
+        
+        if not alertas: st.success("¡Operación Segura! Rotación ascendente cumplida.")
+        else: st.error(f"Novedades: {', '.join(set(alertas[:5]))}")
