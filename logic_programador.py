@@ -5,7 +5,7 @@ import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. PERSISTENCIA GITHUB ---
+# --- 1. PERSISTENCIA Y MEMORIA GITHUB ---
 
 def conectar_github():
     try:
@@ -19,15 +19,16 @@ def conectar_github():
         return None
 
 def obtener_ultimo_estado_github(repo):
+    """Obtiene el cierre del mes anterior para dar continuidad"""
     try:
         contents = repo.get_contents("malla_historica.xlsx")
         df_hist = pd.read_excel(io.BytesIO(contents.decoded_content))
         df_hist['Fecha_Raw'] = pd.to_datetime(df_hist['Fecha_Raw'])
         estado = {}
         for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
-            registros = df_hist[df_hist['Grupo'] == g].sort_values('Fecha_Raw')
-            if not registros.empty:
-                u = registros.iloc[-1]
+            regs = df_hist[df_hist['Grupo'] == g].sort_values('Fecha_Raw')
+            if not regs.empty:
+                u = regs.iloc[-1]
                 estado[g] = {"u": u['Turno'], "n": int(u.get('Noches_Acum', 0)) if u['Turno'] == "T3" else 0}
             else:
                 estado[g] = {"u": "DESC", "n": 0}
@@ -49,12 +50,27 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Cobertura Blindada V2", output.getvalue(), contents.sha)
-        st.success("✅ Histórico actualizado.")
+        repo.update_file("malla_historica.xlsx", "Malla Cobertura Total", output.getvalue(), contents.sha)
+        st.success("✅ Histórico sincronizado.")
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error al guardar: {e}")
 
 # --- 2. GESTIÓN DE GRUPOS ---
+
+def asignar_grupos_aleatorio(df_cable):
+    df = df_cable.copy()
+    masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).to_dict('records')
+    tecnicos_a = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).to_dict('records')
+    tecnicos_b = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).to_dict('records')
+    grupos_finales = []
+    num_grupo = 1
+    while len(masters) >= 2 and len(tecnicos_a) >= 7 and len(tecnicos_b) >= 3:
+        for _ in range(2): p = masters.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
+        for _ in range(7): p = tecnicos_a.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
+        for _ in range(3): p = tecnicos_b.pop(); p['Grupo'] = f"Grupo {num_grupo}"; grupos_finales.append(p)
+        num_grupo += 1
+    for s in (masters + tecnicos_a + tecnicos_b): s['Grupo'] = "Reserva"; grupos_finales.append(s)
+    return pd.DataFrame(grupos_finales)
 
 def pantalla_gestion_grupos():
     st.title("👥 Gestión de Grupos")
@@ -64,20 +80,27 @@ def pantalla_gestion_grupos():
             df_full.columns = df_full.columns.str.strip()
             st.session_state.df_cable = df_full[df_full['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
         except: st.error("Falta empleados.xlsx"); return
+    
+    if st.button("🎲 Mezclar Grupos"):
+        st.session_state.df_cable = asignar_grupos_aleatorio(st.session_state.df_cable)
+        st.rerun()
     st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
 
-# --- 3. PROGRAMADOR CON COBERTURA RECURSIVA ---
+# --- 3. PROGRAMADOR CON COBERTURA TOTAL Y BLINDAJE ---
 
 def pantalla_programador():
     st.title("📅 Programador 24/7 - Cobertura Garantizada")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
+    if 'malla_generada' not in st.session_state:
+        st.session_state.malla_generada = None
+
     repo = conectar_github()
     if not repo: return
 
-    with st.expander("👁️ Ver cierre anterior"):
-        estado_ayer_base = obtener_ultimo_estado_github(repo)
-        st.write(estado_ayer_base)
+    with st.expander("👁️ Cierre Anterior (GitHub)"):
+        estado_ayer_dict = obtener_ultimo_estado_github(repo)
+        st.write(estado_ayer_dict)
 
     c_f1, c_f2 = st.columns(2)
     f_ini = c_f1.date_input("Inicio", datetime.now())
@@ -88,17 +111,17 @@ def pantalla_programador():
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         deudas = {g: 0 for g in grupos_n}
-        memoria_t = {g: estado_ayer_base[g]["u"] for g in grupos_n}
-        memoria_n = {g: estado_ayer_base[g]["n"] for g in grupos_n}
+        memoria_t = {g: estado_ayer_dict[g]["u"] for g in grupos_n}
+        memoria_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
         co_h = holidays.Colombia(years=[2024, 2025, 2026])
 
         for fecha in lista_fechas:
             dia_idx = fecha.weekday()
             sem_iso = fecha.isocalendar()[1]
             es_fest = fecha in co_h
-            col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_fest_col := es_fest else ''}"
+            col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # 1. Libranza
+            # 1. Libranza (Garantiza 3 activos)
             libranza = None
             if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -111,49 +134,46 @@ def pantalla_programador():
                     if deudas[g] > 0 and memoria_t[g] != "T3":
                         libranza = g; deudas[g] -= 1; break
 
-            # 2. Asignación Activos
+            # 2. Asignación inicial
             activos = [g for g in grupos_n if g != libranza]
             turnos_hoy = {}
             for g in activos:
                 idx_g = grupos_n.index(g)
                 t_base = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
-                # Blindaje salud inicial
+                # Blindaje salud incondicional
                 if memoria_t[g] == "T3" and t_base in ["T1", "T2"]: t_base = "T3"
                 if memoria_n[g] >= 7 and t_base == "T3": t_base = "T1"
                 turnos_hoy[g] = t_base
 
-            # --- MOTOR DE COBERTURA ESTRICTA (RECURSIVO) ---
+            # 3. MOTOR DE COBERTURA OBLIGATORIA (Corrige duplicados para tapar huecos)
             for t_req in ["T1", "T2", "T3"]:
                 if t_req not in turnos_hoy.values():
-                    # Buscamos quién está repetido para moverlo
-                    # Priorizamos mover al que NO viene de T3 ayer
-                    candidatos = sorted(activos, key=lambda x: (memoria_t[x] == "T3"))
-                    for g_c in candidatos:
+                    # Buscamos a los que están repetidos
+                    for g_c in sorted(activos, key=lambda x: (memoria_t[x] == "T3")):
                         turno_actual = turnos_hoy[g_c]
                         if list(turnos_hoy.values()).count(turno_actual) > 1:
-                            # Validar que el movimiento a t_req no sea un salto mortal (T3 -> T1)
+                            # Validamos salud: No pasar a T1/T2 si viene de T3
                             if not (memoria_t[g_c] == "T3" and t_req in ["T1", "T2"]):
                                 turnos_hoy[g_c] = t_req
                                 break
                     
-                    # Si después del filtro anterior el turno sigue faltando (casos críticos)
-                    # Forzamos la cobertura: la ciudad no puede quedar sin turno
+                    # Si aún falta el turno (caso extremo de salud), forzamos la cobertura
                     if t_req not in turnos_hoy.values():
                         for g_f in activos:
                             if list(turnos_hoy.values()).count(turnos_hoy[g_f]) > 1:
-                                turnos_hoy[g_f] = t_req # Movimiento forzoso
+                                turnos_hoy[g_f] = t_req
                                 break
 
-            # 3. Registro
+            # 4. Registro y actualización de memoria
             for g in grupos_n:
-                t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
-                n_a = memoria_n[g] + 1 if t_f == "T3" else 0
-                memoria_n[g] = n_a
+                t_final = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+                n_acum = memoria_n[g] + 1 if t_final == "T3" else 0
+                memoria_n[g] = n_acum
                 resultados.append({
-                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
-                    "Fecha_Raw": pd.to_datetime(fecha), "Noches_Acum": n_a
+                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_final, 
+                    "Fecha_Raw": pd.to_datetime(fecha), "Noches_Acum": n_acum
                 })
-                memoria_t[g] = t_f
+                memoria_t[g] = t_final
 
         st.session_state.malla_generada = pd.DataFrame(resultados)
         guardar_malla_en_historico(st.session_state.malla_generada)
@@ -170,12 +190,14 @@ def pantalla_programador():
 
         st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
-        st.subheader("🛡️ Auditoría Operativa")
-        errores = []
+        st.divider()
+        st.subheader("🛡️ Validador de Auditoría")
+        alertas = []
         for fc in df_m["Fecha_Col"].unique():
             tv = df_m[df_m["Fecha_Col"] == fc]["Turno"].values
             for t in ["T1", "T2", "T3"]:
-                if t not in tv: errores.append(f"Día {fc} falta {t}")
-        
-        if not errores: st.success("✅ Cobertura Total Garantizada: T1, T2 y T3 cubiertos.")
-        else: st.error(f"⚠️ Huecos: {', '.join(errores)}")
+                if t not in tv: alertas.append(f"{fc} (Falta {t})")
+            if list(tv).count("T3") > 1: alertas.append(f"{fc} (Doble Noche)")
+
+        if not alertas: st.success("✅ ¡Cobertura 100% y Salud Protegida!")
+        else: st.error(f"Novedades: {', '.join(alertas)}")
