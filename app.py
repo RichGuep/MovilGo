@@ -25,28 +25,21 @@ def login():
 if not st.session_state['autenticado']:
     login()
 else:
-    st.sidebar.title("MovilGo v1.0")
-    opcion = st.sidebar.radio("Menú Principal", ["Inicio", "Empleados", "Programador"])
+    st.sidebar.title("MovilGo v1.1")
+    # Añadimos "Gestión de Grupos" como módulo independiente
+    opcion = st.sidebar.radio("Menú Principal", ["Inicio", "Empleados", "Gestión de Grupos", "Programador"])
 
     if opcion == "Inicio":
         st.title("Bienvenido al Sistema MovilGo")
-        st.write("Gestión operativa de planta de personal.")
-
+    
     elif opcion == "Empleados":
-        st.title("👥 Base de Datos de Personal")
-        
-        if os.path.exists("empleados.xlsx"):
-            df = pd.read_excel("empleados.xlsx")
-            
-            st.info("Puedes editar los datos (Nombre, Cargo, Salario, etc.) directamente en la tabla.")
-            # Editor configurado con tus columnas
-            df_editado = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-            
-            if st.button("💾 Guardar Cambios en Excel"):
-                df_editado.to_excel("empleados.xlsx", index=False)
-                st.success("¡Archivo 'empleados.xlsx' actualizado correctamente!")
-        else:
-            st.error("No se encontró el archivo 'empleados.xlsx'. Por favor, colócalo en la misma carpeta que este script.")
+        # (Lógica de empleados que ya tienes)
+        pass
+
+    elif opcion == "Gestión de Grupos":
+        from logic_programador import pantalla_gestion_grupos
+        pantalla_gestion_grupos()
 
     elif opcion == "Programador":
+        from logic_programador import pantalla_programador
         pantalla_programador()
