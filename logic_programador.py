@@ -51,14 +51,13 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Richard Color + Alertas", output.getvalue(), contents.sha)
+        repo.update_file("malla_historica.xlsx", "Malla Richard Color + Auditoria", output.getvalue(), contents.sha)
     except:
         pass
 
 # --- 2. MOTOR DE SALUD Y HORARIOS ---
 
 def es_rotacion_valida(ayer, hoy):
-    """Valida que el turno sea igual o superior al anterior (Ascendente)"""
     if ayer in ["DESC", "COMP", "OFF"]: return True
     if hoy in ["DESC", "COMP", "OFF"]: return True
     niveles = {"T1": 1, "T2": 2, "T3": 3}
@@ -83,8 +82,9 @@ def pantalla_gestion_grupos():
     st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
 
 def pantalla_programador():
-    st.title("📅 Programador Richard (Malla Colorida + Alertas)")
+    st.title("📅 Programador Richard (Color & Auditoría)")
     
+    # Inicialización segura
     if 'malla_generada' not in st.session_state:
         st.session_state.malla_generada = None
 
@@ -97,9 +97,9 @@ def pantalla_programador():
 
     c1, c2 = st.columns(2)
     f_ini = c1.date_input("Inicio", datetime.now())
-    f_fin = c2.date_input("Fin (Proyección)", datetime.now() + timedelta(days=30))
+    f_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
-    if st.button("🚀 Generar y Validar Malla"):
+    if st.button("🚀 Generar y Auditar"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
@@ -119,7 +119,7 @@ def pantalla_programador():
                 for g in sorted(m_d, key=m_d.get, reverse=True):
                     if m_d[g] > 0 and m_t[g] != "T3": lib = g; m_d[g] -= 1; break
 
-            # --- ASIGNACIÓN CON ADVERTENCIA ---
+            # --- ASIGNACIÓN ---
             activos = [g for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"] if g != lib]
             hoy_t = {}
             alertas_dia = {}
@@ -128,16 +128,15 @@ def pantalla_programador():
                 idx = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"].index(g)
                 sug = ["T1", "T2", "T3"][(idx + s_iso) % 3]
                 
-                error_salud = ""
+                error_txt = ""
                 if not es_rotacion_valida(m_t[g], sug):
-                    error_salud = f"⚠️ Salto prohibido: {m_t[g]} a {sug}"
+                    error_txt = f"⚠️ Salto descendente: {m_t[g]} -> {sug}"
                 
-                if m_n[g] >= 6 and sug == "T3": sug = "T1"; error_salud = "🚨 Máximo 6 noches"
+                if m_n[g] >= 6 and sug == "T3": sug = "T1"; error_txt = "🚨 Límite Noches"
                 
                 hoy_t[g] = sug
-                alertas_dia[g] = error_salud
+                alertas_dia[g] = error_txt
 
-            # Registro detallado
             for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
                 t_f = ("DESC" if d_idx >= 5 else "COMP") if g == lib else hoy_t.get(g, "T1")
                 h_i, h_f = obtener_horarios(t_f)
@@ -157,36 +156,36 @@ def pantalla_programador():
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
-    # --- RENDERIZADO CON COLORES ---
+    # --- RENDERIZADO ---
     if st.session_state.get('malla_generada') is not None:
         df = st.session_state.malla_generada
-        
-        # 1. Matriz Colorida
-        st.subheader("📊 Matriz de Turnos (Vista Visual)")
         df_m = df.drop_duplicates(['Grupo', 'Fecha_Raw'])
+        
+        # 1. Matriz Colorida (Usando .map en lugar de .applymap)
+        st.subheader("📊 Matriz de Turnos")
         mat = df_m.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         
         def estilo_turnos(v):
             colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
             return f'background-color: {colors.get(v, "#31333F")}; color: white; font-weight: bold; border: 1px solid white'
 
-        st.dataframe(mat.style.applymap(estilo_turnos), use_container_width=True)
+        st.dataframe(mat.style.map(estilo_turnos), use_container_width=True)
 
-        # 2. Auditoría de Salud (Alertas T3->T1, etc.)
-        st.subheader("🔍 Auditoría de Salud y Rotación")
+        # 2. Auditoría de Salud
+        st.subheader("🔍 Alertas de Rotación")
         alertas = df[df['Alerta'] != ""].drop_duplicates(['Grupo', 'Fecha', 'Alerta'])
         if not alertas.empty:
-            st.warning("Se detectaron inconsistencias en la rotación (Saltos hacia atrás):")
-            st.dataframe(alertas[["Fecha", "Grupo", "Alerta"]], hide_index=True, use_container_width=True)
+            st.warning("Se detectaron saltos de turno no recomendados:")
+            st.table(alertas[["Fecha", "Grupo", "Alerta"]])
         else:
-            st.success("✅ Rotación 100% saludable (Ascendente).")
+            st.success("✅ Rotación ascendente perfecta.")
 
-        # 3. Resumen de Descansos
-        st.subheader("📈 Resumen Mensual de Descansos")
+        # 3. Resumen Mensual
+        st.subheader("📈 Descansos por Mes")
         res = df[df['Turno'].isin(['DESC', 'COMP'])].drop_duplicates(['Grupo', 'Fecha_Raw'])
         if not res.empty:
             st.table(res.groupby(['Mes', 'Grupo', 'Turno']).size().unstack(fill_value=0))
 
-        # 4. Malla Detallada
-        st.subheader("📋 Malla Detallada para Operación")
-        st.dataframe(df[["Fecha", "Nombre", "Cargo", "Cedula", "Hora Inicio", "Hora Fin", "Grupo", "Turno"]], use_container_width=True, hide_index=True)
+        # 4. Tabla Detallada
+        st.subheader("📋 Detalle Operativo")
+        st.dataframe(df[["Fecha", "Nombre", "Cargo", "Cedula", "Hora Inicio", "Hora Fin", "Grupo", "Turno"]], hide_index=True)
