@@ -52,7 +52,6 @@ def guardar_malla_en_historico(df_nueva):
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
         repo.update_file("malla_historica.xlsx", "Actualizacion Malla Final", output.getvalue(), contents.sha)
-        st.success("✅ Datos guardados en GitHub.")
     except:
         pass
 
@@ -87,6 +86,10 @@ def pantalla_programador():
     st.title("📅 Programador Maestro Richard")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
+    # Inicializar variable de malla para evitar AttributeError
+    if 'malla_generada' not in st.session_state:
+        st.session_state.malla_generada = None
+
     if 'df_cable' not in st.session_state:
         st.warning("⚠️ Primero cargue los empleados en Gestión de Grupos.")
         return
@@ -127,7 +130,7 @@ def pantalla_programador():
                     if m_d[g] > 0 and m_t[g] != "T3":
                         lib = g; m_d[g] -= 1; break
 
-            # Turnos con Salud
+            # Turnos con Salud (Candado T3 a T1)
             activos = [g for g in grupos_n if g != lib]
             hoy_t = {}
             for g in activos:
@@ -164,7 +167,8 @@ def pantalla_programador():
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
-    if st.session_state.malla_generada is not None:
+    # VERIFICACIÓN SEGURA PARA EVITAR AttributeError
+    if st.session_state.get('malla_generada') is not None:
         df = st.session_state.malla_generada
         df_m = df.drop_duplicates(['Grupo', 'Fecha_Raw'])
         
