@@ -137,16 +137,24 @@ def pantalla_programador():
             es_festivo = fecha in co_holidays
             sem_par = (fecha.isocalendar()[1] % 2 == 0)
 
-            # Lógica Richard: 1 grupo descansa, 3 trabajan para cubrir T1, T2, T3
-            grupo_descansa = None
-            if es_sab:
-                grupo_descansa = "Grupo 1" if sem_par else "Grupo 2"
-            elif es_dom:
-                grupo_descansa = "Grupo 3" if sem_par else "Grupo 4"
-            elif es_lun:
-                grupo_descansa = "Grupo 1" if not sem_par else "Grupo 2"
+            # --- LÓGICA DE DESCANSOS INTERCALADOS ---
+            # Sábado: G1 y G2 se turnan. El que NO descansa el sábado, recibe COMP el lunes.
+            grupo_descansa_sab = "Grupo 1" if sem_par else "Grupo 2"
+            grupo_recibe_comp_lun = "Grupo 2" if sem_par else "Grupo 1" # El opuesto al que descansó
+            
+            # Domingo: G3 y G4 se turnan. (G3 y G4 no tienen COMP el lunes según tu regla de G1/G2)
+            grupo_descansa_dom = "Grupo 3" if sem_par else "Grupo 4"
 
-            grupos_activos = [g for g in grupos_lista if g != grupo_descansa]
+            # Determinar quién descansa hoy
+            grupo_que_libra_hoy = None
+            if es_sab:
+                grupo_que_libra_hoy = grupo_descansa_sab
+            elif es_dom:
+                grupo_que_libra_hoy = grupo_descansa_dom
+            elif es_lun:
+                grupo_que_libra_hoy = grupo_recibe_comp_lun # COMP para el que trabajó el sábado
+
+            grupos_activos = [g for g in grupos_lista if g != grupo_que_libra_hoy]
             
             # Formato de columna
             dia_str = fecha.strftime('%a').capitalize()
@@ -154,9 +162,11 @@ def pantalla_programador():
             if es_festivo: col_name += " 🇨🇴"
 
             for g_name in grupos_lista:
-                if g_name == grupo_descansa:
-                    turno = "DESC" if not es_lun else "COMP"
+                if g_name == grupo_que_libra_hoy:
+                    # Si es lunes, la etiqueta es COMP, si es fin de semana es DESC
+                    turno = "COMP" if es_lun else "DESC"
                 else:
+                    # Asignación de T1, T2, T3 a los 3 grupos activos
                     pos = grupos_activos.index(g_name)
                     shift = fecha.isocalendar()[1] % 3
                     turno = ["T1", "T2", "T3"][(pos + shift) % 3]
