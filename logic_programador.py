@@ -53,7 +53,7 @@ def guardar_malla_en_historico(df_nueva):
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla Refuerzo T2", output.getvalue(), contents.sha)
+        repo.update_file("malla_historica.xlsx", "Malla Final Richard T2", output.getvalue(), contents.sha)
         st.success("✅ Histórico sincronizado.")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
@@ -70,10 +70,10 @@ def pantalla_gestion_grupos():
         except: st.error("Falta empleados.xlsx"); return
     st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
 
-# --- 3. PROGRAMADOR CON REFUERZO FLOTANTE EN T2 ---
+# --- 3. PROGRAMADOR ---
 
 def pantalla_programador():
-    st.title("📅 Programador 24/7 - Refuerzo T2")
+    st.title("📅 Programador 24/7 - Refuerzo T2 Obligatorio")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     if 'malla_generada' not in st.session_state:
@@ -90,7 +90,7 @@ def pantalla_programador():
     f_ini = c_f1.date_input("Inicio", datetime.now())
     f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=21))
 
-    if st.button("🚀 Generar Malla con Flotante T2"):
+    if st.button("🚀 Generar Malla Richard T2"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
@@ -106,7 +106,7 @@ def pantalla_programador():
             es_fest = fecha in co_h
             col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # 1. Libranzas y Compensatorios
+            # 1. Libranza
             libranza = None
             if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -119,7 +119,7 @@ def pantalla_programador():
                     if deudas[g] > 0 and mem_t[g] != "T3":
                         libranza = g; deudas[g] -= 1; break
 
-            # 2. Asignación Inicial
+            # 2. Asignación inicial
             activos = [g for g in grupos_n if g != libranza]
             turnos_hoy = {}
             for g in activos:
@@ -129,36 +129,31 @@ def pantalla_programador():
                 if mem_n[g] >= 6 and t_base == "T3"]: t_base = "T1"
                 turnos_hoy[g] = t_base
 
-            # --- MOTOR DE COBERTURA ESTRICTA Y FLOTANTE ---
-            # A. Primero, asegurar que estén T1, T2 y T3
+            # 3. MOTOR DE COBERTURA ESTRICTA
+            # Paso A: Asegurar T1, T2 y T3
             for tr in ["T1", "T2", "T3"]:
                 if tr not in turnos_hoy.values():
-                    # Buscamos a quien esté repetido para que cubra el faltante
                     for gf in sorted(activos, key=lambda x: mem_n[x]):
                         if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
                             if not (mem_t[gf] == "T3" and tr == "T1"):
                                 turnos_hoy[gf] = tr; break
 
-            # B. Segundo, REGLA RICHARD: Si hay 4 grupos activos (nadie libra) 
-            # o si hay 3 y sobra uno tras cubrir T1,T2,T3 -> El extra va a T2.
-            # Y ELIMINAR DOBLE NOCHE:
+            # Paso B: REGLA RICHARD - Prohibir Doble T3 y enviar excedente a T2
             actuales = list(turnos_hoy.values())
             while actuales.count("T3") > 1:
-                for g_noche in activos:
-                    # Movemos a T2 al que NO venga de T3 ayer o al que menos noches lleve
-                    if turnos_hoy[g_noche] == "T3" and (mem_t[g_noche] != "T3" or actuales.count("T3") > 1):
-                        turnos_hoy[g_noche] = "T2"
+                for g_n in activos:
+                    if turnos_hoy[g_n] == "T3" and mem_t[g_n] != "T3":
+                        turnos_hoy[g_n] = "T2"
                         actuales = list(turnos_hoy.values())
                         break
+            
+            # Paso C: Refuerzo a T2 si alguien sobra
+            for g_e in activos:
+                if turnos_hoy[g_e] != "T2" and actuales.count(turnos_hoy[g_e]) > 1:
+                    turnos_hoy[g_e] = "T2"
+                    actuales = list(turnos_hoy.values())
 
-            # C. Refuerzo Flotante: Si un turno tiene 2 grupos y no es T2, mover a T2
-            for g_extra in activos:
-                if turnos_hoy[g_extra] != "T2":
-                    if actuales.count(turnos_hoy[g_extra]) > 1:
-                        turnos_hoy[g_extra] = "T2"
-                        actuales = list(turnos_hoy.values())
-
-            # 3. Registro Diario
+            # 4. Registro Diario
             for g in grupos_n:
                 t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
                 n_a = mem_n[g] + 1 if t_f == "T3" else 0
@@ -173,7 +168,7 @@ def pantalla_programador():
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
-    # --- VALIDADOR ORIGINAL ---
+    # --- VALIDADOR ---
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
@@ -189,7 +184,7 @@ def pantalla_programador():
         st.subheader("🔍 Validador de Auditoría Richard")
         c1, c2 = st.columns(2)
         with c1:
-            st.write("**✅ Control de Descansos**")
+            st.write("**✅ Conteo de Descansos**")
             conteo = df_res[df_res['Turno'].isin(['DESC', 'COMP'])].groupby(['Grupo', 'Turno']).size().unstack(fill_value=0)
             st.table(conteo)
         with c2:
@@ -201,5 +196,5 @@ def pantalla_programador():
                     if t not in tv: alertas.append(f"{fc} (Falta {t})")
                 if list(tv).count("T3") > 1: alertas.append(f"{fc} (Doble Noche)")
 
-            if not alertas: st.success("¡Operación Blindada! T3 único y Flotante en T2.")
+            if not alertas: st.success("¡Operación Blindada! T3 único y Refuerzo T2.")
             else: st.error(f"Novedades: {', '.join(set(alertas[:5]))}...")
