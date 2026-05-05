@@ -5,13 +5,18 @@ import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. PERSISTENCIA ---
+# --- 1. CONEXIÓN Y PERSISTENCIA GITHUB ---
+
 def conectar_github():
     try:
-        if "GITHUB_TOKEN" not in st.secrets: return None
+        if "GITHUB_TOKEN" not in st.secrets:
+            st.error("❌ Token GITHUB_TOKEN no configurado.")
+            return None
         g = Github(st.secrets["GITHUB_TOKEN"])
         return g.get_repo("RichGuep/movilgo")
-    except: return None
+    except Exception as e:
+        st.error(f"Error GitHub: {e}")
+        return None
 
 def obtener_ultimo_estado_github(repo):
     try:
@@ -23,145 +28,177 @@ def obtener_ultimo_estado_github(repo):
             regs = df_hist[df_hist['Grupo'] == g].sort_values('Fecha_Raw')
             if not regs.empty:
                 u = regs.iloc[-1]
-                estado[g] = {"u": u['Turno'], "n": int(u.get('Noches_Acum', 0)), "d": int(u.get('Deuda_Compensatorio', 0))}
+                estado[g] = {
+                    "u": u['Turno'], 
+                    "n": int(u.get('Noches_Acum', 0)) if u['Turno'] == "T3" else 0,
+                    "d": int(u.get('Deuda_Compensatorio', 0))
+                }
             else:
                 estado[g] = {"u": "DESC", "n": 0, "d": 0}
         return estado
     except:
         return {g: {"u": "DESC", "n": 0, "d": 0} for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
 
-# --- 2. LÓGICA DE SALUD Y HORARIOS ---
-def es_rotacion_valida(ayer, hoy):
-    if ayer in ["DESC", "COMP", "OFF"]: return True
-    if hoy in ["DESC", "COMP", "OFF"]: return True
-    niveles = {"T1": 1, "T2": 2, "T3": 3}
-    return niveles[hoy] >= niveles[ayer]
-
-def obtener_horarios(turno):
-    h = {"T1": ("05:30", "13:30"), "T2": ("13:30", "21:30"), "T3": ("21:30", "05:30")}
-    return h.get(turno, ("OFF", "OFF"))
-
-# --- 3. PANTALLA GESTIÓN ---
-def pantalla_gestion_grupos():
-    st.title("👥 Gestión de Grupos")
-    if 'df_cable' not in st.session_state:
+def guardar_malla_en_historico(df_nueva):
+    repo = conectar_github()
+    if not repo: return
+    try:
         try:
-            df = pd.read_excel("empleados.xlsx")
-            st.session_state.df_cable = df[df['Empresa'].str.contains('Cablemovil', case=False, na=False)].copy()
-        except: st.error("Falta empleados.xlsx"); return
-    st.data_editor(st.session_state.df_cable[['Cedula', 'Nombre', 'Cargo', 'Grupo']], use_container_width=True)
+            contents = repo.get_contents("malla_historica.xlsx")
+            df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
+            df_final = pd.concat([df_previo, df_nueva]).drop_duplicates(subset=['Grupo', 'Fecha_Raw'], keep='last')
+        except:
+            df_final = df_nueva
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_final.to_excel(writer, index=False)
+        contents = repo.get_contents("malla_historica.xlsx")
+        repo.update_file("malla_historica.xlsx", "Malla Saludable Richard V4", output.getvalue(), contents.sha)
+        st.success("✅ Histórico sincronizado en GitHub.")
+    except Exception as e:
+        st.error(f"Error al guardar: {e}")
 
-# --- 4. PROGRAMADOR CON BLINDAJE SEMANAL ---
-def pantalla_programador():
-    st.title("📅 Programador Richard - Blindaje Legal 7 Días")
+# --- 2. LÓGICA DE SALUD Y ROTACIÓN ---
+
+def es_cambio_saludable(ayer, hoy):
+    """
+    Solo permite rotaciones hacia adelante: T1 -> T2 -> T3.
+    Cualquier salto hacia atrás requiere un día de descanso (DESC/COMP).
+    """
+    if ayer in ["DESC", "COMP"]: return True
+    if hoy in ["DESC", "COMP"]: return True
     
-    if 'malla_generada' not in st.session_state: st.session_state.malla_generada = None
-    if 'df_cable' not in st.session_state: st.warning("⚠️ Cargue empleados."); return
+    jerarquia = {"T1": 1, "T2": 2, "T3": 3}
+    # Solo es saludable si el turno de hoy es igual o mayor al de ayer
+    return jerarquia[hoy] >= jerarquia[ayer]
+
+# --- 3. PROGRAMADOR ---
+
+def pantalla_programador():
+    st.title("📅 Programador 24/7 - Rotación Ascendente")
+    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    
+    if 'malla_generada' not in st.session_state:
+        st.session_state.malla_generada = None
 
     repo = conectar_github()
-    estado_base = obtener_ultimo_estado_github(repo)
+    if not repo: return
 
-    c1, c2 = st.columns(2)
-    f_ini = c1.date_input("Inicio", datetime.now())
-    f_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
+    with st.expander("👁️ Ver Cierre Anterior"):
+        estado_ayer_dict = obtener_ultimo_estado_github(repo)
+        st.write(estado_ayer_dict)
 
-    if st.button("🚀 Generar Malla Blindada"):
+    c_f1, c_f2 = st.columns(2)
+    f_ini = c_f1.date_input("Inicio", datetime.now())
+    f_fin = c_f2.date_input("Fin (Proyección Larga)", datetime.now() + timedelta(days=31))
+
+    if st.button("🚀 Generar Malla de Salud"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         
-        m_t = {g: estado_base[g]["u"] for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
-        m_n = {g: estado_base[g]["n"] for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
-        m_d = {g: estado_base[g]["d"] for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
+        mem_t = {g: estado_ayer_dict[g]["u"] for g in grupos_n}
+        mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
+        deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
+        co_h = holidays.Colombia(years=[2024, 2025, 2026])
 
         for fecha in lista_fechas:
-            d_idx, s_iso, f_col = fecha.weekday(), fecha.isocalendar()[1], fecha.strftime('%a %d/%m')
-            
-            # --- MOTOR DE DESCANSOS IMPLACABLE ---
-            lib = None
-            
-            # 1. Sábados y Domingos: Descansos por ciclo
-            if d_idx == 5: 
-                lib = "Grupo 1" if s_iso % 2 == 0 else "Grupo 2"
-                # El grupo que DEBÍA descansar y trabajó, genera deuda inmediata
-                m_d["Grupo 2" if s_iso % 2 == 0 else "Grupo 1"] += 1 
-            elif d_idx == 6: 
-                lib = "Grupo 3" if s_iso % 2 == 0 else "Grupo 4"
-                m_d["Grupo 4" if s_iso % 2 == 0 else "Grupo 3"] += 1
+            dia_idx = fecha.weekday()
+            sem_iso = fecha.isocalendar()[1]
+            es_fest = fecha in co_h
+            col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
+
+            # 1. Libranza (Garantizar al menos 3 activos)
+            libranza = None
+            if dia_idx == 5:
+                libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
+                deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
+            elif dia_idx == 6:
+                libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
+                deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
             else:
-                # 2. Lunes a Viernes: PAGO OBLIGATORIO DE DEUDA
-                # Si alguien debe un día, DESCANSA HOY (si no viene de T3)
-                # Ordenamos para que el que más debe, descanse primero en la semana
-                for g in sorted(m_d, key=m_d.get, reverse=True):
-                    if m_d[g] > 0 and m_t[g] != "T3":
-                        lib = g
-                        m_d[g] -= 1 # Deuda saldada
-                        break
+                # Prioridad máxima: Pagar deudas de la semana pasada
+                for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
+                    if deudas[g] > 0 and mem_t[g] != "T3":
+                        libranza = g; deudas[g] -= 1; break
 
-            # --- ASIGNACIÓN DE TURNOS (CANDADO DE SALUD) ---
-            activos = [g for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"] if g != lib]
-            hoy_t = {}
-            alertas_dia = {}
-
+            # 2. Asignación con Inercia y Salud
+            activos = [g for g in grupos_n if g != libranza]
+            turnos_hoy = {}
             for g in activos:
-                idx = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"].index(g)
-                sug = ["T1", "T2", "T3"][(idx + s_iso) % 3]
+                idx_g = grupos_n.index(g)
+                # Sugerencia matemática semanal
+                t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
                 
-                # Respetar rotación ascendente (No T3 -> T1)
-                if not es_rotacion_valida(m_t[g], sug): sug = m_t[g]
-                if m_n[g] >= 6 and sug == "T3": sug = "T1"
+                # REGLA DE INERCIA: Si el cambio es descendente, continua en el turno de ayer
+                if not es_cambio_saludable(mem_t[g], t_sug):
+                    t_sug = mem_t[g]
                 
-                hoy_t[g] = sug
-                alertas_dia[g] = "" if es_rotacion_valida(m_t[g], sug) else f"⚠️ {m_t[g]} -> {sug}"
+                # Límite 6 noches
+                if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
+                
+                turnos_hoy[g] = t_sug
 
-            # T3 único y Refuerzo T2
-            while list(hoy_t.values()).count("T3") > 1:
-                for gn in activos:
-                    if hoy_t[gn] == "T3" and m_t[gn] != "T3": hoy_t[gn] = "T2"; break
+            # 3. MOTOR DE COBERTURA Y REFUERZO FLOTANTE T2
+            # Asegurar presencia de T1, T2 y T3
+            for tr in ["T1", "T2", "T3"]:
+                if tr not in turnos_hoy.values():
+                    for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
+                        if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
+                            if es_cambio_saludable(mem_t[gf], tr):
+                                turnos_hoy[gf] = tr; break
+            
+            # ELIMINAR DOBLE NOCHE Y ASIGNAR FLOTANTE A T2
+            actuales = list(turnos_hoy.values())
+            # Si hay 2 T3, el que no sea inercia va a T2
+            while actuales.count("T3") > 1:
+                for g_n in activos:
+                    if turnos_hoy[g_n] == "T3" and (mem_t[g_n] != "T3" or actuales.count("T3") > 1):
+                        turnos_hoy[g_n] = "T2"
+                        actuales = list(turnos_hoy.values()); break
+            
+            # Si hay alguien sobrando en T1, lo mandamos a reforzar T2 (Flotante)
+            for g_f in activos:
+                if turnos_hoy[g_f] == "T1" and actuales.count("T1") > 1:
+                    turnos_hoy[g_f] = "T2"
+                    actuales = list(turnos_hoy.values())
 
-            # Registro final
-            for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
-                t_f = ("DESC" if d_idx >= 5 else "COMP") if g == lib else hoy_t.get(g, "T1")
-                h_i, h_f = obtener_horarios(t_f)
-                n_a = m_n[g] + 1 if t_f == "T3" else 0
-                
-                pers = st.session_state.df_cable[st.session_state.df_cable['Grupo'] == g]
-                for _, p in pers.iterrows():
-                    resultados.append({
-                        "Fecha": fecha.strftime('%Y-%m-%d'), "Nombre": p['Nombre'], "Cargo": p['Cargo'], 
-                        "Cedula": p['Cedula'], "Hora Inicio": h_i, "Hora Fin": h_f, "Grupo": g, 
-                        "Turno": t_f, "Fecha_Col": f_col, "Mes": fecha.strftime('%B %Y'), 
-                        "Noches_Acum": n_a, "Alerta": alertas_dia.get(g, ""), 
-                        "Deuda_Pendiente": m_d[g], "Fecha_Raw": pd.to_datetime(fecha)
-                    })
-                m_t[g], m_n[g] = t_f, n_a
+            # 4. Registro y actualización
+            for g in grupos_n:
+                t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+                n_a = mem_n[g] + 1 if t_f == "T3" else 0
+                resultados.append({
+                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
+                    "Fecha_Raw": pd.to_datetime(fecha), "Noches_Acum": n_a,
+                    "Deuda_Compensatorio": deudas[g]
+                })
+                mem_t[g] = t_f; mem_n[g] = n_a
 
         st.session_state.malla_generada = pd.DataFrame(resultados)
+        guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
-    # --- VISTA FINAL ---
-    if st.session_state.get('malla_generada') is not None:
-        df = st.session_state.malla_generada
-        df_m = df.drop_duplicates(['Grupo', 'Fecha_Raw'])
+    if st.session_state.malla_generada is not None:
+        df_res = st.session_state.malla_generada
+        matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
+        matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
         
-        st.subheader("📊 Matriz de Turnos (Colores)")
-        mat = df_m.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
-        def estilo_turnos(v):
-            colors = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
-            return f'background-color: {colors.get(v, "#31333F")}; color: white; font-weight: bold; border: 1px solid white'
-        st.dataframe(mat.style.map(estilo_turnos), use_container_width=True)
+        def color_t(val):
+            c = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
+            return f'background-color: {c.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
-        st.subheader("🔍 Auditoría Richard: Descansos y Deudas")
+        st.dataframe(matriz.style.map(color_t), use_container_width=True)
+
+        st.divider()
+        st.subheader("🔍 Validador Richard: Salud y Legal")
         c1, c2 = st.columns(2)
-        with c1:
-            st.write("**Conteo de Descansos (Debe haber 4 o 5 por mes):**")
-            res = df[df['Turno'].isin(['DESC', 'COMP'])].drop_duplicates(['Grupo', 'Fecha_Raw'])
-            if not res.empty: st.table(res.groupby(['Mes', 'Grupo', 'Turno']).size().unstack(fill_value=0))
         with c2:
-            st.write("**Deuda al final del periodo (Debe ser 0):**")
-            # Esto muestra cuántos días se quedaron debiendo. Si es > 0, hay que revisar.
-            deuda_final = df_m.drop_duplicates('Grupo', keep='last')[['Grupo', 'Deuda_Pendiente']]
-            st.table(deuda_final)
-
-        st.subheader("📋 Malla Detallada (Nombre / Cédula / Horas)")
-        st.dataframe(df[["Fecha", "Nombre", "Cargo", "Cedula", "Hora Inicio", "Hora Fin", "Grupo", "Turno", "Deuda_Pendiente"]], hide_index=True)
+            alertas = []
+            for g in grupos_n:
+                h = df_res[df_res["Grupo"] == g].to_dict('records')
+                for i in range(1, len(h)):
+                    if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
+                        alertas.append(f"⚠️ {g}: Salto {h[i-1]['Turno']} a {h[i]['Turno']}")
+            
+            if not alertas: st.success("¡Rotación Ascendente Perfecta! Salud Protegida.")
+            else: st.error(f"Novedades: {', '.join(set(alertas[:5]))}")
