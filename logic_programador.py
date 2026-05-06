@@ -1,181 +1,207 @@
 import streamlit as st
 import pandas as pd
-import logic as lg  # Importa todas las funciones del motor lógico
+import io
+import holidays
 from datetime import datetime, timedelta
+from github import Github
 
-# --- CONFIGURACIÓN E INTERFAZ ---
-st.set_page_config(
-    page_title="MovilGo - Gestión de Flotas", 
-    layout="wide", 
-    initial_sidebar_state="expanded"
-)
+# --- 1. CONFIGURACIÓN Y CONSTANTES VISUALES ---
+URL_BASE = "https://raw.githubusercontent.com/RichGuep/movilgo/main/"
+LOGO_APP = f"{URL_BASE}MovilGo.png"
+LOGO_CABLE = f"{URL_BASE}logo_empresa_2.png" 
 
-# --- ESTILOS VISUALES Y CONTRASTE ---
-PRIMARY_COLOR = "#1E3D59" 
-st.markdown(f"""
-    <style>
-    .main {{ background-color: #f8f9fa; }}
-    [data-testid="stSidebar"] {{ background-color: {PRIMARY_COLOR}; }}
-    [data-testid="stSidebar"] * {{ color: white !important; }}
-    .stButton>button {{ width: 100%; border-radius: 12px; font-weight: bold; height: 3em; transition: 0.3s; }}
-    .welcome-card {{
-        background: linear-gradient(135deg, {PRIMARY_COLOR} 0%, #3a6073 100%);
-        color: white; padding: 2.5rem; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-        margin-bottom: 2rem;
-    }}
-    .card-empresa {{
-        background-color: white; padding: 25px; border-radius: 20px;
-        text-align: center; border: 1px solid #eee; transition: 0.4s; height: 280px;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
+# --- 2. CONEXIÓN Y PERSISTENCIA GITHUB ---
 
-# --- INICIALIZACIÓN DE ESTADO ---
-if 'logged_in' not in st.session_state: st.session_state.logged_in = False
-if 'empresa' not in st.session_state: st.session_state.empresa = None
-if 'malla_generada' not in st.session_state: st.session_state.malla_generada = None
+def conectar_github():
+    try:
+        if "GITHUB_TOKEN" not in st.secrets:
+            st.error("❌ Token GITHUB_TOKEN no configurado.")
+            return None
+        g = Github(st.secrets["GITHUB_TOKEN"])
+        return g.get_repo("RichGuep/movilgo")
+    except Exception as e:
+        st.error(f"Error GitHub: {e}")
+        return None
 
-# --- VISTAS DE NAVEGACIÓN ---
+def obtener_ultimo_estado_github(repo):
+    """Recupera el cierre del periodo anterior para dar continuidad."""
+    try:
+        contents = repo.get_contents("malla_historica.xlsx")
+        df_hist = pd.read_excel(io.BytesIO(contents.decoded_content))
+        df_hist['Fecha_Raw'] = pd.to_datetime(df_hist['Fecha_Raw'])
+        estado = {}
+        for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
+            regs = df_hist[df_hist['Grupo'] == g].sort_values('Fecha_Raw', ascending=False)
+            if not regs.empty:
+                u = regs.iloc[0] # Último registro en el tiempo
+                estado[g] = {
+                    "u": u['Turno'], 
+                    "n": int(u.get('Noches_Acum', 0)) if u['Turno'] == "T3" else 0,
+                    "d": int(u.get('Deuda_Compensatorio', 0))
+                }
+            else:
+                estado[g] = {"u": "DESC", "n": 0, "d": 0}
+        return estado
+    except:
+        return {g: {"u": "DESC", "n": 0, "d": 0} for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
 
-def vista_login():
-    _, col, _ = st.columns([1, 1.2, 1])
-    with col:
-        st.image(lg.LOGO_APP, use_container_width=True)
-        st.markdown("<h2 style='text-align:center;'>Acceso Operativo</h2>", unsafe_allow_html=True)
-        with st.container(border=True):
-            user = st.text_input("Usuario")
-            pw = st.text_input("Clave", type="password")
-            if st.button("Ingresar"):
-                st.session_state.logged_in = True
-                st.rerun()
+def guardar_malla_en_historico(df_nueva):
+    """Guarda en GitHub unificando con lo existente sin duplicar fechas."""
+    repo = conectar_github()
+    if not repo: return
+    try:
+        try:
+            contents = repo.get_contents("malla_historica.xlsx")
+            df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
+            df_previo['Fecha_Raw'] = pd.to_datetime(df_previo['Fecha_Raw'])
+            df_nueva['Fecha_Raw'] = pd.to_datetime(df_nueva['Fecha_Raw'])
+            df_final = pd.concat([df_previo, df_nueva]).drop_duplicates(subset=['Grupo', 'Fecha_Raw'], keep='last')
+        except:
+            df_final = df_nueva
 
-def vista_seleccion_empresa():
-    st.markdown("<h2 style='text-align:center;'>Seleccione la Operación</h2>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c2:
-        st.markdown(f'<div class="card-empresa"><img src="{lg.LOGO_CABLE}" width="100"><h3>Cable Móvil</h3><p>Módulo de Gestión 24/7</p></div>', unsafe_allow_html=True)
-        if st.button("Acceder a Cable Móvil"):
-            st.session_state.empresa = "Cable Móvil"
-            st.rerun()
-    # Otros módulos deshabilitados (Green y Bogotá)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_final.to_excel(writer, index=False)
+        
+        contents = repo.get_contents("malla_historica.xlsx")
+        repo.update_file("malla_historica.xlsx", "Sincronización Malla Logic", output.getvalue(), contents.sha)
+        st.success("✅ Memoria de rotación actualizada en GitHub.")
+    except Exception as e:
+        st.error(f"Error al guardar: {e}")
 
-# --- MÓDULOS DEL MENÚ (CABLE MÓVIL) ---
+def cargar_excel(nombre_archivo):
+    repo = conectar_github()
+    if not repo: return pd.DataFrame()
+    try:
+        contents = repo.get_contents(nombre_archivo)
+        return pd.read_excel(io.BytesIO(contents.decoded_content))
+    except:
+        return pd.DataFrame()
 
-def modulo_inicio():
-    st.markdown(f'<div class="welcome-card"><h1>Bienvenido a {st.session_state.empresa}</h1><p>Sistema de gestión saludable y continuidad operativa.</p></div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    df_p = lg.cargar_excel("empleados.xlsx")
-    c1.metric("Técnicos Activos", len(df_p))
-    c2.metric("Estado Malla", "Sincronizada" if st.session_state.malla_generada is not None else "Pendiente")
-    c3.metric("Operación", "Estable")
+def guardar_excel_generico(df, nombre_archivo, mensaje):
+    repo = conectar_github()
+    if not repo: return
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False)
+    try:
+        contents = repo.get_contents(nombre_archivo)
+        repo.update_file(nombre_archivo, mensaje, output.getvalue(), contents.sha)
+    except:
+        repo.create_file(nombre_archivo, mensaje, output.getvalue())
 
-def modulo_programacion():
-    st.header("📅 Programación Maestra (Grupos)")
-    repo = lg.conectar_github()
+# --- 3. LÓGICA DE SALUD Y FORMATO ---
+
+def es_cambio_saludable(ayer, hoy):
+    """Verifica la jerarquía de turnos para evitar saltos prohibidos."""
+    if ayer in ["DESC", "COMP", "OFF"] or hoy in ["DESC", "COMP", "OFF"]: return True
+    jerarquia = {"T1": 1, "T2": 2, "T3": 3}
+    return jerarquia.get(hoy, 0) >= jerarquia.get(ayer, 0)
+
+def color_t(val):
+    """Aplica colores corporativos con alto contraste."""
+    c = {
+        "T1": "#1f77b4", # Azul
+        "T2": "#2ca02c", # Verde
+        "T3": "#4d4d4d", # Gris oscuro (Noche)
+        "DESC": "#d62728", # Rojo
+        "COMP": "#ff7f0e", # Naranja
+        "OFF": "#d62728"
+    }
+    bg = c.get(val, "#ffffff")
+    text = "white" if val in c else "black"
+    return f'background-color: {bg}; color: {text}; font-weight: bold; border: 1px solid #444; text-align: center;'
+
+def obtener_horario(turno):
+    """Define las horas de entrada y salida para nómina."""
+    h = {
+        "T1": ("06:00", "14:00"),
+        "T2": ("14:00", "22:00"),
+        "T3": ("22:00", "06:00"),
+        "DESC": ("OFF", "OFF"),
+        "COMP": ("OFF", "OFF")
+    }
+    return h.get(turno, ("-", "-"))
+
+# --- 4. MOTOR DE GENERACIÓN INTELIGENTE ---
+
+def generar_malla_base(f_ini, f_fin, repo):
+    """Ejecuta el algoritmo de rotación 24/7 considerando festivos y continuidad."""
+    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    estado_ayer = obtener_ultimo_estado_github(repo)
     
-    with st.expander("🚀 Generar Nuevo Periodo", expanded=st.session_state.malla_generada is None):
-        c1, c2 = st.columns(2)
-        f_ini = c1.date_input("Inicio de periodo", datetime.now())
-        f_fin = c2.date_input("Fin de periodo", datetime.now() + timedelta(days=28))
-        
-        if st.button("Generar Malla con Motor Logic"):
-            # Llama a la lógica pura de logic.py
-            # [Aquí el sistema ejecuta el motor de rotación y persistencia histórica]
-            st.session_state.malla_generada = lg.generar_malla_base(f_ini, f_fin, repo)
-            lg.guardar_malla_en_historico(st.session_state.malla_generada)
-            st.rerun()
+    lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
+    resultados = []
+    
+    mem_t = {g: estado_ayer[g]["u"] for g in grupos_n}
+    mem_n = {g: estado_ayer[g]["n"] for g in grupos_n}
+    deudas = {g: estado_ayer[g]["d"] for g in grupos_n}
+    co_h = holidays.Colombia(years=[2024, 2025, 2026])
 
-    if st.session_state.malla_generada is not None:
-        df_res = st.session_state.malla_generada.copy()
-        matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_res["Fecha_Col"].unique())
-        
-        st.subheader("✍️ Editor Maestro")
-        fechas_sel = st.multiselect("Filtrar fechas para ajustar:", options=list(matriz.columns))
-        df_edit_view = matriz[fechas_sel] if fechas_sel else matriz
-        
-        config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"], width="small") for c in df_edit_view.columns}
-        matriz_editada = st.data_editor(df_edit_view, column_config=config_col, use_container_width=True)
+    for fecha in lista_fechas:
+        fecha_dt = pd.to_datetime(fecha)
+        dia_idx = fecha_dt.weekday()
+        sem_iso = fecha_dt.isocalendar()[1]
+        es_fest = fecha_dt in co_h
+        col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-        if st.button("💾 Guardar y Aplicar Cambios"):
-            matriz_final = matriz.copy(); matriz_final.update(matriz_editada)
-            df_man = matriz_final.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
-            df_final = df_res.drop(columns=['Turno']).merge(df_man, on=['Grupo', 'Fecha_Col'])
-            st.session_state.malla_generada = df_final
-            lg.guardar_malla_en_historico(df_final)
-            st.rerun()
-
-        # Alertas de Saltos (Usando validación de logic.py)
-        st.divider()
-        alertas = lg.validar_malla_saludable(df_res)
-        if alertas:
-            sel = st.selectbox("⚠️ Fallas de Salud Detectadas:", options=alertas, format_func=lambda x: f"{x['msg']} el {x['f']}")
-            st.warning(f"Error en {sel['grupo']}. Revisa la cobertura:")
-            st.dataframe(df_res[df_res['Fecha_Col'] == sel['f']][['Grupo', 'Turno']].set_index('Grupo').T)
+        # Lógica de Libranza (Sábados y Domingos)
+        libranza = None
+        if dia_idx == 5: # Sábado
+            libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
+            deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
+        elif dia_idx == 6: # Domingo
+            libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
+            deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
         else:
-            st.success("✅ Rotación saludable garantizada.")
+            # Cobro de compensatorios acumulados
+            for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
+                if deudas[g] > 0 and mem_t[g] != "T3":
+                    libranza = g; deudas[g] -= 1; break
 
-def modulo_detallado():
-    st.header("📋 Detallado Programación (Persona)")
-    df_m = lg.cargar_excel("malla_historica.xlsx")
-    df_e = lg.cargar_excel("empleados.xlsx")
-    
-    if df_m.empty or df_e.empty:
-        st.warning("Debe generar la malla y el personal primero.")
-        return
+        # Asignación de Turnos Activos
+        activos = [g for g in grupos_n if g != libranza]
+        turnos_hoy = {}
+        for g in activos:
+            idx_g = grupos_n.index(g)
+            t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
+            if not es_cambio_saludable(mem_t[g], t_sug): t_sug = mem_t[g]
+            if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
+            turnos_hoy[g] = t_sug
 
-    # Dashboard Analítico
-    st.subheader("📊 Analítica de Malla")
-    d1, d2, d3 = st.columns(3)
-    d1.bar_chart(df_m[df_m["Turno"].isin(["DESC", "COMP"])].groupby("Grupo").size())
-    d2.dataframe(df_m.groupby(["Grupo", "Turno"]).size().unstack(fill_value=0))
-    d3.bar_chart(df_m[df_m["Turno"] == "T3"].groupby("Grupo").size())
+        # Motor de Cobertura (Garantizar T1, T2, T3)
+        for tr in ["T1", "T2", "T3"]:
+            if tr not in turnos_hoy.values():
+                for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
+                    if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
+                        if es_cambio_saludable(mem_t[gf], tr):
+                            turnos_hoy[gf] = tr; break
+        
+        for g in grupos_n:
+            t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+            n_a = mem_n[g] + 1 if t_f == "T3" else 0
+            resultados.append({
+                "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
+                "Fecha_Raw": fecha_dt, "Noches_Acum": n_a,
+                "Deuda_Compensatorio": deudas[g]
+            })
+            mem_t[g] = t_f; mem_n[g] = n_a
 
-    # Malla Detallada Persona vs Fecha
-    df_det = df_e.merge(df_m, on="Grupo")
-    matriz_full = df_det.pivot_table(index=["Grupo", "Nombre"], columns="Fecha_Col", values="Turno", aggfunc='first').reindex(columns=df_m["Fecha_Col"].unique())
-    st.dataframe(matriz_full.style.map(lg.color_t), use_container_width=True)
+    return pd.DataFrame(resultados)
 
-def modulo_nomina():
-    st.header("💰 Módulo de Nómina")
-    df_m = lg.cargar_excel("malla_historica.xlsx")
-    df_e = lg.cargar_excel("empleados.xlsx")
-    
-    if df_m.empty or df_e.empty: return
+# --- 5. VALIDADOR DE NOVEDADES ---
 
-    # Merge y aplicación de horarios desde Logic
-    df_nom = df_e.merge(df_m, on="Grupo")
-    df_nom["Hora Inicio"], df_nom["Hora Fin"] = zip(*df_nom["Turno"].map(lg.obtener_horario))
-    
-    reporte = df_nom[["Fecha_Raw", "Nombre", "Cedula", "Cargo", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]].sort_values(["Fecha_Raw", "Nombre"])
-    reporte["Fecha_Raw"] = pd.to_datetime(reporte["Fecha_Raw"]).dt.date
-    st.dataframe(reporte, use_container_width=True, hide_index=True)
-    st.download_button("📥 Exportar CSV", reporte.to_csv(index=False).encode('utf-8'), "nomina_movilgo.csv")
-
-def modulo_personal():
-    st.header("👥 Gestión de Personal")
-    df_emp = lg.cargar_excel("empleados.xlsx")
-    df_edit = st.data_editor(df_emp, use_container_width=True, num_rows="dynamic")
-    if st.button("💾 Guardar Personal"):
-        lg.guardar_excel_generico(df_edit, "empleados.xlsx", "Update Personal")
-        st.rerun()
-
-# --- FLUJO PRINCIPAL ---
-
-if not st.session_state.logged_in:
-    vista_login()
-elif st.session_state.empresa is None:
-    vista_seleccion_empresa()
-else:
-    with st.sidebar:
-        st.image(lg.LOGO_CABLE, width=150)
-        st.divider()
-        menu = st.radio("MENÚ", ["🏠 Inicio", "📅 Programación", "📋 Detallado Programación", "💰 Nómina", "👥 Personal"])
-        if st.button("🚪 Cambiar Empresa"):
-            st.session_state.empresa = None
-            st.rerun()
-
-    if menu == "🏠 Inicio": modulo_inicio()
-    elif menu == "📅 Programación": modulo_programacion()
-    elif menu == "📋 Detallado Programación": modulo_detallado()
-    elif menu == "💰 Nómina": modulo_nomina()
-    elif menu == "👥 Personal": modulo_personal()
+def validar_malla_saludable(df_res):
+    """Analiza la malla en busca de saltos prohibidos."""
+    alertas = []
+    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    for g in grupos_n:
+        h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
+        for i in range(1, len(h)):
+            if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
+                alertas.append({
+                    "msg": f"⚠️ {g}: Salto no saludable de {h[i-1]['Turno']} a {h[i]['Turno']}", 
+                    "grupo": g, 
+                    "f": h[i]['Fecha_Col']
+                })
+    return alertas
