@@ -54,7 +54,7 @@ def guardar_malla_en_historico(df_nueva):
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
         repo.update_file("malla_historica.xlsx", "Malla Saludable Richard V4", output.getvalue(), contents.sha)
-        st.success("✅ Histórico sincronizado en GitHub.")
+        st.toast("✅ Sincronizado en GitHub", icon="🔄")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
@@ -128,7 +128,6 @@ def pantalla_programador():
                 if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
                 turnos_hoy[g] = t_sug
 
-            # Motor cobertura
             for tr in ["T1", "T2", "T3"]:
                 if tr not in turnos_hoy.values():
                     for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
@@ -151,75 +150,70 @@ def pantalla_programador():
         st.rerun()
 
     if st.session_state.malla_generada is not None:
-        # --- ASEGURAR COLUMNAS DE TIEMPO (Evita el KeyError) ---
         df_res = st.session_state.malla_generada.copy()
         df_res['Fecha_Raw'] = pd.to_datetime(df_res['Fecha_Raw'])
         df_res['Semana'] = df_res['Fecha_Raw'].dt.isocalendar().week
         df_res['Mes'] = df_res['Fecha_Raw'].dt.strftime('%B %Y')
 
+        # --- NUEVO: EDICIÓN RÁPIDA (POP-UP) ---
+        with st.popover("✏️ Editar Turno Rápido", use_container_width=True):
+            st.markdown("### Ajuste Manual")
+            col_edit1, col_edit2, col_edit3 = st.columns(3)
+            grupo_edit = col_edit1.selectbox("Grupo", grupos_n, key="pop_g")
+            fecha_edit = col_edit2.selectbox("Fecha", df_res['Fecha_Col'].unique(), key="pop_f")
+            turno_edit = col_edit3.selectbox("Turno", ["T1", "T2", "T3", "DESC", "COMP"], key="pop_t")
+            
+            if st.button("💾 Aplicar y Sincronizar", use_container_width=True):
+                mask = (df_res['Grupo'] == grupo_edit) & (df_res['Fecha_Col'] == fecha_edit)
+                df_res.loc[mask, 'Turno'] = turno_edit
+                st.session_state.malla_generada = df_res
+                guardar_malla_en_historico(df_res)
+                st.rerun()
+
+        # --- VISUALIZACIÓN ---
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
-
-        st.subheader("✍️ Ajustes Manuales")
-        config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"]) for c in matriz.columns}
-        matriz_editada = st.data_editor(matriz, column_config=config_col, use_container_width=True, key="edit_vFinal")
-
-        if st.button("💾 Guardar Cambios"):
-            df_man = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
-            # Unir con los datos originales para no perder Fecha_Raw
-            df_final = df_res.drop(columns=['Turno']).merge(df_man, on=['Grupo', 'Fecha_Col'])
-            st.session_state.malla_generada = df_final
-            guardar_malla_en_historico(df_final)
-            st.rerun()
-
-        st.subheader("📊 Vista de Colores")
-        st.dataframe(matriz_editada.style.map(color_t), use_container_width=True)
+        
+        st.subheader("📊 Malla de Turnos")
+        st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
         # --- VALIDACIÓN DE LEY ---
         st.divider()
         st.subheader("⚖️ Validador de Descansos de Ley")
-        
         df_val = df_res.copy()
         df_val['Es_Descanso'] = df_val['Turno'].isin(['DESC', 'COMP'])
         
-        t1, t2, t3 = st.tabs(["Resumen por Grupo", "Detalle Semanal", "Detalle Mensual"])
-        
+        t1, t2, t3 = st.tabs(["Resumen Total", "Detalle Semanal", "Detalle Mensual"])
         with t1:
             resumen = df_val.groupby('Grupo')['Es_Descanso'].sum().reset_index()
-            resumen.columns = ['Grupo', 'Total Libres']
+            resumen.columns = ['Grupo', 'Días Libres']
             st.table(resumen)
-            
         with t2:
-            # Aquí es donde fallaba: nos aseguramos que 'Semana' existe
             sem_val = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
-            st.write("Días libres por Semana (Mínimo legal: 1)")
-            st.dataframe(sem_val.style.map(lambda x: 'color: #ff4b4b' if x < 1 else 'color: #2ca02c'))
-
+            st.dataframe(sem_val.style.map(lambda x: 'background-color: #702020' if x < 1 else 'background-color: #205020'))
         with t3:
             mes_val = df_val.groupby(['Grupo', 'Mes'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
-            st.write("Días libres acumulados por Mes")
             st.dataframe(mes_val)
 
-        # --- NAVEGADOR DE NOVEDADES ---
+        # --- LOCALIZADOR DE NOVEDADES ---
         st.divider()
-        st.subheader("🔍 Localizador de Novedades de Salud")
+        st.subheader("🔍 Localizador de Novedades")
         alertas_lista = []
         for g in grupos_n:
             h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
             for i in range(1, len(h)):
                 if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
                     alertas_lista.append({
-                        "msg": f"⚠️ {g}: Salto {h[i-1]['Turno']} a {h[i]['Turno']} en {h[i]['Fecha_Col']}", 
-                        "grupo": g, 
-                        "fecha": h[i]['Fecha_Col']
+                        "msg": f"⚠️ {g}: Salto {h[i-1]['Turno']} -> {h[i]['Turno']} ({h[i]['Fecha_Col']})", 
+                        "grupo": g, "fecha": h[i]['Fecha_Col']
                     })
         
         if alertas_lista:
-            sel = st.selectbox("Ubicar error:", options=[a["msg"] for a in alertas_lista])
+            sel = st.selectbox("Ubicar novedad:", options=[a["msg"] for a in alertas_lista])
             info = next(item for item in alertas_lista if item["msg"] == sel)
-            st.warning(f"Error detectado en: **{info['grupo']}** el día **{info['fecha']}**")
+            st.warning(f"Ubicación exacta para corregir en el Pop-up: **{info['grupo']}** el día **{info['fecha']}**")
         else:
-            st.success("✅ Rotación de salud perfecta.")
+            st.success("✅ Rotación saludable.")
 
 if __name__ == "__main__":
     pantalla_programador()
