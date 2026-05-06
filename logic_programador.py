@@ -155,65 +155,70 @@ def pantalla_programador():
         df_res['Semana'] = df_res['Fecha_Raw'].dt.isocalendar().week
         df_res['Mes'] = df_res['Fecha_Raw'].dt.strftime('%B %Y')
 
-        # --- NUEVO: EDICIÓN RÁPIDA (POP-UP) ---
+        # --- ANÁLISIS DE NOVEDADES PREVIO ---
+        novedades_salud = []
+        for g in grupos_n:
+            h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
+            for i in range(1, len(h)):
+                if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
+                    novedades_salud.append({"grupo": g, "fecha": h[i]['Fecha_Col'], "tipo": "Salud"})
+        
+        # Análisis de ley (Semanas sin descanso)
+        df_val = df_res.copy()
+        df_val['Es_Descanso'] = df_val['Turno'].isin(['DESC', 'COMP'])
+        sem_check = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum()
+        errores_ley = sem_check[sem_check < 1].reset_index()
+        for _, err in errores_ley.iterrows():
+            # Tomamos la primera fecha de esa semana para el grupo
+            fecha_err = df_res[(df_res['Grupo'] == err['Grupo']) & (df_res['Semana'] == err['Semana'])]['Fecha_Col'].iloc[0]
+            novedades_salud.append({"grupo": err['Grupo'], "fecha": fecha_err, "tipo": "Ley (Falta Descanso)"})
+
+        # --- POPOVER MEJORADO ---
         with st.popover("✏️ Editar Turno Rápido", use_container_width=True):
-            st.markdown("### Ajuste Manual")
+            if novedades_salud:
+                st.subheader("🚨 Novedades Detectadas")
+                for n in novedades_salud:
+                    if st.button(f"Corregir {n['grupo']} - {n['fecha']} ({n['tipo']})", key=f"btn_{n['grupo']}_{n['fecha']}", use_container_width=True):
+                        st.session_state.temp_grupo = n['grupo']
+                        st.session_state.temp_fecha = n['fecha']
+                st.divider()
+            
+            st.subheader("Ajuste Manual")
             col_edit1, col_edit2, col_edit3 = st.columns(3)
-            grupo_edit = col_edit1.selectbox("Grupo", grupos_n, key="pop_g")
-            fecha_edit = col_edit2.selectbox("Fecha", df_res['Fecha_Col'].unique(), key="pop_f")
-            turno_edit = col_edit3.selectbox("Turno", ["T1", "T2", "T3", "DESC", "COMP"], key="pop_t")
+            
+            # Valores por defecto basados en el botón clickeado
+            def_g = st.session_state.get('temp_grupo', grupos_n[0])
+            def_f = st.session_state.get('temp_fecha', df_res['Fecha_Col'].unique()[0])
+            
+            grupo_edit = col_edit1.selectbox("Grupo", grupos_n, index=grupos_n.index(def_g))
+            fecha_edit = col_edit2.selectbox("Fecha", df_res['Fecha_Col'].unique(), index=list(df_res['Fecha_Col'].unique()).index(def_f))
+            turno_edit = col_edit3.selectbox("Nuevo Turno", ["T1", "T2", "T3", "DESC", "COMP"])
             
             if st.button("💾 Aplicar y Sincronizar", use_container_width=True):
                 mask = (df_res['Grupo'] == grupo_edit) & (df_res['Fecha_Col'] == fecha_edit)
                 df_res.loc[mask, 'Turno'] = turno_edit
                 st.session_state.malla_generada = df_res
                 guardar_malla_en_historico(df_res)
+                # Limpiar sugerencia tras aplicar
+                if 'temp_grupo' in st.session_state: del st.session_state.temp_grupo
+                if 'temp_fecha' in st.session_state: del st.session_state.temp_fecha
                 st.rerun()
 
-        # --- VISUALIZACIÓN ---
+        # --- MATRIZ Y TABLAS ---
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
-        
-        st.subheader("📊 Malla de Turnos")
         st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
-        # --- VALIDACIÓN DE LEY ---
-        st.divider()
-        st.subheader("⚖️ Validador de Descansos de Ley")
-        df_val = df_res.copy()
-        df_val['Es_Descanso'] = df_val['Turno'].isin(['DESC', 'COMP'])
-        
-        t1, t2, t3 = st.tabs(["Resumen Total", "Detalle Semanal", "Detalle Mensual"])
-        with t1:
-            resumen = df_val.groupby('Grupo')['Es_Descanso'].sum().reset_index()
-            resumen.columns = ['Grupo', 'Días Libres']
-            st.table(resumen)
-        with t2:
-            sem_val = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
-            st.dataframe(sem_val.style.map(lambda x: 'background-color: #702020' if x < 1 else 'background-color: #205020'))
-        with t3:
-            mes_val = df_val.groupby(['Grupo', 'Mes'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
-            st.dataframe(mes_val)
-
-        # --- LOCALIZADOR DE NOVEDADES ---
-        st.divider()
-        st.subheader("🔍 Localizador de Novedades")
-        alertas_lista = []
-        for g in grupos_n:
-            h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
-            for i in range(1, len(h)):
-                if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
-                    alertas_lista.append({
-                        "msg": f"⚠️ {g}: Salto {h[i-1]['Turno']} -> {h[i]['Turno']} ({h[i]['Fecha_Col']})", 
-                        "grupo": g, "fecha": h[i]['Fecha_Col']
-                    })
-        
-        if alertas_lista:
-            sel = st.selectbox("Ubicar novedad:", options=[a["msg"] for a in alertas_lista])
-            info = next(item for item in alertas_lista if item["msg"] == sel)
-            st.warning(f"Ubicación exacta para corregir en el Pop-up: **{info['grupo']}** el día **{info['fecha']}**")
-        else:
-            st.success("✅ Rotación saludable.")
+        with st.expander("⚖️ Validador de Descansos de Ley", expanded=True):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.caption("Días libres por Semana (Mín 1)")
+                sem_v = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
+                st.dataframe(sem_v.style.map(lambda x: 'background-color: #702020' if x < 1 else 'background-color: #205020'))
+            with col_b:
+                st.caption("Acumulado Mensual")
+                mes_v = df_val.groupby(['Grupo', 'Mes'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
+                st.dataframe(mes_v)
 
 if __name__ == "__main__":
     pantalla_programador()
