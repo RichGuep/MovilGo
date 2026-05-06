@@ -192,15 +192,24 @@ def generar_malla_base(f_ini, f_fin, repo):
 # --- 5. VALIDADOR DE NOVEDADES ---
 
 def validar_malla_saludable(df_res):
-    """Analiza la malla en busca de saltos prohibidos."""
+    """Analiza la malla en busca de saltos prohibidos solo para el rango visible."""
     alertas = []
+    if df_res is None or df_res.empty:
+        return alertas
+        
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    
+    # IMPORTANTE: Aseguramos que trabajamos solo con lo que se generó en esta sesión
+    # para evitar que alertas de meses pasados interfieran.
     for g in grupos_n:
+        # Ordenamos cronológicamente para que la comparación 'ayer vs hoy' sea correcta
         h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
+        
         for i in range(1, len(h)):
+            # Comparamos el turno de la fila actual contra el de la anterior
             if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
                 alertas.append({
-                    "msg": f"⚠️ {g}: Salto no saludable de {h[i-1]['Turno']} a {h[i]['Turno']}", 
+                    "msg": f"⚠️ {g}: Salto Prohibido {h[i-1]['Turno']} -> {h[i]['Turno']}", 
                     "grupo": g, 
                     "f": h[i]['Fecha_Col']
                 })
