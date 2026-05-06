@@ -54,7 +54,7 @@ def guardar_malla_en_historico(df_nueva):
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
         repo.update_file("malla_historica.xlsx", "Malla Saludable Richard V4", output.getvalue(), contents.sha)
-        st.toast("✅ Sincronizado con GitHub", icon="🔄")
+        st.toast("✅ Sincronizado en GitHub", icon="🔄")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
@@ -70,11 +70,10 @@ def color_t(val):
     c = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
     return f'background-color: {c.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
-# --- 3. PROGRAMADOR ---
+# --- 3. FUNCIÓN PRINCIPAL (PANTALLA) ---
 
 def pantalla_programador():
-    st.set_page_config(layout="wide")
-    st.title("📅 Programador 24/7 - Edición Ágil")
+    st.title("📅 Programador 24/7 - Gestión Integral")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     if 'malla_generada' not in st.session_state:
@@ -83,13 +82,13 @@ def pantalla_programador():
     repo = conectar_github()
     if not repo: return
 
-    # --- BARRA LATERAL / OPCIONES ---
+    # --- PANEL LATERAL DE GENERACIÓN ---
     with st.sidebar:
-        st.header("⚙️ Configuración")
-        f_ini = st.date_input("Fecha Inicio", datetime.now())
-        f_fin = st.date_input("Fecha Fin", datetime.now() + timedelta(days=21))
+        st.header("⚙️ Parámetros")
+        f_ini = st.date_input("Inicio", datetime.now())
+        f_fin = st.date_input("Fin", datetime.now() + timedelta(days=28))
         
-        if st.button("🚀 Generar Nueva Malla", use_container_width=True):
+        if st.button("🚀 Generar Malla Base", use_container_width=True):
             estado_ayer_dict = obtener_ultimo_estado_github(repo)
             lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
             resultados = []
@@ -106,6 +105,7 @@ def pantalla_programador():
                 es_fest = fecha_dt in co_h
                 col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
+                # Lógica original de Libranza
                 libranza = None
                 if dia_idx == 5:
                     libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -114,7 +114,7 @@ def pantalla_programador():
                     libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
                     deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
                 else:
-                    for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
+                    for g in sorted(grupos_n, key=lambda x: deudas[g], reverse=True):
                         if deudas[g] > 0 and mem_t[g] != "T3":
                             libranza = g; deudas[g] -= 1; break
 
@@ -127,7 +127,7 @@ def pantalla_programador():
                     if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
                     turnos_hoy[g] = t_sug
 
-                # Cobertura
+                # Lógica original de Cobertura
                 for tr in ["T1", "T2", "T3"]:
                     if tr not in turnos_hoy.values():
                         for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
@@ -149,60 +149,65 @@ def pantalla_programador():
             guardar_malla_en_historico(st.session_state.malla_generada)
             st.rerun()
 
-    # --- CUERPO PRINCIPAL ---
+    # --- VISUALIZACIÓN Y EDICIÓN ---
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada.copy()
+        # Asegurar columnas de tiempo para validadores
         df_res['Fecha_Raw'] = pd.to_datetime(df_res['Fecha_Raw'])
         df_res['Semana'] = df_res['Fecha_Raw'].dt.isocalendar().week
         df_res['Mes'] = df_res['Fecha_Raw'].dt.strftime('%B %Y')
 
-        # 1. Popover de Edición Rápida
-        with st.popover("✏️ Modificar Turno Específico", use_container_width=True):
-            st.write("Selecciona los datos para cambiar un turno rápidamente:")
+        # 1. Popover de Edición Rápida (Ajuste Rápido)
+        with st.popover("✏️ Ajuste Rápido de Turno", use_container_width=True):
+            st.write("Cambia un turno específico:")
             c1, c2, c3 = st.columns(3)
-            grupo_edit = c1.selectbox("Grupo", grupos_n)
-            fecha_edit = c2.selectbox("Fecha", df_res['Fecha_Col'].unique())
-            nuevo_t = c3.selectbox("Nuevo Turno", ["T1", "T2", "T3", "DESC", "COMP"])
+            g_sel = c1.selectbox("Grupo", grupos_n)
+            f_sel = c2.selectbox("Día", df_res['Fecha_Col'].unique())
+            t_sel = c3.selectbox("Nuevo Turno", ["T1", "T2", "T3", "DESC", "COMP"])
             
-            if st.button("✅ Aplicar Cambio", use_container_width=True):
-                mask = (df_res['Grupo'] == grupo_edit) & (df_res['Fecha_Col'] == fecha_edit)
-                df_res.loc[mask, 'Turno'] = nuevo_t
+            if st.button("Confirmar Cambio", use_container_width=True):
+                mask = (df_res['Grupo'] == g_sel) & (df_res['Fecha_Col'] == f_sel)
+                df_res.loc[mask, 'Turno'] = t_sel
                 st.session_state.malla_generada = df_res
                 guardar_malla_en_historico(df_res)
                 st.rerun()
 
-        # 2. Visualización con Colores (Auto-actualizada)
+        # 2. Matriz Principal con Colores
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
-        
-        st.subheader("📋 Malla de Turnos")
-        st.dataframe(matriz.style.map(color_t), use_container_width=True, height=250)
+        st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
-        # --- VALIDACIÓN LEGAL AUTOMÁTICA ---
-        with st.expander("⚖️ Análisis de Cumplimiento Legal", expanded=False):
+        # 3. Validador Legal
+        with st.expander("⚖️ Validador de Descansos de Ley", expanded=True):
             df_val = df_res.copy()
             df_val['Es_Descanso'] = df_val['Turno'].isin(['DESC', 'COMP'])
-            t1, t2 = st.tabs(["Por Semana (Mín 1)", "Por Mes"])
-            with t1:
-                sem_val = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
-                st.dataframe(sem_val.style.map(lambda x: 'background-color: #702020' if x < 1 else 'background-color: #205020'))
-            with t2:
-                mes_val = df_val.groupby(['Grupo', 'Mes'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
-                st.dataframe(mes_val)
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                st.caption("Días libres por Semana (Mín 1)")
+                sem_v = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
+                st.dataframe(sem_v.style.map(lambda x: 'background-color: #702020' if x < 1 else 'background-color: #205020'))
+            
+            with col_b:
+                st.caption("Acumulado Mensual")
+                mes_v = df_val.groupby(['Grupo', 'Mes'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
+                st.dataframe(mes_v)
 
-        # --- LOCALIZADOR DE ERRORES ---
+        # 4. Alertas de Salud (Localizador)
+        st.divider()
         alertas = []
         for g in grupos_n:
             h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
             for i in range(1, len(h)):
                 if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
-                    alertas.append(f"⚠️ {g}: {h[i-1]['Turno']} -> {h[i]['Turno']} ({h[i]['Fecha_Col']})")
+                    alertas.append(f"⚠️ **{g}**: Salto de {h[i-1]['Turno']} a {h[i]['Turno']} el día {h[i]['Fecha_Col']}")
         
         if alertas:
-            st.error(f"Se detectaron {len(alertas)} conflictos de salud:")
-            st.caption(", ".join(alertas[:3]) + ("..." if len(alertas)>3 else ""))
+            st.error("Novedades de Salud detectadas:")
+            for a in alertas[:5]: st.write(a)
         else:
-            st.success("✅ Rotación saludable confirmada.")
+            st.success("✅ Rotación de salud perfecta.")
 
-if __name__ == "__main__":
+# IMPORTANTE: Cambia el nombre aquí si tu app.py llama a pantalla_gestion_grupos
+def pantalla_gestion_grupos():
     pantalla_programador()
