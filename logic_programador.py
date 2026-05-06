@@ -66,10 +66,14 @@ def es_cambio_saludable(ayer, hoy):
     jerarquia = {"T1": 1, "T2": 2, "T3": 3}
     return jerarquia[hoy] >= jerarquia[ayer]
 
+def color_t(val):
+    c = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
+    return f'background-color: {c.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
+
 # --- 3. PROGRAMADOR ---
 
 def pantalla_programador():
-    st.title("📅 Programador 24/7 - Rotación Ascendente")
+    st.title("📅 Programador 24/7 - Gestión de Turnos")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     if 'malla_generada' not in st.session_state:
@@ -84,9 +88,9 @@ def pantalla_programador():
 
     c_f1, c_f2 = st.columns(2)
     f_ini = c_f1.date_input("Inicio", datetime.now())
-    f_fin = c_f2.date_input("Fin (Proyección Larga)", datetime.now() + timedelta(days=31))
+    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=15))
 
-    if st.button("🚀 Generar Malla de Salud"):
+    if st.button("🚀 Generar Malla Base"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
@@ -94,7 +98,7 @@ def pantalla_programador():
         mem_t = {g: estado_ayer_dict[g]["u"] for g in grupos_n}
         mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
         deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
-        co_h = holidays.Colombia(years=[2024, 2025, 2026])
+        co_h = holidays.Colombia(years=[2024, 2025, 2026, 2027])
 
         for fecha in lista_fechas:
             dia_idx = fecha.weekday()
@@ -102,7 +106,6 @@ def pantalla_programador():
             es_fest = fecha in co_h
             col_name = f"{fecha.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # 1. Libranza (Garantizar al menos 3 activos)
             libranza = None
             if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -115,18 +118,15 @@ def pantalla_programador():
                     if deudas[g] > 0 and mem_t[g] != "T3":
                         libranza = g; deudas[g] -= 1; break
 
-            # 2. Asignación con Inercia y Salud
             activos = [g for g in grupos_n if g != libranza]
             turnos_hoy = {}
             for g in activos:
                 idx_g = grupos_n.index(g)
                 t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
-                if not es_cambio_saludable(mem_t[g], t_sug):
-                    t_sug = mem_t[g]
+                if not es_cambio_saludable(mem_t[g], t_sug): t_sug = mem_t[g]
                 if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
                 turnos_hoy[g] = t_sug
 
-            # 3. MOTOR DE COBERTURA Y REFUERZO FLOTANTE T2
             for tr in ["T1", "T2", "T3"]:
                 if tr not in turnos_hoy.values():
                     for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
@@ -146,7 +146,6 @@ def pantalla_programador():
                     turnos_hoy[g_f] = "T2"
                     actuales = list(turnos_hoy.values())
 
-            # 4. Registro y actualización
             for g in grupos_n:
                 t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
                 n_a = mem_n[g] + 1 if t_f == "T3" else 0
@@ -161,48 +160,56 @@ def pantalla_programador():
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
 
-    # --- VISUALIZACIÓN Y EDICIÓN MANUAL ---
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada
-        
-        # Generar matriz para mostrar/editar
         matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
         matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
-        
-        st.subheader("✍️ Ajustes Manuales y Visualización")
-        st.info("Puedes editar los turnos directamente en la tabla y presionar el botón de abajo para guardar.")
 
-        # Configuración de columnas editables (Selectbox para evitar errores)
-        config_edit = {col: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"]) 
-                      for col in matriz.columns}
-        
-        # DATA EDITOR: Reemplaza el dataframe estático para permitir cambios
-        matriz_editada = st.data_editor(matriz, column_config=config_edit, use_container_width=True)
+        # --- SECCIÓN DE EDICIÓN ---
+        st.subheader("✍️ Ajustes Manuales")
+        config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"]) for c in matriz.columns}
+        matriz_editada = st.data_editor(matriz, column_config=config_col, use_container_width=True, key="editor_v5")
 
-        # Botón para persistir los ajustes manuales
-        if st.button("💾 Guardar Ajustes Manuales"):
-            df_manual = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
+        if st.button("💾 Guardar y Sincronizar Cambios"):
+            df_man = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
             df_final = df_res.copy()
-            for _, row in df_manual.iterrows():
-                mask = (df_final['Grupo'] == row['Grupo']) & (df_final['Fecha_Col'] == row['Fecha_Col'])
-                df_final.loc[mask, 'Turno'] = row['Turno']
-            
+            for _, r in df_man.iterrows():
+                m = (df_final['Grupo'] == r['Grupo']) & (df_final['Fecha_Col'] == r['Fecha_Col'])
+                df_final.loc[m, 'Turno'] = r['Turno']
             st.session_state.malla_generada = df_final
             guardar_malla_en_historico(df_final)
-            st.success("✅ Cambios guardados.")
             st.rerun()
 
+        # --- SECCIÓN DE COLORES (LECTURA) ---
+        st.subheader("📊 Vista Previa (Formatos de Color)")
+        st.dataframe(matriz_editada.style.map(color_t), use_container_width=True)
+
+        # --- NAVEGADOR DE ERRORES ---
         st.divider()
-        st.subheader("🔍 Validador Richard: Salud y Legal")
-        alertas = []
+        st.subheader("🔍 Localizador de Novedades")
+        
+        alertas_lista = []
         for g in grupos_n:
-            h = df_res[df_res["Grupo"] == g].to_dict('records')
+            h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
             for i in range(1, len(h)):
                 if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
-                    alertas.append(f"⚠️ {g}: Salto {h[i-1]['Turno']} a {h[i]['Turno']}")
+                    alertas_lista.append({
+                        "msg": f"⚠️ {g} en {h[i]['Fecha_Col']}: Salto de {h[i-1]['Turno']} a {h[i]['Turno']}",
+                        "grupo": g,
+                        "fecha": h[i]['Fecha_Col']
+                    })
         
-        if not alertas: st.success("¡Rotación Ascendente Perfecta! Salud Protegida.")
-        else: st.error(f"Novedades: {', '.join(set(alertas[:5]))}")
+        if alertas_lista:
+            seleccion = st.selectbox("Selecciona una novedad para ubicarla:", 
+                                   options=[a["msg"] for a in alertas_lista])
+            
+            # Al seleccionar, mostramos un pequeño resumen para "clicar"
+            info_novedad = next(item for item in alertas_lista if item["msg"] == seleccion)
+            
+            st.warning(f"**Ubicación:** Grupo: `{info_novedad['grupo']}` | Columna: `{info_novedad['fecha']}`")
+            st.info("Busca esa celda en el editor de arriba para corregir el turno.")
+        else:
+            st.success("✅ ¡Rotación Ascendente Perfecta! No se encontraron errores.")
 
 if __name__ == "__main__":
     pantalla_programador()
