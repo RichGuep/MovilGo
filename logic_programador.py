@@ -191,26 +191,24 @@ def generar_malla_base(f_ini, f_fin, repo):
 
 # --- 5. VALIDADOR DE NOVEDADES ---
 
-def validar_malla_saludable(df_res):
-    """Analiza la malla en busca de saltos prohibidos solo para el rango visible."""
+# --- VALIDADOR CORREGIDO (FILTRADO POR RANGO) ---
+def validar_malla_saludable(df_res, f_ini, f_fin):
+    """Analiza SOLO el rango seleccionado para evitar alertas de otros meses."""
     alertas = []
-    if df_res is None or df_res.empty:
-        return alertas
-        
-    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    if df_res is None or df_res.empty: return alertas
     
-    # IMPORTANTE: Aseguramos que trabajamos solo con lo que se generó en esta sesión
-    # para evitar que alertas de meses pasados interfieran.
+    # Filtro estricto por fechas
+    f_ini_dt = pd.to_datetime(f_ini)
+    f_fin_dt = pd.to_datetime(f_fin)
+    df_actual = df_res[(df_res['Fecha_Raw'] >= f_ini_dt) & (df_res['Fecha_Raw'] <= f_fin_dt)]
+    
+    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     for g in grupos_n:
-        # Ordenamos cronológicamente para que la comparación 'ayer vs hoy' sea correcta
-        h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
-        
+        h = df_actual[df_actual["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
         for i in range(1, len(h)):
-            # Comparamos el turno de la fila actual contra el de la anterior
             if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
                 alertas.append({
                     "msg": f"⚠️ {g}: Salto Prohibido {h[i-1]['Turno']} -> {h[i]['Turno']}", 
-                    "grupo": g, 
-                    "f": h[i]['Fecha_Col']
+                    "grupo": g, "f": h[i]['Fecha_Col']
                 })
     return alertas
