@@ -54,7 +54,7 @@ def guardar_malla_en_historico(df_nueva):
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
         repo.update_file("malla_historica.xlsx", "Malla Saludable Richard V4", output.getvalue(), contents.sha)
-        st.toast("✅ Sincronizado en GitHub", icon="🔄")
+        st.toast("✅ Novedad resuelta y sincronizada", icon="🚀")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
@@ -70,10 +70,10 @@ def color_t(val):
     c = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#7f7f7f", "DESC": "#ff4b4b", "COMP": "#ffa500"}
     return f'background-color: {c.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
-# --- 3. PROGRAMADOR ---
+# --- 3. PANTALLA PRINCIPAL ---
 
 def pantalla_programador():
-    st.set_page_config(layout="wide") # IMPORTANTE: Pantalla ancha
+    st.set_page_config(layout="wide", page_title="Programador 24/7", page_icon="📅")
     st.title("📅 Programador 24/7 - Panel de Control")
     
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
@@ -84,14 +84,13 @@ def pantalla_programador():
     repo = conectar_github()
     if not repo: return
 
-    # --- BARRA LATERAL (GENERACIÓN) ---
+    # --- SIDEBAR: GENERACIÓN ---
     with st.sidebar:
-        st.header("⚙️ Generación")
-        f_ini = st.date_input("Inicio", datetime.now())
-        f_fin = st.date_input("Fin", datetime.now() + timedelta(days=28))
+        st.header("⚙️ Generación Nueva")
+        f_ini = st.date_input("Fecha Inicio", datetime.now())
+        f_fin = st.date_input("Fecha Fin", datetime.now() + timedelta(days=21))
         
         if st.button("🚀 Generar Malla Base", use_container_width=True):
-            st.cache_data.clear()
             estado_ayer_dict = obtener_ultimo_estado_github(repo)
             lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
             resultados = []
@@ -150,79 +149,64 @@ def pantalla_programador():
             guardar_malla_en_historico(st.session_state.malla_generada)
             st.rerun()
 
-    # --- DISEÑO PRINCIPAL (DOS COLUMNAS) ---
+    # --- PANEL CENTRAL (CONTROL Y MALLA) ---
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada.copy()
         df_res['Fecha_Raw'] = pd.to_datetime(df_res['Fecha_Raw'])
         df_res['Semana'] = df_res['Fecha_Raw'].dt.isocalendar().week
         df_res['Mes'] = df_res['Fecha_Raw'].dt.strftime('%B %Y')
 
-        # Dividimos la pantalla: 1/4 para ajustes, 3/4 para la malla
-        col_ctrl, col_main = st.columns([1, 3])
+        col_ctrl, col_malla = st.columns([1, 4])
 
         with col_ctrl:
             st.subheader("🛠️ Ajuste Rápido")
             
-            # --- DETECCIÓN DE NOVEDADES (Igual a tu base) ---
+            # --- DETECCIÓN DE NOVEDADES ---
             novedades = []
             for g in grupos_n:
                 h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
                 for i in range(1, len(h)):
                     if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
-                        novedades.append({"g": g, "f": h[i]['Fecha_Col'], "t": "Salud"})
+                        novedades.append({"g": g, "f": h[i]['Fecha_Col'], "t": "Salud", "id": f"{g}_{h[i]['Fecha_Col']}"})
             
             df_val = df_res.copy()
             df_val['Es_Descanso'] = df_val['Turno'].isin(['DESC', 'COMP'])
             sem_check = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum()
             errores_ley = sem_check[sem_check < 1].reset_index()
             for _, err in errores_ley.iterrows():
-                f_err = df_res[(df_res['Grupo'] == err['Grupo']) & (df_res['Semana'] == err['Semana'])]['Fecha_Col'].iloc[0]
-                novedades.append({"g": err['Grupo'], "f": f_err, "t": "Ley"})
+                f_err = df_res[(df_res['Grupo'] == err['Grupo']) & (df_res['Semana'] == err['Semana'])]['Fecha_Col'].iloc[-1]
+                novedades.append({"g": err['Grupo'], "f": f_err, "t": "Ley", "id": f"ley_{err['Grupo']}_{err['Semana']}"})
 
-            # Lista de botones compactos para corregir
             if novedades:
-                st.error("🚨 Novedades Detectadas")
+                st.info(f"🚩 {len(novedades)} Novedades")
+                # Cada novedad es ahora un Popover directo
                 for n in novedades:
-                    if st.button(f"Fix {n['g']} | {n['f']} ({n['t']})", key=f"fix_{n['g']}_{n['f']}", use_container_width=True):
-                        st.session_state.temp_grupo = n['g']
-                        st.session_state.temp_fecha = n['f']
-                st.divider()
+                    with st.popover(f"Fix {n['g']} | {n['f']}", use_container_width=True):
+                        st.write(f"**Error de {n['t']}**")
+                        nuevo_t = st.selectbox("Cambiar turno a:", ["T1", "T2", "T3", "DESC", "COMP"], key=f"sel_{n['id']}")
+                        if st.button("Actualizar", key=f"btn_{n['id']}", use_container_width=True, type="primary"):
+                            mask = (df_res['Grupo'] == n['g']) & (df_res['Fecha_Col'] == n['f'])
+                            df_res.loc[mask, 'Turno'] = nuevo_t
+                            st.session_state.malla_generada = df_res
+                            guardar_malla_en_historico(df_res)
+                            st.rerun() # Esto hace que desaparezca de la lista
+            else:
+                st.success("✨ Sin novedades pendientes")
 
-            # Formulario de Ajuste Manual (Fuera del popover para que no tape)
-            with st.container(border=True):
-                def_g = st.session_state.get('temp_grupo', grupos_n[0])
-                def_f = st.session_state.get('temp_fecha', df_res['Fecha_Col'].unique()[0])
-                
-                g_edit = st.selectbox("Grupo", grupos_n, index=grupos_n.index(def_g))
-                f_edit = st.selectbox("Fecha", df_res['Fecha_Col'].unique(), index=list(df_res['Fecha_Col'].unique()).index(def_f))
-                t_edit = st.selectbox("Nuevo Turno", ["T1", "T2", "T3", "DESC", "COMP"])
-                
-                if st.button("💾 Aplicar Cambio", use_container_width=True, type="primary"):
-                    mask = (df_res['Grupo'] == g_edit) & (df_res['Fecha_Col'] == f_edit)
-                    df_res.loc[mask, 'Turno'] = t_edit
-                    st.session_state.malla_generada = df_res
-                    guardar_malla_en_historico(df_res)
-                    if 'temp_grupo' in st.session_state: del st.session_state.temp_grupo
-                    if 'temp_fecha' in st.session_state: del st.session_state.temp_fecha
-                    st.rerun()
-
-        with col_main:
+        with col_malla:
             st.subheader("📊 Malla de Turnos")
             matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
             matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
-            st.dataframe(matriz.style.map(color_t), use_container_width=True, height=400)
+            st.dataframe(matriz.style.map(color_t), use_container_width=True, height=450)
 
-            with st.expander("⚖️ Validador de Descansos de Ley", expanded=True):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.caption("Días libres por Semana (Mín 1)")
+            with st.expander("⚖️ Cumplimiento Legal"):
+                t1, t2 = st.tabs(["Semanal (Mín 1)", "Mensual"])
+                with t1:
                     sem_v = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
                     st.dataframe(sem_v.style.map(lambda x: 'background-color: #702020' if x < 1 else 'background-color: #205020'))
-                with col_b:
-                    st.caption("Acumulado Mensual")
+                with t2:
                     mes_v = df_val.groupby(['Grupo', 'Mes'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
                     st.dataframe(mes_v)
 
 if __name__ == "__main__":
-    pantalla_programador()
     pantalla_programador()
