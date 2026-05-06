@@ -54,7 +54,7 @@ def guardar_malla_en_historico(df_nueva):
             df_final.to_excel(writer, index=False)
         contents = repo.get_contents("malla_historica.xlsx")
         repo.update_file("malla_historica.xlsx", "Malla Saludable Richard V4", output.getvalue(), contents.sha)
-        st.toast("✅ Sincronizado correctamente", icon="🔄")
+        st.toast("✅ Sincronizado en GitHub", icon="🔄")
     except Exception as e:
         st.error(f"Error al guardar: {e}")
 
@@ -73,9 +73,7 @@ def color_t(val):
 # --- 3. PROGRAMADOR ---
 
 def pantalla_programador():
-    st.set_page_config(layout="wide") # Modo ancho para ver todo
-    st.title("📅 Programador 24/7 - Panel de Control")
-    
+    st.title("📅 Programador 24/7 - Gestión Integral")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     if 'malla_generada' not in st.session_state:
@@ -84,138 +82,143 @@ def pantalla_programador():
     repo = conectar_github()
     if not repo: return
 
-    # --- ZONA DE GENERACIÓN (SIDEBAR) ---
-    with st.sidebar:
-        st.header("⚙️ Generación")
-        f_ini = st.date_input("Inicio", datetime.now())
-        f_fin = st.date_input("Fin", datetime.now() + timedelta(days=21))
+    with st.expander("👁️ Ver Cierre Anterior"):
+        estado_ayer_dict = obtener_ultimo_estado_github(repo)
+        st.write(estado_ayer_dict)
+
+    c_f1, c_f2 = st.columns(2)
+    f_ini = c_f1.date_input("Inicio", datetime.now())
+    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=28))
+
+    if st.button("🚀 Generar Malla Base"):
+        st.cache_data.clear()
+        lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
+        resultados = []
         
-        if st.button("🚀 Generar Malla Base", use_container_width=True):
-            estado_ayer_dict = obtener_ultimo_estado_github(repo)
-            lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
-            resultados = []
+        mem_t = {g: estado_ayer_dict[g]["u"] for g in grupos_n}
+        mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
+        deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
+        co_h = holidays.Colombia(years=[2024, 2025, 2026])
+
+        for fecha in lista_fechas:
+            fecha_dt = pd.to_datetime(fecha)
+            dia_idx = fecha_dt.weekday()
+            sem_iso = fecha_dt.isocalendar()[1]
+            es_fest = fecha_dt in co_h
+            col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
+
+            libranza = None
+            if dia_idx == 5:
+                libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
+                deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
+            elif dia_idx == 6:
+                libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
+                deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
+            else:
+                for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
+                    if deudas[g] > 0 and mem_t[g] != "T3":
+                        libranza = g; deudas[g] -= 1; break
+
+            activos = [g for g in grupos_n if g != libranza]
+            turnos_hoy = {}
+            for g in activos:
+                idx_g = grupos_n.index(g)
+                t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
+                if not es_cambio_saludable(mem_t[g], t_sug): t_sug = mem_t[g]
+                if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
+                turnos_hoy[g] = t_sug
+
+            for tr in ["T1", "T2", "T3"]:
+                if tr not in turnos_hoy.values():
+                    for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
+                        if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
+                            if es_cambio_saludable(mem_t[gf], tr):
+                                turnos_hoy[gf] = tr; break
             
-            mem_t = {g: estado_ayer_dict[g]["u"] for g in grupos_n}
-            mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
-            deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
-            co_h = holidays.Colombia(years=[2024, 2025, 2026])
+            for g in grupos_n:
+                t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+                n_a = mem_n[g] + 1 if t_f == "T3" else 0
+                resultados.append({
+                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
+                    "Fecha_Raw": fecha_dt, "Noches_Acum": n_a,
+                    "Deuda_Compensatorio": deudas[g]
+                })
+                mem_t[g] = t_f; mem_n[g] = n_a
 
-            for fecha in lista_fechas:
-                fecha_dt = pd.to_datetime(fecha)
-                dia_idx = fecha_dt.weekday()
-                sem_iso = fecha_dt.isocalendar()[1]
-                es_fest = fecha_dt in co_h
-                col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
+        st.session_state.malla_generada = pd.DataFrame(resultados)
+        guardar_malla_en_historico(st.session_state.malla_generada)
+        st.rerun()
 
-                libranza = None
-                if dia_idx == 5:
-                    libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
-                    deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
-                elif dia_idx == 6:
-                    libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
-                    deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
-                else:
-                    for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
-                        if deudas[g] > 0 and mem_t[g] != "T3":
-                            libranza = g; deudas[g] -= 1; break
-
-                activos = [g for g in grupos_n if g != libranza]
-                turnos_hoy = {}
-                for g in activos:
-                    idx_g = grupos_n.index(g)
-                    t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
-                    if not es_cambio_saludable(mem_t[g], t_sug): t_sug = mem_t[g]
-                    if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
-                    turnos_hoy[g] = t_sug
-
-                for tr in ["T1", "T2", "T3"]:
-                    if tr not in turnos_hoy.values():
-                        for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
-                            if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
-                                if es_cambio_saludable(mem_t[gf], tr):
-                                    turnos_hoy[gf] = tr; break
-                
-                for g in grupos_n:
-                    t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
-                    n_a = mem_n[g] + 1 if t_f == "T3" else 0
-                    resultados.append({
-                        "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
-                        "Fecha_Raw": fecha_dt, "Noches_Acum": n_a,
-                        "Deuda_Compensatorio": deudas[g]
-                    })
-                    mem_t[g] = t_f; mem_n[g] = n_a
-
-            st.session_state.malla_generada = pd.DataFrame(resultados)
-            guardar_malla_en_historico(st.session_state.malla_generada)
-            st.rerun()
-
-    # --- CUERPO PRINCIPAL (DOS COLUMNAS) ---
     if st.session_state.malla_generada is not None:
         df_res = st.session_state.malla_generada.copy()
         df_res['Fecha_Raw'] = pd.to_datetime(df_res['Fecha_Raw'])
         df_res['Semana'] = df_res['Fecha_Raw'].dt.isocalendar().week
         df_res['Mes'] = df_res['Fecha_Raw'].dt.strftime('%B %Y')
 
-        col_control, col_malla = st.columns([1, 3]) # 1 parte control, 3 partes malla
+        # --- ANÁLISIS DE NOVEDADES PREVIO ---
+        novedades_salud = []
+        for g in grupos_n:
+            h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
+            for i in range(1, len(h)):
+                if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
+                    novedades_salud.append({"grupo": g, "fecha": h[i]['Fecha_Col'], "tipo": "Salud"})
+        
+        # Análisis de ley (Semanas sin descanso)
+        df_val = df_res.copy()
+        df_val['Es_Descanso'] = df_val['Turno'].isin(['DESC', 'COMP'])
+        sem_check = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum()
+        errores_ley = sem_check[sem_check < 1].reset_index()
+        for _, err in errores_ley.iterrows():
+            # Tomamos la primera fecha de esa semana para el grupo
+            fecha_err = df_res[(df_res['Grupo'] == err['Grupo']) & (df_res['Semana'] == err['Semana'])]['Fecha_Col'].iloc[0]
+            novedades_salud.append({"grupo": err['Grupo'], "fecha": fecha_err, "tipo": "Ley (Falta Descanso)"})
 
-        with col_control:
-            st.subheader("🛠️ Ajuste Rápido")
+        # --- POPOVER MEJORADO ---
+        with st.popover("✏️ Editar Turno Rápido", use_container_width=True):
+            if novedades_salud:
+                st.subheader("🚨 Novedades Detectadas")
+                for n in novedades_salud:
+                    if st.button(f"Corregir {n['grupo']} - {n['fecha']} ({n['tipo']})", key=f"btn_{n['grupo']}_{n['fecha']}", use_container_width=True):
+                        st.session_state.temp_grupo = n['grupo']
+                        st.session_state.temp_fecha = n['fecha']
+                st.divider()
             
-            # --- ANÁLISIS DE NOVEDADES ---
-            novedades = []
-            for g in grupos_n:
-                h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
-                for i in range(1, len(h)):
-                    if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
-                        novedades.append({"g": g, "f": h[i]['Fecha_Col'], "t": "Salud"})
+            st.subheader("Ajuste Manual")
+            col_edit1, col_edit2, col_edit3 = st.columns(3)
             
-            df_val = df_res.copy()
-            df_val['Es_Descanso'] = df_val['Turno'].isin(['DESC', 'COMP'])
-            sem_check = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum()
-            errores_ley = sem_check[sem_check < 1].reset_index()
-            for _, err in errores_ley.iterrows():
-                f_err = df_res[(df_res['Grupo'] == err['Grupo']) & (df_res['Semana'] == err['Semana'])]['Fecha_Col'].iloc[-1]
-                novedades.append({"g": err['Grupo'], "f": f_err, "t": "Ley"})
-
-            if novedades:
-                st.error("🚨 Novedades")
-                for n in novedades:
-                    if st.button(f"Fix {n['g']} - {n['f']}", key=f"btn_{n['g']}_{n['f']}", use_container_width=True):
-                        st.session_state.temp_grupo = n['g']
-                        st.session_state.temp_fecha = n['f']
+            # Valores por defecto basados en el botón clickeado
+            def_g = st.session_state.get('temp_grupo', grupos_n[0])
+            def_f = st.session_state.get('temp_fecha', df_res['Fecha_Col'].unique()[0])
             
-            # Formulario de ajuste
-            with st.container(border=True):
-                def_g = st.session_state.get('temp_grupo', grupos_n[0])
-                def_f = st.session_state.get('temp_fecha', df_res['Fecha_Col'].unique()[0])
-                
-                g_edit = st.selectbox("Grupo", grupos_n, index=grupos_n.index(def_g))
-                f_edit = st.selectbox("Fecha", df_res['Fecha_Col'].unique(), index=list(df_res['Fecha_Col'].unique()).index(def_f))
-                t_edit = st.selectbox("Nuevo Turno", ["T1", "T2", "T3", "DESC", "COMP"])
-                
-                if st.button("💾 Aplicar Cambio", use_container_width=True, type="primary"):
-                    mask = (df_res['Grupo'] == g_edit) & (df_res['Fecha_Col'] == f_edit)
-                    df_res.loc[mask, 'Turno'] = t_edit
-                    st.session_state.malla_generada = df_res
-                    guardar_malla_en_historico(df_res)
-                    if 'temp_grupo' in st.session_state: del st.session_state.temp_grupo
-                    if 'temp_fecha' in st.session_state: del st.session_state.temp_fecha
-                    st.rerun()
+            grupo_edit = col_edit1.selectbox("Grupo", grupos_n, index=grupos_n.index(def_g))
+            fecha_edit = col_edit2.selectbox("Fecha", df_res['Fecha_Col'].unique(), index=list(df_res['Fecha_Col'].unique()).index(def_f))
+            turno_edit = col_edit3.selectbox("Nuevo Turno", ["T1", "T2", "T3", "DESC", "COMP"])
+            
+            if st.button("💾 Aplicar y Sincronizar", use_container_width=True):
+                mask = (df_res['Grupo'] == grupo_edit) & (df_res['Fecha_Col'] == fecha_edit)
+                df_res.loc[mask, 'Turno'] = turno_edit
+                st.session_state.malla_generada = df_res
+                guardar_malla_en_historico(df_res)
+                # Limpiar sugerencia tras aplicar
+                if 'temp_grupo' in st.session_state: del st.session_state.temp_grupo
+                if 'temp_fecha' in st.session_state: del st.session_state.temp_fecha
+                st.rerun()
 
-        with col_malla:
-            st.subheader("📊 Malla Actual")
-            matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
-            matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
-            st.dataframe(matriz.style.map(color_t), use_container_width=True, height=400)
+        # --- MATRIZ Y TABLAS ---
+        matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
+        matriz = matriz.reindex(columns=df_res["Fecha_Col"].unique())
+        st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
-            with st.expander("⚖️ Cumplimiento Legal (Días libres)"):
-                t1, t2 = st.tabs(["Semanal (Mín 1)", "Mensual"])
-                with t1:
-                    sem_v = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
-                    st.dataframe(sem_v.style.map(lambda x: 'background-color: #702020' if x < 1 else 'background-color: #205020'))
-                with t2:
-                    mes_v = df_val.groupby(['Grupo', 'Mes'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
-                    st.dataframe(mes_v)
+        with st.expander("⚖️ Validador de Descansos de Ley", expanded=True):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.caption("Días libres por Semana (Mín 1)")
+                sem_v = df_val.groupby(['Grupo', 'Semana'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
+                st.dataframe(sem_v.style.map(lambda x: 'background-color: #702020' if x < 1 else 'background-color: #205020'))
+            with col_b:
+                st.caption("Acumulado Mensual")
+                mes_v = df_val.groupby(['Grupo', 'Mes'], observed=False)['Es_Descanso'].sum().unstack(fill_value=0)
+                st.dataframe(mes_v)
 
 if __name__ == "__main__":
     pantalla_programador()
