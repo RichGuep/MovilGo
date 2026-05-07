@@ -4,14 +4,15 @@ import io
 import random
 from datetime import datetime, timedelta
 from github import Github
-# Importamos el motor de programación
+
+# --- IMPORTACIÓN DEL MOTOR DE LÓGICA ---
 try:
     from logic_programador import pantalla_programador
 except ImportError:
     st.error("⚠️ No se encontró 'logic_programador.py'. Asegúrate de que ambos archivos estén en la misma carpeta.")
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="MovilGo - Gestión Operativa", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="MovilGo - Gestión Operativa 24/7", layout="wide", initial_sidebar_state="expanded")
 
 # --- URLs DE IMÁGENES GITHUB ---
 URL_BASE = "https://raw.githubusercontent.com/RichGuep/movilgo/main/"
@@ -31,12 +32,11 @@ st.markdown(f"""
         color: white; padding: 2.5rem; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1);
         margin-bottom: 2rem;
     }}
-    .stMetric {{ background-color: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border: 1px solid #eee; }}
+    .stMetric {{ background-color: white; padding: 20px; border-radius: 15px; border: 1px solid #eee; }}
     .card-empresa {{
         background-color: white; padding: 30px; border-radius: 25px;
         text-align: center; border: 1px solid #eee; transition: 0.4s;
     }}
-    .card-empresa:hover {{ transform: translateY(-5px); box-shadow: 0 12px 20px rgba(0,0,0,0.1); }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -68,79 +68,71 @@ def guardar_excel(df, nombre_archivo, mensaje):
     try:
         contents = repo.get_contents(nombre_archivo)
         repo.update_file(nombre_archivo, mensaje, output.getvalue(), contents.sha)
-        st.success(f"✅ {nombre_archivo} sincronizado.")
+        st.success(f"✅ {nombre_archivo} sincronizado con éxito.")
     except:
         repo.create_file(nombre_archivo, mensaje, output.getvalue())
 
 # --- 2. MÓDULOS DE INTERFAZ ---
 
 def modulo_inicio():
-    st.markdown(f'<div class="welcome-card"><h1>Panel de Control {st.session_state.empresa}</h1><p>Gestión de turnos saludable, equitativa y control de staffing.</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="welcome-card"><h1>Panel de Control {st.session_state.empresa}</h1><p>Garantizando cobertura T1, T2 y T3 con equidad laboral.</p></div>', unsafe_allow_html=True)
     
     df_p = cargar_excel("empleados.xlsx")
     df_m = cargar_excel("malla_historica.xlsx")
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Técnicos Activos", len(df_p) if not df_p.empty else "0")
-    c2.metric("Grupos", "4")
-    c3.metric("Última Malla", df_m['Fecha_Raw'].max().strftime('%d/%m/%Y') if not df_m.empty else "N/A")
-    c4.metric("Versión", "V5.5 Pro")
+    c1.metric("Técnicos Totales", len(df_p) if not df_p.empty else "0")
+    c2.metric("Grupos Operativos", "4")
+    c3.metric("Deuda Global Descansos", int(df_m['Deuda_Compensatorio'].sum()) if not df_m.empty else "0")
+    c4.metric("Estado de Red", "24/7 Activo", delta="Estable")
 
     if not df_m.empty:
-        st.subheader("📊 Resumen Operativo Actual")
-        col_chart1, col_chart2 = st.columns(2)
-        with col_chart1:
-            st.write("**Distribución de Turnos por Grupo**")
+        st.subheader("📊 Análisis de Carga Laboral")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.write("**Balance de Turnos por Grupo**")
             st.bar_chart(df_m.groupby(["Grupo", "Turno"]).size().unstack(fill_value=0))
-        with col_chart2:
-            st.write("**Días de Descanso Acumulados**")
-            descansos = df_m[df_m["Turno"].isin(["DESC", "COMP"])].groupby("Grupo").size()
-            st.area_chart(descansos)
+        with col_b:
+            st.write("**Histórico de Deuda de Compensatorios**")
+            # Mostrar la evolución de la deuda por grupo
+            st.line_chart(df_m.pivot_table(index='Fecha_Raw', columns='Grupo', values='Deuda_Compensatorio'))
 
 def modulo_personal():
-    st.header("👥 Gestión de Personal y Roles")
+    st.header("👥 Gestión de Plantilla y Roles")
     df_emp = cargar_excel("empleados.xlsx")
+    
     if df_emp.empty:
+        st.warning("⚠️ No hay personal registrado. Por favor, agregue técnicos a la tabla.")
         df_emp = pd.DataFrame(columns=["Nombre", "Cargo", "Cedula", "Grupo"])
     
-    tab1, tab2 = st.tabs(["📋 Lista de Técnicos", "⚙️ Configuración de Grupos"])
+    st.info("💡 Clasifique al personal como Master, Técnico A o Técnico B para que el sistema valide el requerimiento diario.")
+    df_edit = st.data_editor(df_emp, use_container_width=True, num_rows="dynamic", key="editor_plantilla")
     
-    with tab1:
-        st.info("Cualquier cambio en esta tabla se reflejará en los reportes de nómina y detallados.")
-        df_edit = st.data_editor(df_emp, use_container_width=True, num_rows="dynamic", key="editor_personal")
-        if st.button("💾 Guardar Cambios en la Base"):
-            guardar_excel(df_edit, "empleados.xlsx", "Update Personal")
-            st.rerun()
-
-    with tab2:
-        st.subheader("Reasignación Masiva")
-        if st.button("🎲 Mezclar y Reasignar Grupos Aleatoriamente"):
-            grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"] * (len(df_emp)//4 + 1)
-            random.shuffle(grupos)
-            df_emp["Grupo"] = grupos[:len(df_emp)]
-            guardar_excel(df_emp, "empleados.xlsx", "Reasignacion Grupos")
-            st.rerun()
+    if st.button("💾 Guardar Cambios en GitHub"):
+        guardar_excel(df_edit, "empleados.xlsx", "Actualización de Personal")
+        st.rerun()
 
 def modulo_detallado():
-    st.header("📋 Detallado Programación (Vista por Técnico)")
+    st.header("📋 Detallado Programación por Técnico")
     df_m = cargar_excel("malla_historica.xlsx")
     df_e = cargar_excel("empleados.xlsx")
     
     if df_m.empty or df_e.empty:
-        st.warning("⚠️ Faltan datos. Asegúrate de tener personal registrado y una malla generada."); return
+        st.error("⚠️ Datos insuficientes para generar el reporte detallado."); return
 
+    # Cruzar datos
     df_e["Grupo"] = df_e["Grupo"].astype(str)
     df_m["Grupo"] = df_m["Grupo"].astype(str)
-    
     df_det = df_e.merge(df_m, on="Grupo")
     
-    # Buscador de técnico
-    tecnico = st.selectbox("Buscar Técnico Específico:", ["Todos"] + list(df_e['Nombre'].unique()))
-    if tecnico != "Todos":
-        df_det = df_det[df_det['Nombre'] == tecnico]
-
-    matriz = df_det.pivot_table(
-        index=["Grupo", "Nombre"], 
+    # Filtro por cargo o grupo
+    st.sidebar.subheader("Filtros de Vista")
+    filtro_grupo = st.sidebar.multiselect("Filtrar por Grupo:", options=list(df_e['Grupo'].unique()), default=list(df_e['Grupo'].unique()))
+    
+    df_v = df_det[df_det['Grupo'].isin(filtro_grupo)]
+    
+    matriz = df_v.pivot_table(
+        index=["Grupo", "Nombre", "Cargo"], 
         columns="Fecha_Col", 
         values="Turno", 
         aggfunc='first'
@@ -157,26 +149,20 @@ if not st.session_state.logged_in:
     _, col, _ = st.columns([1, 1.2, 1])
     with col:
         st.image(LOGO_APP, use_container_width=True)
-        st.markdown("<h2 style='text-align:center;'>Portal MovilGo</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align:center;'>Portal de Acceso</h2>", unsafe_allow_html=True)
         with st.container(border=True):
-            user = st.text_input("Usuario")
+            user = st.text_input("Usuario Operativo")
             pw = st.text_input("Contraseña", type="password")
             if st.button("Iniciar Sesión"):
                 st.session_state.logged_in = True
                 st.rerun()
 
 elif st.session_state.empresa is None:
-    st.markdown("<h2 style='text-align:center; padding-top:2rem;'>Seleccione la Operación</h2>", unsafe_allow_html=True)
-    _, col, _ = st.columns([1, 1.2, 1])
+    st.markdown("<h2 style='text-align:center; padding: 2rem;'>Seleccione Unidad de Negocio</h2>", unsafe_allow_html=True)
+    _, col, _ = st.columns([1, 1.5, 1])
     with col:
-        st.markdown(f'''
-            <div class="card-empresa">
-                <img src="{LOGO_CABLE}" width="180">
-                <h3>Cable Móvil</h3>
-                <p>Gestión de Redes y Mantenimiento</p>
-            </div>
-        ''', unsafe_allow_html=True)
-        if st.button("Ingresar a Cable Móvil"):
+        st.markdown(f'<div class="card-empresa"><img src="{LOGO_CABLE}" width="200"><h3>Cable Móvil</h3><p>Soporte Técnico y Redes</p></div>', unsafe_allow_html=True)
+        if st.button("Gestionar Cable Móvil"):
             st.session_state.empresa = "Cable Móvil"
             st.rerun()
 
@@ -184,17 +170,18 @@ else:
     with st.sidebar:
         st.image(LOGO_CABLE, width=150)
         st.divider()
-        menu = st.radio("MENÚ PRINCIPAL", ["🏠 Inicio", "📅 Programación", "📋 Detallado", "👥 Personal"])
+        menu = st.radio("NAVEGACIÓN", ["🏠 Inicio", "📅 Programación", "📋 Reporte Detallado", "👥 Personal"])
         st.divider()
-        if st.button("🚪 Cerrar Operación"):
+        if st.button("🚪 Salir del Sistema"):
             st.session_state.empresa = None
             st.rerun()
 
     if menu == "🏠 Inicio":
         modulo_inicio()
     elif menu == "📅 Programación":
-        pantalla_programador() # Ejecuta el motor de logic_programador.py
-    elif menu == "📋 Detallado":
+        # Ejecuta la función principal de logic_programador.py
+        pantalla_programador() 
+    elif menu == "📋 Reporte Detallado":
         modulo_detallado()
     elif menu == "👥 Personal":
         modulo_personal()
