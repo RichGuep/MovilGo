@@ -73,18 +73,19 @@ def color_t(val):
 # --- 3. PROGRAMADOR ---
 
 def pantalla_programador():
-    # ... (mantener código anterior de conexión y fechas)
+    # ... (mantener código inicial de fechas y conexión)
 
     if st.button("🚀 Generar Malla Base"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         
+        # Estado inicial
         mem_t = {g: estado_ayer_dict[g]["u"] for g in grupos_n}
         mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
         deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
         
-        # NUEVO: Contadores de control para equilibrio de carga en este periodo
+        # NUEVO: Contador de control para equidad en el periodo actual
         conteo_periodo = {g: {"T1": 0, "T2": 0, "T3": 0} for g in grupos_n}
         
         co_h = holidays.Colombia(years=[2024, 2025, 2026])
@@ -96,7 +97,7 @@ def pantalla_programador():
             es_fest = fecha_dt in co_h
             col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # 1. ASIGNACIÓN DE LIBRANZAS (Se mantienen reglas intactas)
+            # 1. IDENTIFICAR LIBRANZAS (Reglas intactas)
             libranza = None
             if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -105,44 +106,52 @@ def pantalla_programador():
                 libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
                 deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
             else:
-                # Prioridad de compensatorios por deuda
                 for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
                     if deudas[g] > 0 and mem_t[g] != "T3":
                         libranza = g; deudas[g] -= 1; break
 
             activos = [g for g in grupos_n if g != libranza]
             turnos_hoy = {}
-
-            # 2. MOTOR DE EQUILIBRIO DINÁMICO
-            # Intentamos cubrir T1, T2 y T3 balanceando los acumulados
             turnos_necesarios = ["T1", "T2", "T3"]
-            
-            # Ordenamos los grupos activos: primero los que tienen menos carga de turnos pesados (T3)
+
+            # 2. ASIGNACIÓN POR MÍNIMA CARGA (Balanceo)
+            # Ordenamos los grupos activos priorizando los que tienen menos T3 acumulados
             activos_ordenados = sorted(activos, key=lambda x: (conteo_periodo[x]["T3"], conteo_periodo[x]["T2"]))
 
             for g in activos_ordenados:
-                # Buscamos un turno que: 
-                # 1. Esté libre hoy.
-                # 2. Sea saludable para el grupo (no saltos prohibidos).
-                # 3. El grupo no haya excedido noches (6 seguidas).
+                turno_final = None
+                # Buscamos el turno que este grupo ha hecho menos veces y que sea saludable
+                prioridad_turnos = sorted(turnos_necesarios, key=lambda t: conteo_periodo[g][t])
                 
-                turno_asignado = None
-                # Priorizamos asignar el turno que este grupo ha hecho MENOS veces en el mes
-                turnos_prioridad = sorted(turnos_necesarios, key=lambda t: conteo_periodo[g][t])
-                
-                for t_sug in turnos_prioridad:
+                for t_sug in prioridad_turnos:
                     if es_cambio_saludable(mem_t[g], t_sug):
+                        # Validación adicional: no más de 6 noches seguidas
                         if not (t_sug == "T3" and mem_n[g] >= 6):
-                            turno_asignado = t_sug
+                            turno_final = t_sug
                             turnos_necesarios.remove(t_sug)
                             break
                 
-                # Si por salud no puede tomar ninguno de los faltantes, repite el anterior o T1
-                if not turno_asignado:
-                    turno_asignado = "T1"
+                # Si no hay opción saludable entre los necesarios, asignamos T1 por defecto
+                if not turno_final:
+                    turno_final = "T1"
                 
-                turnos_hoy[g] = turno_asignado
-                conteo_periodo[g][turno_asignado] += 1
+                turnos_hoy[g] = turno_final
+                conteo_periodo[g][turno_final] += 1
+
+            # 3. GUARDAR RESULTADOS (mantener lógica de actualización de memoria)
+            for g in grupos_n:
+                t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+                n_a = mem_n[g] + 1 if t_f == "T3" else 0
+                resultados.append({
+                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
+                    "Fecha_Raw": fecha_dt, "Noches_Acum": n_a,
+                    "Deuda_Compensatorio": deudas[g]
+                })
+                mem_t[g] = t_f; mem_n[g] = n_a
+
+        st.session_state.malla_generada = pd.DataFrame(resultados)
+        guardar_malla_en_historico(st.session_state.malla_generada)
+        st.rerun()
 
     if st.session_state.malla_generada is not None:
         # --- ASEGURAR COLUMNAS DE TIEMPO (Evita el KeyError) ---
