@@ -233,31 +233,56 @@ def modulo_programacion():
 
 def modulo_detallado():
     st.header("📋 Detallado Programación (Vista por Técnico)")
-    df_m = cargar_excel("malla_historica.xlsx"); df_e = cargar_excel("empleados.xlsx")
-    if df_m.empty or df_e.empty: st.warning("Genere la malla y base de personal primero."); return
     
-    # Aseguramos tipos para el merge
-    df_e["Grupo"] = df_e["Grupo"].astype(str); df_m["Grupo"] = df_m["Grupo"].astype(str)
-    df_det = df_e.merge(df_m, on="Grupo")
+    # 1. Obtener la fuente de verdad (Prioridad: Sesión actual, luego Excel)
+    if st.session_state.malla_generada is not None:
+        df_m = st.session_state.malla_generada.copy()
+    else:
+        df_m = cargar_excel("malla_historica.xlsx")
+        
+    df_e = cargar_excel("empleados.xlsx")
+    
+    if df_m.empty or df_e.empty: 
+        st.warning("⚠️ Genere la malla y asegúrese de tener personal registrado.")
+        return
+    
+    # 2. Limpieza para el cruce (Evitar duplicados y asegurar tipos)
+    df_e["Grupo"] = df_e["Grupo"].astype(str).str.strip()
+    df_m["Grupo"] = df_m["Grupo"].astype(str).str.strip()
+    
+    # Cruzamos: Por cada técnico en un grupo, le traemos sus turnos de la malla
+    df_det = df_e.merge(df_m, on="Grupo", how="inner")
     
     # --- DASHBOARD DE ANALÍTICA ---
-    st.subheader("📊 Analítica de la Malla")
-    d1, d2, d3 = st.columns(3)
+    # (Mantenemos tus métricas pero usando df_m para que sea global del grupo)
+    st.subheader("📊 Analítica de la Malla Actual")
+    d1, d2 = st.columns(2)
     with d1:
-        descansos = df_m[df_m["Turno"].isin(["DESC", "COMP"])].groupby("Grupo").size()
-        st.write("**Total Descansos por Grupo:**")
-        st.bar_chart(descansos)
-    with d2:
         turnos_qty = df_m.groupby(["Grupo", "Turno"]).size().unstack(fill_value=0)
-        st.write("**Distribución de Turnos:**")
-        st.dataframe(turnos_qty)
-    with d3:
-        st.write("**Balance de Noches (T3):**")
+        st.write("**Distribución de Turnos por Grupo:**")
+        st.dataframe(turnos_qty, use_container_width=True)
+    with d2:
         noches = df_m[df_m["Turno"] == "T3"].groupby("Grupo").size()
+        st.write("**Carga de Noches (T3):**")
         st.bar_chart(noches)
 
     st.divider()
     
+    # --- VISTA ESPEJO (MATRIZ POR PERSONA) ---
+    st.subheader("📝 Malla Individualizada")
+    
+    # El truco para el "espejo": Pivotar usando el Nombre del empleado
+    # Reindexamos columnas para que el orden de fechas sea idéntico al programador
+    orden_fechas = df_m["Fecha_Col"].unique()
+    
+    matriz_full = df_det.pivot_table(
+        index=["Grupo", "Nombre"], 
+        columns="Fecha_Col", 
+        values="Turno", 
+        aggfunc='first'
+    ).reindex(columns=orden_fechas)
+    
+    st.dataframe(matriz_full.style.map(color_t), use_container_width=True)
     # --- VISTA INTEGRAL ---
     st.subheader("📝 Malla Completa (Incluye Descansos y Cambios)")
     # Pivotamos para ver a cada persona y TODOS sus días (Sin filtros que oculten descansos)
@@ -271,27 +296,38 @@ def modulo_detallado():
     st.dataframe(matriz_full.style.map(color_t), use_container_width=True)
 
 def modulo_nomina():
-    st.header("💰 Módulo de Nómina / Reporte Horarios")
-    df_m = cargar_excel("malla_historica.xlsx"); df_e = cargar_excel("empleados.xlsx")
-    if df_m.empty or df_e.empty: st.error("Faltan datos de base."); return
+    st.header("💰 Módulo de Nómina")
     
-    # Limpieza de nombres de columna para evitar KeyErrors
+    if st.session_state.malla_generada is not None:
+        df_m = st.session_state.malla_generada.copy()
+    else:
+        df_m = cargar_excel("malla_historica.xlsx")
+        
+    df_e = cargar_excel("empleados.xlsx")
+    
+    if df_m.empty or df_e.empty: 
+        st.error("No hay datos suficientes para generar el reporte.")
+        return
+    
+    # Normalizar nombres de columnas
     df_e.columns = [c.replace('é', 'e').title() for c in df_e.columns]
-    df_e["Grupo"] = df_e["Grupo"].astype(str); df_m["Grupo"] = df_m["Grupo"].astype(str)
+    df_e["Grupo"] = df_e["Grupo"].astype(str).str.strip()
+    df_m["Grupo"] = df_m["Grupo"].astype(str).str.strip()
     
-    df_nom = df_e.merge(df_m, on="Grupo")
+    # Unir personal con sus turnos asignados
+    df_nom = df_e.merge(df_m, on="Grupo", how="inner")
+    
+    # Asignar horas basadas en el turno final (el que se ve en pantalla)
     df_nom["Hora Inicio"], df_nom["Hora Fin"] = zip(*df_nom["Turno"].map(obtener_horario))
-    
-    # Formateo de fecha para el reporte
     df_nom["Fecha"] = pd.to_datetime(df_nom["Fecha_Raw"]).dt.date
     
-    cols = ["Fecha", "Nombre", "Cedula", "Cargo", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]
-    existentes = [c for c in cols if c in df_nom.columns]
-    reporte = df_nom[existentes].sort_values(["Fecha", "Nombre"])
+    cols_finales = ["Fecha", "Nombre", "Cedula", "Cargo", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]
+    reporte = df_nom[cols_finales].sort_values(["Fecha", "Nombre"])
     
     st.dataframe(reporte, use_container_width=True, hide_index=True)
-    st.download_button("📥 Exportar Reporte para Nómina (CSV)", reporte.to_csv(index=False).encode('utf-8'), "reporte_nomina_movilgo.csv")
-
+    
+    csv = reporte.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Descargar Reporte CSV", csv, "nomina_movilgo.csv", "text/csv")
 # --- 4. FLUJO DE NAVEGACIÓN PRINCIPAL ---
 
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
