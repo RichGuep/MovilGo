@@ -106,7 +106,7 @@ def color_t(val):
     return f'background-color: {bg}; color: {color}; font-weight: bold; border: 1px solid #ffffff33; text-align: center;'
 
 def obtener_horario(turno):
-    h = {"T1": ("06:00", "14:00"), "T2": ("14:00", "22:00"), "T3": ("22:00", "06:00"), "DESC": ("OFF", "OFF"), "COMP": ("OFF", "OFF")}
+    h = {"T1": ("05:30", "12:50"), "T2": ("13:30", "20:50"), "T3": ("21:30", "28:50"), "DESC": ("OFF", "OFF"), "COMP": ("OFF", "OFF")}
     return h.get(turno, ("OFF", "OFF"))
 
 # --- 3. MÓDULOS DEL MENÚ ---
