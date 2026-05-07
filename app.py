@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 import holidays
-import random
 from datetime import datetime, timedelta
 from github import Github
 
@@ -29,13 +28,8 @@ st.markdown(f"""
         color: white; padding: 2.5rem; border-radius: 20px; margin-bottom: 2rem;
     }}
     .card-empresa {{
-        background: white;
-        padding: 1.5rem;
-        border-radius: 15px;
-        text-align: center;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-        border: 2px solid #eee;
-        margin-bottom: 10px;
+        background: white; padding: 1.5rem; border-radius: 15px; text-align: center;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.05); border: 2px solid #eee; margin-bottom: 10px;
     }}
     .card-empresa img {{ height: 80px; margin-bottom: 10px; }}
     </style>
@@ -60,40 +54,53 @@ def cargar_excel(nombre_archivo):
         return df
     except: return pd.DataFrame()
 
-def guardar_excel(df, nombre_archivo, mensaje):
-    repo = conectar_github()
-    if not repo: return
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False)
-    try:
-        contents = repo.get_contents(nombre_archivo)
-        if nombre_archivo == "malla_historica.xlsx":
-            df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
-            df_previo['Fecha_Raw'] = pd.to_datetime(df_previo['Fecha_Raw'])
-            df = pd.concat([df_previo, df]).drop_duplicates(subset=['Grupo', 'Fecha_Raw'], keep='last')
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-        repo.update_file(nombre_archivo, mensaje, output.getvalue(), contents.sha)
-        st.session_state.malla_generada = df
-    except:
-        repo.create_file(nombre_archivo, mensaje, output.getvalue())
-        st.session_state.malla_generada = df
-
-def obtener_ultimo_estado_github(repo):
+def obtener_estado_continuidad(repo, fecha_inicio):
+    """Busca el estado de los grupos el día anterior a la fecha elegida."""
     df_hist = cargar_excel("malla_historica.xlsx")
-    if df_hist.empty: return {g: {"u": "DESC", "n": 0, "d": 0} for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
+    grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    if df_hist.empty: return {g: {"u": "DESC", "n": 0, "d": 0} for g in grupos}
+    
+    fecha_limite = pd.to_datetime(fecha_inicio)
     estado = {}
-    for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
-        regs = df_hist[df_hist['Grupo'] == g].sort_values('Fecha_Raw', ascending=False)
+    for g in grupos:
+        # Filtramos registros anteriores a f_ini
+        regs = df_hist[(df_hist['Grupo'] == g) & (df_hist['Fecha_Raw'] < fecha_limite)].sort_values('Fecha_Raw', ascending=False)
         if not regs.empty:
             u = regs.iloc[0]
             estado[g] = {"u": u['Turno'], "n": int(u.get('Noches_Acum', 0)), "d": int(u.get('Deuda_Compensatorio', 0))}
-        else: estado[g] = {"u": "DESC", "n": 0, "d": 0}
+        else:
+            estado[g] = {"u": "DESC", "n": 0, "d": 0}
     return estado
 
-# --- 2. LÓGICA DE TURNOS SALUDABLES ---
+def guardar_excel(df_nuevo, nombre_archivo, mensaje):
+    repo = conectar_github()
+    if not repo: return
+    try:
+        contents = repo.get_contents(nombre_archivo)
+        df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
+        df_previo['Fecha_Raw'] = pd.to_datetime(df_previo['Fecha_Raw'])
+        
+        if nombre_archivo == "malla_historica.xlsx":
+            # Eliminamos solapamientos: borrar fechas que estamos sobrescribiendo
+            fechas_nuevas = df_nuevo['Fecha_Raw'].unique()
+            df_limpio = df_previo[~df_previo['Fecha_Raw'].isin(fechas_nuevas)]
+            df_final = pd.concat([df_limpio, df_nuevo]).sort_values(['Fecha_Raw', 'Grupo'])
+        else:
+            df_final = df_nuevo
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_final.to_excel(writer, index=False)
+        repo.update_file(nombre_archivo, mensaje, output.getvalue(), contents.sha)
+        st.session_state.malla_generada = df_final
+    except:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_nuevo.to_excel(writer, index=False)
+        repo.create_file(nombre_archivo, mensaje, output.getvalue())
+        st.session_state.malla_generada = df_nuevo
+
+# --- 2. LÓGICA DE TURNOS ---
 
 def es_cambio_saludable(ayer, hoy):
     if ayer in ["DESC", "COMP", "OFF"] or hoy in ["DESC", "COMP", "OFF"]: return True
@@ -104,28 +111,30 @@ def color_t(val):
     c = {"T1": "#1f77b4", "T2": "#2ca02c", "T3": "#4d4d4d", "DESC": "#d62728", "COMP": "#ff7f0e"}
     bg = c.get(val, "#ffffff")
     color = "white" if val in c else "black"
-    return f'background-color: {bg}; color: {color}; font-weight: bold; border: 1px solid #ffffff33; text-align: center;'
+    return f'background-color: {bg}; color: {color}; font-weight: bold; text-align: center;'
 
 def obtener_horario(turno):
-    h = {"T1": ("06:00", "14:00"), "T2": ("14:00", "22:00"), "T3": ("22:00", "06:00"), "DESC": ("OFF", "OFF"), "COMP": ("OFF", "OFF")}
+    h = {"T1": ("06:00", "14:00"), "T2": ("14:00", "22:00"), "T3": ("22:00", "06:00")}
     return h.get(turno, ("OFF", "OFF"))
 
-# --- 3. MÓDULOS DEL SISTEMA ---
+# --- 3. MÓDULOS ---
 
 def modulo_programacion():
-    st.header("📅 Programación Maestra y Validación")
-    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    st.header("📅 Programación Maestra")
     repo = conectar_github()
+    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
 
-    with st.expander("🚀 Generar Nuevo Periodo (Continuidad Automática)", expanded=st.session_state.malla_generada is None):
+    with st.expander("🚀 Generar Nuevo Periodo", expanded=True):
         c1, c2 = st.columns(2)
-        f_ini = c1.date_input("Inicio", datetime.now())
-        f_fin = c2.date_input("Fin", datetime.now() + timedelta(days=28))
+        f_ini = c1.date_input("Fecha Inicio", datetime.now())
+        f_fin = c2.date_input("Fecha Fin", datetime.now() + timedelta(days=28))
         
         if st.button("Generar Malla Inteligente"):
-            estado_ayer = obtener_ultimo_estado_github(repo)
+            # Lógica de inicio corregida
+            estado_ayer = obtener_estado_continuidad(repo, f_ini)
             lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
             resultados = []
+            
             mem_t = {g: estado_ayer[g]["u"] for g in grupos_n}
             mem_n = {g: estado_ayer[g]["n"] for g in grupos_n}
             deudas = {g: estado_ayer[g]["d"] for g in grupos_n}
@@ -151,7 +160,7 @@ def modulo_programacion():
 
                 for tr in ["T1", "T2", "T3"]:
                     if tr not in turnos_hoy.values():
-                        for gf in sorted(activos, key=lambda x: (mem_t[x] == "T3")):
+                        for gf in activos:
                             if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
                                 if es_cambio_saludable(mem_t[gf], tr): turnos_hoy[gf] = tr; break
                 
@@ -161,68 +170,37 @@ def modulo_programacion():
                     resultados.append({"Grupo": g, "Fecha_Col": col_name, "Turno": t_f, "Fecha_Raw": fecha_dt, "Noches_Acum": n_a, "Deuda_Compensatorio": deudas[g]})
                     mem_t[g] = t_f; mem_n[g] = n_a
 
-            st.session_state.malla_generada = pd.DataFrame(resultados)
-            guardar_excel(st.session_state.malla_generada, "malla_historica.xlsx", "Generación Periodo")
+            df_final = pd.DataFrame(resultados)
+            guardar_excel(df_final, "malla_historica.xlsx", "Generación Periodo")
             st.rerun()
 
-    if st.session_state.malla_generada is not None:
-        df_res = st.session_state.malla_generada.copy()
-        matriz = df_res.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_res["Fecha_Col"].unique())
-        
+    # Editor Maestro
+    df_m = cargar_excel("malla_historica.xlsx")
+    if not df_m.empty:
         st.subheader("✍️ Editor Maestro")
-        fechas_sel = st.multiselect("Filtrar fechas específicas:", options=list(matriz.columns))
-        df_edit_view = matriz[fechas_sel] if fechas_sel else matriz
-        config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"], width="small") for c in df_edit_view.columns}
-        matriz_editada = st.data_editor(df_edit_view, column_config=config_col, use_container_width=True)
-
+        matriz = df_m.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_m["Fecha_Col"].unique())
+        matriz_editada = st.data_editor(matriz, use_container_width=True)
         if st.button("💾 Guardar Cambios"):
-            matriz_final = matriz.copy(); matriz_final.update(matriz_editada)
-            df_man = matriz_final.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
-            df_final = df_res.drop(columns=['Turno']).merge(df_man, on=['Grupo', 'Fecha_Col'])
+            df_edit = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
+            df_final = df_m.drop(columns=['Turno']).merge(df_edit, on=['Grupo', 'Fecha_Col'])
             guardar_excel(df_final, "malla_historica.xlsx", "Ajuste Manual")
             st.rerun()
-
-        st.divider()
-        st.subheader("🔍 Localizador de Novedades de Salud")
-        alertas = []
-        for g in grupos_n:
-            h = df_res[df_res["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
-            for i in range(1, len(h)):
-                if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
-                    alertas.append({"msg": f"⚠️ {g}: Salto Prohibido {h[i-1]['Turno']} -> {h[i]['Turno']}", "f": h[i]['Fecha_Col']})
-        
-        if alertas:
-            sel = st.selectbox("Analizar error:", options=alertas, format_func=lambda x: f"{x['msg']} el {x['f']}")
-            c1, c2 = st.columns([1, 2])
-            c1.warning(f"Error detectado el **{sel['f']}**. Revisa la cobertura de los otros grupos para intercambiar turnos.")
-            c2.dataframe(df_res[df_res['Fecha_Col'] == sel['f']][['Grupo', 'Turno']].set_index('Grupo').T)
-        else:
-            st.success("✅ Rotación de salud perfecta.")
 
 def modulo_detallado():
     st.header("📋 Detallado por Técnico")
     df_m = cargar_excel("malla_historica.xlsx"); df_e = cargar_excel("empleados.xlsx")
-    if df_m.empty or df_e.empty: st.warning("Datos incompletos."); return
-    df_e["Grupo"] = df_e["Grupo"].astype(str); df_m["Grupo"] = df_m["Grupo"].astype(str)
+    if df_m.empty or df_e.empty: return
     df_det = df_e.merge(df_m, on="Grupo")
-    
-    st.subheader("📊 Analítica Rápida")
-    c1, c2 = st.columns(2)
-    c1.bar_chart(df_m[df_m["Turno"].isin(["DESC", "COMP"])].groupby("Grupo").size())
-    c2.dataframe(df_m.groupby(["Grupo", "Turno"]).size().unstack(fill_value=0))
-    
-    matriz_full = df_det.pivot_table(index=["Grupo", "Nombre"], columns="Fecha_Col", values="Turno", aggfunc='first').reindex(columns=df_m["Fecha_Col"].unique())
+    matriz_full = df_det.pivot_table(index=["Grupo", "Nombre"], columns="Fecha_Col", values="Turno", aggfunc='first')
     st.dataframe(matriz_full.style.map(color_t), use_container_width=True)
 
 def modulo_nomina():
     st.header("💰 Nómina")
     df_m = cargar_excel("malla_historica.xlsx"); df_e = cargar_excel("empleados.xlsx")
     if df_m.empty or df_e.empty: return
-    df_e.columns = [c.replace('é', 'e').title() for c in df_e.columns]
     df_nom = df_e.merge(df_m, on="Grupo")
     df_nom["Hora Inicio"], df_nom["Hora Fin"] = zip(*df_nom["Turno"].map(obtener_horario))
-    reporte = df_nom[["Fecha_Raw", "Nombre", "Cedula", "Cargo", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]].sort_values(["Fecha_Raw", "Nombre"])
-    st.dataframe(reporte, use_container_width=True, hide_index=True)
+    st.dataframe(df_nom[["Fecha_Raw", "Nombre", "Cedula", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]], use_container_width=True)
 
 def modulo_personal():
     st.header("👥 Personal")
@@ -231,66 +209,44 @@ def modulo_personal():
     if st.button("💾 Guardar Personal"):
         guardar_excel(df_edit, "empleados.xlsx", "Update Personal"); st.rerun()
 
-# --- 4. FLUJO PRINCIPAL (LOGIN Y MULTI-EMPRESA) ---
+# --- 4. FLUJO PRINCIPAL ---
 
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'empresa' not in st.session_state: st.session_state.empresa = None
 if 'logo_actual' not in st.session_state: st.session_state.logo_actual = None
-if 'malla_generada' not in st.session_state: st.session_state.malla_generada = None
 
-# PASO 1: LOGIN
 if not st.session_state.logged_in:
     _, col, _ = st.columns([1, 1.2, 1])
     with col:
         st.image(LOGO_APP, use_container_width=True)
-        st.subheader("Acceso al Portal Operativo")
         user = st.text_input("Usuario")
         passw = st.text_input("Contraseña", type="password")
         if st.button("Entrar"):
-            if user != "" and passw != "": # Aquí puedes poner validación real
-                st.session_state.logged_in = True
-                st.rerun()
+            if user != "" and passw != "": st.session_state.logged_in = True; st.rerun()
 
-# PASO 2: SELECCIÓN DE EMPRESA
 elif st.session_state.empresa is None:
     st.markdown("<h2 style='text-align: center;'>Seleccione su Operación</h2>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
-    
     with c1:
         st.markdown(f'<div class="card-empresa"><img src="{LOGO_GREEN}"><h3>Greenmóvil</h3></div>', unsafe_allow_html=True)
-        if st.button("Acceder Greenmóvil"):
-            st.session_state.empresa = "Greenmóvil"
-            st.session_state.logo_actual = LOGO_GREEN
-            st.rerun()
-            
+        if st.button("Acceder Greenmóvil"): st.session_state.empresa, st.session_state.logo_actual = "Greenmóvil", LOGO_GREEN; st.rerun()
     with c2:
         st.markdown(f'<div class="card-empresa"><img src="{LOGO_CABLE}"><h3>Cable Móvil</h3></div>', unsafe_allow_html=True)
-        if st.button("Acceder Cable Móvil"):
-            st.session_state.empresa = "Cable Móvil"
-            st.session_state.logo_actual = LOGO_CABLE
-            st.rerun()
-            
+        if st.button("Acceder Cable Móvil"): st.session_state.empresa, st.session_state.logo_actual = "Cable Móvil", LOGO_CABLE; st.rerun()
     with c3:
         st.markdown(f'<div class="card-empresa"><img src="{LOGO_BOGOTA}"><h3>BogotáMóvil</h3></div>', unsafe_allow_html=True)
-        if st.button("Acceder BogotáMóvil"):
-            st.session_state.empresa = "BogotáMóvil"
-            st.session_state.logo_actual = LOGO_BOGOTA
-            st.rerun()
+        if st.button("Acceder BogotáMóvil"): st.session_state.empresa, st.session_state.logo_actual = "BogotáMóvil", LOGO_BOGOTA; st.rerun()
 
-# PASO 3: APLICACIÓN PRINCIPAL
 else:
     with st.sidebar:
         st.image(st.session_state.logo_actual, width=150)
         st.markdown(f"**Operación:** {st.session_state.empresa}")
         st.divider()
         menu = st.radio("MENÚ", ["🏠 Inicio", "📅 Programación", "📋 Detallado", "💰 Nómina", "👥 Personal"])
-        st.divider()
-        if st.button("🚪 Salir / Cambiar"):
-            st.session_state.empresa = None
-            st.rerun()
+        if st.button("🚪 Salir"): st.session_state.empresa = None; st.rerun()
     
     if menu == "🏠 Inicio":
-        st.markdown(f'<div class="welcome-card"><h1>Operación {st.session_state.empresa}</h1><p>Sistema de gestión de turnos MovilGo v2.0</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="welcome-card"><h1>Operación {st.session_state.empresa}</h1><p>Sistema MovilGo v2.0</p></div>', unsafe_allow_html=True)
     elif menu == "📅 Programación": modulo_programacion()
     elif menu == "📋 Detallado": modulo_detallado()
     elif menu == "💰 Nómina": modulo_nomina()
