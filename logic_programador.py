@@ -71,8 +71,16 @@ def color_t(val):
     return f'background-color: {c.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
 # --- 3. PROGRAMADOR ---
+El problema radica en que el código anterior sumaba la deuda pero no la ejecutaba de inmediato o con la prioridad suficiente, haciendo que el flujo uniforme "atropellara" el derecho al descanso.
+
+Para solucionarlo, he ajustado el Motor de Decisiones. Ahora, la prioridad número uno del algoritmo es verificar si el grupo trabajó en su día de descanso legal (Sábado o Domingo) y, de ser así, obligar al sistema a entregar ese compensatorio en la primera oportunidad disponible de la semana siguiente.
+
+Aquí tienes el código corregido con la Lógica de Compensación Forzada:
+
+Código Corregido: Rotación Uniforme + Ejecución de Compensatorios
+Python
 def pantalla_programador():
-    st.title("📅 Programador 24/7 - Rotación Uniforme")
+    st.title("📅 Programador 24/7 - Rotación Uniforme y Compensatorios")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     if 'malla_generada' not in st.session_state:
@@ -89,30 +97,23 @@ def pantalla_programador():
     f_ini = c_f1.date_input("Inicio", datetime.now())
     f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=28))
 
-    if st.button("🚀 Generar Malla Equitativa"):
+    if st.button("🚀 Generar Malla con Compensatorios"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         
-        # 1. ESTADO INICIAL
+        # 1. ESTADO INICIAL Y MEMORIA
         mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
         deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
         
-        # Secuencia uniforme: T1 -> T2 -> T3
         secuencia_trabajo = ["T1", "T2", "T3"]
         
-        # Mapeo para saber en qué parte de la rueda de trabajo quedó cada grupo
         def get_work_idx(u):
-            if u == "T1": return 1 # El siguiente es T2
-            if u == "T2": return 2 # El siguiente es T3
-            return 0 # El siguiente es T1 (si venía de T3 o DESC)
+            if u == "T1": return 1
+            if u == "T2": return 2
+            return 0
             
         indices_trabajo = {g: get_work_idx(estado_ayer_dict[g]["u"]) for g in grupos_n}
-        
-        # Desfase inicial para que no todos empiecen en T1 (si es la primera vez)
-        if len(set(indices_trabajo.values())) == 1 and all(v == 0 for v in indices_trabajo.values()):
-            indices_trabajo = {"Grupo 1": 0, "Grupo 2": 1, "Grupo 3": 2, "Grupo 4": 0}
-
         co_h = holidays.Colombia(years=[2024, 2025, 2026])
 
         for fecha in lista_fechas:
@@ -122,44 +123,61 @@ def pantalla_programador():
             es_fest = fecha_dt in co_h
             col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # --- A. DEFINIR LIBRANZAS DE LEY (Fines de semana) ---
+            # --- A. LÓGICA DE FIN DE SEMANA (Generación de Deuda) ---
             libranza_ley = None
             if dia_idx == 5: # Sábado
                 libranza_ley = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
-                deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
+                # El grupo que TRABAJA suma deuda
+                quien_trabaja_sab = "Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"
+                deudas[quien_trabaja_sab] += 1
             elif dia_idx == 6: # Domingo
                 libranza_ley = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
-                deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
+                quien_trabaja_dom = "Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"
+                deudas[quien_trabaja_dom] += 1
 
-            # --- B. ASIGNACIÓN DE TURNOS ---
+            # --- B. ASIGNACIÓN DE TURNOS CON PRIORIDAD AL COMPENSATORIO ---
             turnos_hoy = {}
-            # Priorizamos dar el COMP al que más deba
-            grupos_prioridad = sorted(grupos_n, key=lambda x: deudas[x], reverse=True)
+            # Ordenamos: primero los que tienen deuda de compensatorio
+            orden_prioridad = sorted(grupos_n, key=lambda x: deudas[x], reverse=True)
 
-            for g in grupos_prioridad:
-                # 1. Si es su descanso de Ley
+            for g in orden_prioridad:
+                # 1. ¿Le toca su descanso legal de Sábado/Domingo?
                 if g == libranza_ley:
                     turnos_hoy[g] = "DESC"
                 
-                # 2. Si tiene deuda de compensatorio
-                # (Y no permitimos más de 2 descansos totales para no dejar solo el turno)
-                elif deudas[g] > 0 and list(turnos_hoy.values()).count("COMP") < 1:
+                # 2. ¿Tiene deuda de días trabajados y hay cupo para descansar?
+                # (Solo damos COMP de lunes a viernes para no descuadrar el fin de semana)
+                elif deudas[g] > 0 and dia_idx < 5 and list(turnos_hoy.values()).count("COMP") < 1:
                     turnos_hoy[g] = "COMP"
-                    deudas[g] -= 1
+                    deudas[g] -= 1 # Se cobra la deuda
                 
-                # 3. Si trabaja, sigue la secuencia T1-T2-T3
+                # 3. Si no descansa, sigue la rueda T1 -> T2 -> T3
                 else:
                     idx = indices_trabajo[g]
-                    t_asignado = secuencia_trabajo[idx]
+                    t_propuesto = secuencia_trabajo[idx]
                     
-                    # Protección Salud: Si toca T3 pero ya lleva 6 noches, forzamos un descanso extra
-                    if t_asignado == "T3" and mem_n[g] >= 6:
+                    # Si toca T3 pero ya lleva 6 noches, forzamos un COMP de salud
+                    if t_propuesto == "T3" and mem_n[g] >= 6:
                         turnos_hoy[g] = "COMP"
-                        # No avanzamos el índice para que haga la noche al volver
                     else:
-                        turnos_hoy[g] = t_asignado
-                        # Avanzamos la rueda solo porque trabajó
+                        turnos_hoy[g] = t_propuesto
+                        # Solo avanzamos la rueda si trabajó
                         indices_trabajo[g] = (idx + 1) % 3
+
+            # --- C. PERSISTENCIA ---
+            for g in grupos_n:
+                t_f = turnos_hoy.get(g, "T1")
+                n_a = mem_n[g] + 1 if t_f == "T3" else 0
+                resultados.append({
+                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
+                    "Fecha_Raw": fecha_dt, "Noches_Acum": n_a,
+                    "Deuda_Compensatorio": deudas[g]
+                })
+                mem_n[g] = n_a
+
+        st.session_state.malla_generada = pd.DataFrame(resultados)
+        guardar_malla_en_historico(st.session_state.malla_generada)
+        st.rerun()
 
             # --- C. GUARDADO Y MEMORIA ---
             for g in grupos_n:
