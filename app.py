@@ -234,7 +234,7 @@ def modulo_programacion():
 def modulo_detallado():
     st.header("📋 Detallado Programación (Vista por Técnico)")
     
-    # 1. Obtener la fuente de verdad (Prioridad: Sesión actual, luego Excel)
+    # 1. FUENTE DE VERDAD ÚNICA: Priorizar siempre lo que está en memoria (sesión)
     if st.session_state.malla_generada is not None:
         df_m = st.session_state.malla_generada.copy()
     else:
@@ -243,57 +243,52 @@ def modulo_detallado():
     df_e = cargar_excel("empleados.xlsx")
     
     if df_m.empty or df_e.empty: 
-        st.warning("⚠️ Genere la malla y asegúrese de tener personal registrado.")
+        st.warning("⚠️ No hay datos. Por favor, genere la malla en el módulo de Programación.")
         return
-    
-    # 2. Limpieza para el cruce (Evitar duplicados y asegurar tipos)
+
+    # Limpieza de datos para asegurar el cruce perfecto
     df_e["Grupo"] = df_e["Grupo"].astype(str).str.strip()
     df_m["Grupo"] = df_m["Grupo"].astype(str).str.strip()
     
-    # Cruzamos: Por cada técnico en un grupo, le traemos sus turnos de la malla
-    df_det = df_e.merge(df_m, on="Grupo", how="inner")
+    # 2. MÉTRICAS DINÁMICAS (Se actualizan con cada cambio en st.session_state)
+    st.subheader("📊 Analítica de la Malla Actualizada")
+    d1, d2 = st.columns([2, 1])
     
-    # --- DASHBOARD DE ANALÍTICA ---
-    # (Mantenemos tus métricas pero usando df_m para que sea global del grupo)
-    st.subheader("📊 Analítica de la Malla Actual")
-    d1, d2 = st.columns(2)
     with d1:
+        # Conteo de turnos por grupo basado en la malla actual
         turnos_qty = df_m.groupby(["Grupo", "Turno"]).size().unstack(fill_value=0)
-        st.write("**Distribución de Turnos por Grupo:**")
+        st.write("**Distribución Total de Turnos:**")
         st.dataframe(turnos_qty, use_container_width=True)
+        
     with d2:
+        # Balance de Noches (T3) en tiempo real
+        st.write("**Balance de Noches (T3):**")
         noches = df_m[df_m["Turno"] == "T3"].groupby("Grupo").size()
-        st.write("**Carga de Noches (T3):**")
-        st.bar_chart(noches)
+        if not noches.empty:
+            st.bar_chart(noches)
+        else:
+            st.info("No hay turnos T3 asignados.")
 
     st.divider()
     
-    # --- VISTA ESPEJO (MATRIZ POR PERSONA) ---
-    st.subheader("📝 Malla Individualizada")
+    # 3. MALLA ÚNICA FINAL (Cruce de Empleados + Malla de Programación)
+    st.subheader("📝 Malla Individualizada (Espejo del Programador)")
     
-    # El truco para el "espejo": Pivotar usando el Nombre del empleado
-    # Reindexamos columnas para que el orden de fechas sea idéntico al programador
+    # Cruzamos los técnicos con la malla operativa
+    df_det = df_e.merge(df_m, on="Grupo", how="inner")
+    
+    # Creamos la matriz final respetando el orden cronológico de las fechas
     orden_fechas = df_m["Fecha_Col"].unique()
     
-    matriz_full = df_det.pivot_table(
+    matriz_final = df_det.pivot_table(
         index=["Grupo", "Nombre"], 
         columns="Fecha_Col", 
         values="Turno", 
         aggfunc='first'
     ).reindex(columns=orden_fechas)
     
-    st.dataframe(matriz_full.style.map(color_t), use_container_width=True)
-    # --- VISTA INTEGRAL ---
-    st.subheader("📝 Malla Completa (Incluye Descansos y Cambios)")
-    # Pivotamos para ver a cada persona y TODOS sus días (Sin filtros que oculten descansos)
-    matriz_full = df_det.pivot_table(
-        index=["Grupo", "Nombre"], 
-        columns="Fecha_Col", 
-        values="Turno", 
-        aggfunc='first'
-    ).reindex(columns=df_m["Fecha_Col"].unique())
-    
-    st.dataframe(matriz_full.style.map(color_t), use_container_width=True)
+    # Aplicar estilos de colores y mostrar
+    st.dataframe(matriz_final.style.map(color_t), use_container_width=True)
 
 def modulo_nomina():
     st.header("💰 Módulo de Nómina")
