@@ -35,7 +35,7 @@ st.markdown(f"""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 1. FUNCIONES DE DATOS Y CONEXIÓN ---
+# --- 1. FUNCIONES DE DATOS ---
 
 def conectar_github():
     try:
@@ -55,15 +55,12 @@ def cargar_excel(nombre_archivo):
     except: return pd.DataFrame()
 
 def obtener_estado_continuidad(repo, fecha_inicio):
-    """Busca el estado de los grupos el día anterior a la fecha elegida."""
     df_hist = cargar_excel("malla_historica.xlsx")
     grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     if df_hist.empty: return {g: {"u": "DESC", "n": 0, "d": 0} for g in grupos}
-    
     fecha_limite = pd.to_datetime(fecha_inicio)
     estado = {}
     for g in grupos:
-        # Filtramos registros anteriores a f_ini
         regs = df_hist[(df_hist['Grupo'] == g) & (df_hist['Fecha_Raw'] < fecha_limite)].sort_values('Fecha_Raw', ascending=False)
         if not regs.empty:
             u = regs.iloc[0]
@@ -79,15 +76,12 @@ def guardar_excel(df_nuevo, nombre_archivo, mensaje):
         contents = repo.get_contents(nombre_archivo)
         df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
         df_previo['Fecha_Raw'] = pd.to_datetime(df_previo['Fecha_Raw'])
-        
         if nombre_archivo == "malla_historica.xlsx":
-            # Eliminamos solapamientos: borrar fechas que estamos sobrescribiendo
             fechas_nuevas = df_nuevo['Fecha_Raw'].unique()
             df_limpio = df_previo[~df_previo['Fecha_Raw'].isin(fechas_nuevas)]
             df_final = pd.concat([df_limpio, df_nuevo]).sort_values(['Fecha_Raw', 'Grupo'])
         else:
             df_final = df_nuevo
-
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, index=False)
@@ -126,65 +120,67 @@ def modulo_programacion():
 
     with st.expander("🚀 Generar Nuevo Periodo", expanded=True):
         c1, c2 = st.columns(2)
-        f_ini = c1.date_input("Fecha Inicio", datetime.now())
-        f_fin = c2.date_input("Fecha Fin", datetime.now() + timedelta(days=28))
+        # Seleccionamos fechas
+        f_ini_sel = c1.date_input("Fecha Inicio", datetime(2026, 7, 1))
+        f_fin_sel = c2.date_input("Fecha Fin", datetime(2026, 7, 31))
         
         if st.button("Generar Malla Inteligente"):
-            # Lógica de inicio corregida
-            estado_ayer = obtener_estado_continuidad(repo, f_ini)
-            lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
+            estado_ayer = obtener_estado_continuidad(repo, f_ini_sel)
+            lista_fechas = [f_ini_sel + timedelta(days=x) for x in range((f_fin_sel - f_ini_sel).days + 1)]
             resultados = []
-            
-            mem_t = {g: estado_ayer[g]["u"] for g in grupos_n}
-            mem_n = {g: estado_ayer[g]["n"] for g in grupos_n}
-            deudas = {g: estado_ayer[g]["d"] for g in grupos_n}
-            co_h = holidays.Colombia(years=[2024, 2025, 2026])
+            mem_t, mem_n, deudas = {g: estado_ayer[g]["u"] for g in grupos_n}, {g: estado_ayer[g]["n"] for g in grupos_n}, {g: estado_ayer[g]["d"] for g in grupos_n}
+            co_h = holidays.Colombia(years=[2026])
 
             for fecha in lista_fechas:
-                fecha_dt = pd.to_datetime(fecha); dia_idx = fecha_dt.weekday(); sem_iso = fecha_dt.isocalendar()[1]
+                fecha_dt = pd.to_datetime(fecha); dia_idx, sem_iso = fecha_dt.weekday(), fecha_dt.isocalendar()[1]
                 es_fest = fecha_dt in co_h; col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
-
                 libranza = None
                 if dia_idx == 5: libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
                 elif dia_idx == 6: libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
                 else:
                     for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
                         if deudas[g] > 0 and mem_t[g] != "T3": libranza = g; deudas[g] -= 1; break
-
                 activos = [g for g in grupos_n if g != libranza]; turnos_hoy = {}
                 for g in activos:
                     idx_g = grupos_n.index(g); t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
                     if not es_cambio_saludable(mem_t[g], t_sug): t_sug = mem_t[g]
                     if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
                     turnos_hoy[g] = t_sug
-
                 for tr in ["T1", "T2", "T3"]:
                     if tr not in turnos_hoy.values():
                         for gf in activos:
                             if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
                                 if es_cambio_saludable(mem_t[gf], tr): turnos_hoy[gf] = tr; break
-                
                 for g in grupos_n:
                     t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
                     n_a = mem_n[g] + 1 if t_f == "T3" else 0
                     resultados.append({"Grupo": g, "Fecha_Col": col_name, "Turno": t_f, "Fecha_Raw": fecha_dt, "Noches_Acum": n_a, "Deuda_Compensatorio": deudas[g]})
-                    mem_t[g] = t_f; mem_n[g] = n_a
+                    mem_t[g], mem_n[g] = t_f, n_a
 
             df_final = pd.DataFrame(resultados)
-            guardar_excel(df_final, "malla_historica.xlsx", "Generación Periodo")
+            guardar_excel(df_final, "malla_historica.xlsx", "Generación Julio")
             st.rerun()
 
-    # Editor Maestro
+    # --- EDITOR MAESTRO CON FILTRO ---
     df_m = cargar_excel("malla_historica.xlsx")
     if not df_m.empty:
-        st.subheader("✍️ Editor Maestro")
-        matriz = df_m.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_m["Fecha_Col"].unique())
-        matriz_editada = st.data_editor(matriz, use_container_width=True)
-        if st.button("💾 Guardar Cambios"):
-            df_edit = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
-            df_final = df_m.drop(columns=['Turno']).merge(df_edit, on=['Grupo', 'Fecha_Col'])
-            guardar_excel(df_final, "malla_historica.xlsx", "Ajuste Manual")
-            st.rerun()
+        st.subheader("✍️ Editor Maestro (Vista Filtrada)")
+        
+        # FILTRO CRÍTICO: Solo mostramos lo que está entre las fechas seleccionadas arriba
+        df_filtrado = df_m[(df_m['Fecha_Raw'] >= pd.to_datetime(f_ini_sel)) & (df_m['Fecha_Raw'] <= pd.to_datetime(f_fin_sel))]
+        
+        if not df_filtrado.empty:
+            matriz = df_filtrado.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_filtrado.sort_values("Fecha_Raw")["Fecha_Col"].unique())
+            matriz_editada = st.data_editor(matriz, use_container_width=True)
+            
+            if st.button("💾 Guardar Cambios"):
+                df_edit = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
+                # Unimos con los datos raw para recuperar las fechas_raw
+                df_update = df_filtrado.drop(columns=['Turno']).merge(df_edit, on=['Grupo', 'Fecha_Col'])
+                guardar_excel(df_update, "malla_historica.xlsx", "Ajuste Manual")
+                st.rerun()
+        else:
+            st.info("No hay datos para el rango seleccionado. Genera la malla arriba.")
 
 def modulo_detallado():
     st.header("📋 Detallado por Técnico")
