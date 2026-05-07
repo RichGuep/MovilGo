@@ -72,10 +72,7 @@ def color_t(val):
 
 # --- 3. PROGRAMADOR ---
 
-def pantalla_programador():
-    # ... (Mantener inicialización de fechas y conexión)
-
-    if st.button("🚀 Generar Rotación Cíclica Uniforme"):
+if st.button("🚀 Generar Rotación Cíclica Uniforme"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
