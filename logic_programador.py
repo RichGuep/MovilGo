@@ -75,73 +75,70 @@ def color_t(val):
 def pantalla_programador():
     # ... (Mantener inicialización de fechas y conexión)
 
-    if st.button("🚀 Generar Malla Equitativa"):
+    if st.button("🚀 Generar Rotación Cíclica Uniforme"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         
-        # 1. ESTADO INICIAL (Traemos la historia de GitHub)
-        mem_t = {g: estado_ayer_dict[g]["u"] for g in grupos_n}
+        # Definimos la secuencia maestra de rotación
+        # T1 -> T2 -> T3 -> DESC (o COMP)
+        secuencia = ["T1", "T2", "T3", "DESC"]
+        
+        # Determinamos la posición inicial de cada grupo basado en su último turno
+        # para darle continuidad a lo que ya venían haciendo.
+        def obtener_indice_inicio(ultimo_turno):
+            if ultimo_turno == "T1": return 0
+            if ultimo_turno == "T2": return 1
+            if ultimo_turno == "T3": return 2
+            return 3 # Para DESC o COMP
+
+        indices = {
+            "Grupo 1": obtener_indice_inicio(estado_ayer_dict["Grupo 1"]["u"]),
+            "Grupo 2": obtener_indice_inicio(estado_ayer_dict["Grupo 2"]["u"]),
+            "Grupo 3": obtener_indice_inicio(estado_ayer_dict["Grupo 3"]["u"]),
+            "Grupo 4": obtener_indice_inicio(estado_ayer_dict["Grupo 4"]["u"])
+        }
+        
+        # Asegurar que no empiecen todos en el mismo punto (Desfase inicial si es necesario)
+        # Si es una base nueva, esto los separa: 0, 1, 2, 3
+        if len(set(indices.values())) == 1: 
+            indices = {"Grupo 1": 0, "Grupo 2": 1, "Grupo 3": 2, "Grupo 4": 3}
+
         mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
         deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
-        
-        # 2. CONTADOR GLOBAL DE CARGA (Para evitar lo de la foto)
-        # Aquí sumamos lo que ya traían de antes para que la equidad sea histórica
-        # Si no tienes el acumulado total, empezamos en 0 pero se equilibrará en este periodo
-        conteo_t3 = {g: 0 for g in grupos_n} 
-        
         co_h = holidays.Colombia(years=[2024, 2025, 2026])
 
         for fecha in lista_fechas:
             fecha_dt = pd.to_datetime(fecha)
-            dia_idx = fecha_dt.weekday()
-            sem_iso = fecha_dt.isocalendar()[1]
             es_fest = fecha_dt in co_h
             col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
-
-            # --- A. LIBRANZAS ---
-            libranza = None
-            if dia_idx == 5:
-                libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
-                deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
-            elif dia_idx == 6:
-                libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
-                deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
-            else:
-                # Prioridad de compensatorio al que tenga más deuda y no esté en T3
-                candidatos_comp = sorted([g for g in grupos_n], key=lambda x: deudas[x], reverse=True)
-                for g in candidatos_comp:
-                    if deudas[g] > 0 and mem_t[g] != "T3":
-                        libranza = g
-                        deudas[g] -= 1
-                        break
-
-            activos = [g for g in grupos_n if g != libranza]
-            turnos_hoy = {}
-            # Prioridad de asignación: Primero cubrimos T3, luego T2, luego T1
-            turnos_a_cubrir = ["T3", "T2", "T1"]
-
-            # --- B. ASIGNACIÓN POR SUBASTA DE CARGA ---
-            for turno in turnos_a_cubrir:
-                # Buscamos quién de los disponibles tiene menos T3 acumulados
-                # y que el cambio sea saludable
-                candidatos = [g for g in activos if g not in turnos_hoy]
-                # Ordenamos por: 1. Menos T3 acumulados, 2. Saludable (T1 < T2 < T3)
-                candidatos = sorted(candidatos, key=lambda x: conteo_t3[x])
+            
+            for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
+                # Avanzamos un paso en la secuencia cada día
+                # El operador % 4 asegura que después de DESC (índice 3) vuelva a T1 (índice 0)
+                idx_actual = indices[g]
+                turno_f = secuencia[idx_actual]
                 
-                for c in candidatos:
-                    if es_cambio_saludable(mem_t[c], turno):
-                        if not (turno == "T3" and mem_n[c] >= 6): # Regla de 6 noches max
-                            turnos_hoy[c] = turno
-                            if turno == "T3":
-                                conteo_t3[c] += 1
-                            break
+                # Manejo de Noches Acumuladas
+                n_a = mem_n[g] + 1 if turno_f == "T3" else 0
                 
-                # Si por reglas de salud nadie puede tomar un turno (ej. T3), 
-                # se asigna el disponible al que falte (fallback)
-                if len(turnos_hoy) < len(activos) and turno == turnos_a_cubrir[-1]:
-                    faltante = [g for g in activos if g not in turnos_hoy][0]
-                    turnos_hoy[faltante] = "T1"
+                # Guardar registro
+                resultados.append({
+                    "Grupo": g, 
+                    "Fecha_Col": col_name, 
+                    "Turno": turno_f, 
+                    "Fecha_Raw": fecha_dt, 
+                    "Noches_Acum": n_a,
+                    "Deuda_Compensatorio": deudas[g]
+                })
+                
+                # Preparar índice para el día siguiente
+                indices[g] = (idx_actual + 1) % 4
+                mem_n[g] = n_a
+
+        st.session_state.malla_generada = pd.DataFrame(resultados)
+        guardar_malla_en_historico(st.session_state.malla_generada)
+        st.rerun()
 
             # --- C. GUARDADO ---
             for g in grupos_n:
