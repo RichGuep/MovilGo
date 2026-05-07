@@ -9,11 +9,9 @@ from github import Github
 # --- 1. GESTIÓN DE DATOS GITHUB ---
 def conectar_github():
     try:
-        if "GITHUB_TOKEN" not in st.secrets:
-            return None
+        if "GITHUB_TOKEN" not in st.secrets: return None
         return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
-    except:
-        return None
+    except: return None
 
 def obtener_estado_inicial(repo):
     try:
@@ -44,7 +42,8 @@ def guardar_malla_github(df):
         df.to_excel(writer, index=False)
     try:
         contents = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "Malla V6 - Compensatorios Inmediatos", output.getvalue(), contents.sha)
+        repo.update_file("malla_historica.xlsx", "Malla V7 - Cobertura Total", output.getvalue(), contents.sha)
+        st.success("✅ Datos sincronizados con el histórico de GitHub.")
     except:
         repo.create_file("malla_historica.xlsx", "Malla Inicial", output.getvalue())
 
@@ -54,15 +53,15 @@ def pantalla_programador():
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 
-    # --- PARAMETRIZACIÓN ---
+    # --- PARAMETRIZADORES ---
     with st.container(border=True):
         st.subheader("📋 Parámetros de Staffing y Descansos")
         c1, c2, c3 = st.columns(3)
-        req_m = c1.number_input("Masters (Líderes)", 1, 10, 3)
-        req_ta = c2.number_input("Técnicos A", 1, 20, 7)
-        req_tb = c3.number_input("Técnicos B", 1, 20, 2)
+        req_m = c1.number_input("Masters (3 req hoy)", 1, 10, 3)
+        req_ta = c2.number_input("Técnicos A (7 req hoy)", 1, 20, 7)
+        req_tb = c3.number_input("Técnicos B (2 req hoy)", 1, 20, 2)
         
-        st.write("**Asignación de Descanso Fijo:**")
+        st.write("**Día de Descanso Parametrizado (Fijo):**")
         cols_d = st.columns(4)
         conf_desc = {}
         for i, g in enumerate(grupos_n):
@@ -74,7 +73,6 @@ def pantalla_programador():
     if st.button("🚀 Generar Malla Inteligente"):
         repo = conectar_github()
         estado = obtener_estado_inicial(repo)
-        
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         
@@ -83,51 +81,30 @@ def pantalla_programador():
         mem_t = {g: estado[g]["u"] for g in grupos_n}
         
         for fecha in lista_fechas:
-            fecha_dt = pd.to_datetime(fecha)
-            dia_idx = fecha_dt.weekday()
-            n_sem = fecha_dt.isocalendar()[1]
-            col_name = fecha_dt.strftime('%a %d/%m')
+            fecha_dt = pd.to_datetime(fecha); dia_idx = fecha_dt.weekday()
+            n_sem = fecha_dt.isocalendar()[1]; col_name = fecha_dt.strftime('%a %d/%m')
             
             turnos_hoy = {}
-            # 1. Candidatos a descanso fijo hoy
             quieren_fijo = [g for g, d in conf_desc.items() if dias_semana.index(d) == dia_idx]
             
-            # 2. Prioridad: Pagar deudas de la semana pasada (Compensatorios)
+            # Prioridad 1: Pagar Compensatorios de semanas previas
             deudores_urgentes = [g for g in grupos_n if deudas[g] > 0 and n_sem > sem_deuda[g]]
-            
-            # Intentar asignar compensatorios (máximo 1 por día para no vaciar turnos)
-            compensado_hoy = None
             for g in deudores_urgentes:
-                if g not in quieren_fijo:
-                    compensado_hoy = g
-                    turnos_hoy[g] = "COMP"
-                    deudas[g] -= 1
-                    sem_deuda[g] = 0
-                    break
+                if g not in quieren_fijo and len([v for v in turnos_hoy.values() if v == "COMP"]) < 1:
+                    turnos_hoy[g] = "COMP"; deudas[g] -= 1; sem_deuda[g] = 0; break
 
-            # 3. Validar Cobertura (Mínimo 3 activos para T1, T2, T3)
-            # Quienes no están compensando y no quieren fijo son activos por defecto
+            # Prioridad 2: Garantizar 3 activos para T1, T2, T3
             activos_seguros = [g for g in grupos_n if g not in turnos_hoy and g not in quieren_fijo]
-            
-            # Si solo hay 2 o menos activos, alguien que quería descansar debe trabajar (genera deuda)
             while len(activos_seguros) < 3 and quieren_fijo:
                 sacrificado = quieren_fijo.pop(0)
-                deudas[sacrificado] += 1
-                sem_deuda[sacrificado] = n_sem
-                activos_seguros.append(sacrificado)
+                deudas[sacrificado] += 1; sem_deuda[sacrificado] = n_sem; activos_seguros.append(sacrificado)
             
-            # Asignar DESC a los que pudieron librar el fijo
-            for g in quieren_fijo:
-                turnos_hoy[g] = "DESC"
+            for g in quieren_fijo: turnos_hoy[g] = "DESC"
 
-            # 4. Asignar T1, T2, T3 a los activos
-            turnos_op = ["T1", "T2", "T3"]
-            random.shuffle(turnos_op)
+            # Asignación de Turnos
+            t_op = ["T1", "T2", "T3"]; random.shuffle(t_op)
             for g in activos_seguros:
-                if turnos_op:
-                    turnos_hoy[g] = turnos_op.pop(0)
-                else:
-                    turnos_hoy[g] = "T1" # En caso de grupo flotante (4to grupo)
+                turnos_hoy[g] = t_op.pop(0) if t_op else "T1"
 
             for g in grupos_n:
                 resultados.append({
@@ -135,21 +112,18 @@ def pantalla_programador():
                     "Fecha_Raw": fecha_dt, "Deuda_Compensatorio": deudas[g],
                     "Semana_Deuda": sem_deuda[g], "M_Req": req_m, "TA_Req": req_ta, "TB_Req": req_tb
                 })
-                mem_t[g] = turnos_hoy[g]
-
-        df_final = pd.DataFrame(resultados)
-        st.session_state.malla_generada = df_final
-        guardar_malla_github(df_final)
+        
+        df_res = pd.DataFrame(resultados)
+        st.session_state.malla_generada = df_res
+        guardar_malla_github(df_res)
         st.rerun()
 
-    # --- VISUALIZACIÓN ---
     if st.session_state.get('malla_generada') is not None:
         df = st.session_state.malla_generada
         matriz = df.pivot(index="Grupo", columns="Fecha_Col", values="Turno")
+        st.subheader("✍️ Vista de Turnos")
+        st.dataframe(matriz.style.applymap(lambda x: 'background-color: #d62728; color: white' if x in ['DESC', 'COMP'] else 'background-color: #1f77b4; color: white'), use_container_width=True)
         
-        st.subheader("✍️ Vista Maestro de Turnos")
-        st.dataframe(matriz.style.map(lambda x: 'background-color: #d62728; color: white' if x in ['DESC', 'COMP'] else ''), use_container_width=True)
-        
-        st.subheader("⚖️ Contador de Equidad (Mensual)")
+        st.subheader("📊 Métricas de Equidad y Staffing")
         resumen = df.groupby('Grupo')['Turno'].value_counts().unstack(fill_value=0)
         st.table(resumen)
