@@ -114,13 +114,12 @@ def obtener_horario(turno):
 # --- 3. MÓDULOS ---
 
 def modulo_programacion():
-    st.header("📅 Programación Maestra")
+    st.header("📅 Programación Maestra y Alertas")
     repo = conectar_github()
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
 
     with st.expander("🚀 Generar Nuevo Periodo", expanded=True):
         c1, c2 = st.columns(2)
-        # Seleccionamos fechas
         f_ini_sel = c1.date_input("Fecha Inicio", datetime(2026, 7, 1))
         f_fin_sel = c2.date_input("Fecha Fin", datetime(2026, 7, 31))
         
@@ -161,26 +160,41 @@ def modulo_programacion():
             guardar_excel(df_final, "malla_historica.xlsx", "Generación Julio")
             st.rerun()
 
-    # --- EDITOR MAESTRO CON FILTRO ---
+    # --- EDITOR MAESTRO ---
     df_m = cargar_excel("malla_historica.xlsx")
     if not df_m.empty:
         st.subheader("✍️ Editor Maestro (Vista Filtrada)")
-        
-        # FILTRO CRÍTICO: Solo mostramos lo que está entre las fechas seleccionadas arriba
         df_filtrado = df_m[(df_m['Fecha_Raw'] >= pd.to_datetime(f_ini_sel)) & (df_m['Fecha_Raw'] <= pd.to_datetime(f_fin_sel))]
         
         if not df_filtrado.empty:
             matriz = df_filtrado.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_filtrado.sort_values("Fecha_Raw")["Fecha_Col"].unique())
-            matriz_editada = st.data_editor(matriz, use_container_width=True)
+            config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"], width="small") for c in matriz.columns}
+            matriz_editada = st.data_editor(matriz, column_config=config_col, use_container_width=True)
             
-            if st.button("💾 Guardar Cambios"):
+            if st.button("💾 Guardar Cambios Manuales"):
                 df_edit = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
-                # Unimos con los datos raw para recuperar las fechas_raw
                 df_update = df_filtrado.drop(columns=['Turno']).merge(df_edit, on=['Grupo', 'Fecha_Col'])
                 guardar_excel(df_update, "malla_historica.xlsx", "Ajuste Manual")
                 st.rerun()
-        else:
-            st.info("No hay datos para el rango seleccionado. Genera la malla arriba.")
+
+            # --- DETECTOR DE ALERTAS DE SALUD ---
+            st.divider()
+            st.subheader("🔍 Localizador de Novedades de Salud")
+            alertas = []
+            for g in grupos_n:
+                # Traemos el historial completo del grupo para validar cambios entre el fin de junio y el inicio de julio
+                h = df_m[df_m["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
+                for i in range(1, len(h)):
+                    # Solo reportar alertas que caigan dentro del rango que estamos viendo
+                    if h[i]['Fecha_Raw'] >= pd.to_datetime(f_ini_sel) and h[i]['Fecha_Raw'] <= pd.to_datetime(f_fin_sel):
+                        if not es_cambio_saludable(h[i-1]['Turno'], h[i]['Turno']):
+                            alertas.append({"msg": f"⚠️ {g}: Salto Prohibido {h[i-1]['Turno']} -> {h[i]['Turno']}", "f": h[i]['Fecha_Col']})
+            
+            if alertas:
+                for a in alertas:
+                    st.error(f"{a['msg']} el día **{a['f']}**")
+            else:
+                st.success("✅ No se detectan conflictos de salud en los turnos.")
 
 def modulo_detallado():
     st.header("📋 Detallado por Técnico")
