@@ -71,66 +71,105 @@ def color_t(val):
     return f'background-color: {c.get(val, "#31333F")}; color: white; font-weight: bold; border: 1px solid #444'
 
 # --- 3. PROGRAMADOR ---
+def pantalla_programador():
+    st.title("📅 Programador 24/7 - Rotación Uniforme")
+    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    
+    if 'malla_generada' not in st.session_state:
+        st.session_state.malla_generada = None
 
-if st.button("🚀 Generar Rotación Cíclica Uniforme"):
+    repo = conectar_github()
+    if not repo: return
+
+    with st.expander("👁️ Ver Cierre Anterior"):
+        estado_ayer_dict = obtener_ultimo_estado_github(repo)
+        st.write(estado_ayer_dict)
+
+    c_f1, c_f2 = st.columns(2)
+    f_ini = c_f1.date_input("Inicio", datetime.now())
+    f_fin = c_f2.date_input("Fin", datetime.now() + timedelta(days=28))
+
+    if st.button("🚀 Generar Malla Equitativa"):
         st.cache_data.clear()
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         
-        # Definimos la secuencia maestra de rotación
-        # T1 -> T2 -> T3 -> DESC (o COMP)
-        secuencia = ["T1", "T2", "T3", "DESC"]
-        
-        # Determinamos la posición inicial de cada grupo basado en su último turno
-        # para darle continuidad a lo que ya venían haciendo.
-        def obtener_indice_inicio(ultimo_turno):
-            if ultimo_turno == "T1": return 0
-            if ultimo_turno == "T2": return 1
-            if ultimo_turno == "T3": return 2
-            return 3 # Para DESC o COMP
-
-        indices = {
-            "Grupo 1": obtener_indice_inicio(estado_ayer_dict["Grupo 1"]["u"]),
-            "Grupo 2": obtener_indice_inicio(estado_ayer_dict["Grupo 2"]["u"]),
-            "Grupo 3": obtener_indice_inicio(estado_ayer_dict["Grupo 3"]["u"]),
-            "Grupo 4": obtener_indice_inicio(estado_ayer_dict["Grupo 4"]["u"])
-        }
-        
-        # Asegurar que no empiecen todos en el mismo punto (Desfase inicial si es necesario)
-        # Si es una base nueva, esto los separa: 0, 1, 2, 3
-        if len(set(indices.values())) == 1: 
-            indices = {"Grupo 1": 0, "Grupo 2": 1, "Grupo 3": 2, "Grupo 4": 3}
-
+        # 1. ESTADO INICIAL
         mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
         deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
+        
+        # Secuencia uniforme: T1 -> T2 -> T3
+        secuencia_trabajo = ["T1", "T2", "T3"]
+        
+        # Mapeo para saber en qué parte de la rueda de trabajo quedó cada grupo
+        def get_work_idx(u):
+            if u == "T1": return 1 # El siguiente es T2
+            if u == "T2": return 2 # El siguiente es T3
+            return 0 # El siguiente es T1 (si venía de T3 o DESC)
+            
+        indices_trabajo = {g: get_work_idx(estado_ayer_dict[g]["u"]) for g in grupos_n}
+        
+        # Desfase inicial para que no todos empiecen en T1 (si es la primera vez)
+        if len(set(indices_trabajo.values())) == 1 and all(v == 0 for v in indices_trabajo.values()):
+            indices_trabajo = {"Grupo 1": 0, "Grupo 2": 1, "Grupo 3": 2, "Grupo 4": 0}
+
         co_h = holidays.Colombia(years=[2024, 2025, 2026])
 
         for fecha in lista_fechas:
             fecha_dt = pd.to_datetime(fecha)
+            dia_idx = fecha_dt.weekday()
+            sem_iso = fecha_dt.isocalendar()[1]
             es_fest = fecha_dt in co_h
             col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
-            
-            for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
-                # Avanzamos un paso en la secuencia cada día
-                # El operador % 4 asegura que después de DESC (índice 3) vuelva a T1 (índice 0)
-                idx_actual = indices[g]
-                turno_f = secuencia[idx_actual]
+
+            # --- A. DEFINIR LIBRANZAS DE LEY (Fines de semana) ---
+            libranza_ley = None
+            if dia_idx == 5: # Sábado
+                libranza_ley = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
+                deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
+            elif dia_idx == 6: # Domingo
+                libranza_ley = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
+                deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
+
+            # --- B. ASIGNACIÓN DE TURNOS ---
+            turnos_hoy = {}
+            # Priorizamos dar el COMP al que más deba
+            grupos_prioridad = sorted(grupos_n, key=lambda x: deudas[x], reverse=True)
+
+            for g in grupos_prioridad:
+                # 1. Si es su descanso de Ley
+                if g == libranza_ley:
+                    turnos_hoy[g] = "DESC"
                 
-                # Manejo de Noches Acumuladas
-                n_a = mem_n[g] + 1 if turno_f == "T3" else 0
+                # 2. Si tiene deuda de compensatorio
+                # (Y no permitimos más de 2 descansos totales para no dejar solo el turno)
+                elif deudas[g] > 0 and list(turnos_hoy.values()).count("COMP") < 1:
+                    turnos_hoy[g] = "COMP"
+                    deudas[g] -= 1
                 
-                # Guardar registro
+                # 3. Si trabaja, sigue la secuencia T1-T2-T3
+                else:
+                    idx = indices_trabajo[g]
+                    t_asignado = secuencia_trabajo[idx]
+                    
+                    # Protección Salud: Si toca T3 pero ya lleva 6 noches, forzamos un descanso extra
+                    if t_asignado == "T3" and mem_n[g] >= 6:
+                        turnos_hoy[g] = "COMP"
+                        # No avanzamos el índice para que haga la noche al volver
+                    else:
+                        turnos_hoy[g] = t_asignado
+                        # Avanzamos la rueda solo porque trabajó
+                        indices_trabajo[g] = (idx + 1) % 3
+
+            # --- C. GUARDADO Y MEMORIA ---
+            for g in grupos_n:
+                t_f = turnos_hoy.get(g, "T1")
+                n_a = mem_n[g] + 1 if t_f == "T3" else 0
                 resultados.append({
-                    "Grupo": g, 
-                    "Fecha_Col": col_name, 
-                    "Turno": turno_f, 
-                    "Fecha_Raw": fecha_dt, 
-                    "Noches_Acum": n_a,
+                    "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
+                    "Fecha_Raw": fecha_dt, "Noches_Acum": n_a,
                     "Deuda_Compensatorio": deudas[g]
                 })
-                
-                # Preparar índice para el día siguiente
-                indices[g] = (idx_actual + 1) % 4
                 mem_n[g] = n_a
 
         st.session_state.malla_generada = pd.DataFrame(resultados)
