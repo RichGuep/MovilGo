@@ -3,9 +3,10 @@ import pandas as pd
 import io
 from datetime import datetime, timedelta
 from github import Github
-from logic_programador import generar_malla_base, color_t, es_cambio_saludable # Importación crítica
+# Importamos las funciones del motor
+from logic_programador import generar_malla_base, color_t, es_cambio_saludable, obtener_horario
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="MovilGo - Gestión Operativa", layout="wide", initial_sidebar_state="expanded")
 
 PRIMARY_COLOR = "#1E3D59"
@@ -18,13 +19,14 @@ st.markdown(f"""
     .main {{ background-color: #f8f9fa; }}
     [data-testid="stSidebar"] {{ background-color: {PRIMARY_COLOR}; }}
     [data-testid="stSidebar"] * {{ color: white !important; }}
-    .welcome-card {{ background: linear-gradient(135deg, {PRIMARY_COLOR} 0%, #3a6073 100%); color: white; padding: 2rem; border-radius: 20px; }}
-    .metric-card {{ background: white; padding: 15px; border-radius: 10px; border-left: 5px solid {PRIMARY_COLOR}; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }}
-    .card-empresa {{ background: white; padding: 1.5rem; border-radius: 15px; text-align: center; border: 2px solid #eee; }}
+    .stButton>button {{ width: 100%; border-radius: 12px; font-weight: bold; transition: 0.3s; }}
+    .welcome-card {{ background: linear-gradient(135deg, {PRIMARY_COLOR} 0%, #3a6073 100%); color: white; padding: 2.5rem; border-radius: 20px; margin-bottom: 2rem; }}
+    .metric-card {{ background: white; padding: 15px; border-radius: 10px; border-left: 5px solid {PRIMARY_COLOR}; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 10px; }}
+    .card-empresa {{ background: white; padding: 1.5rem; border-radius: 15px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border: 2px solid #eee; margin-bottom: 10px; }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- PERSISTENCIA ---
+# --- FUNCIONES DE PERSISTENCIA ---
 
 def conectar_github():
     try: return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
@@ -41,7 +43,6 @@ def cargar_excel(nombre_archivo):
     except: return pd.DataFrame()
 
 def obtener_estado_anterior(repo, fecha_inicio):
-    """Busca el estado de los grupos el día anterior a la fecha elegida."""
     df_hist = cargar_excel("malla_historica.xlsx")
     grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     if df_hist.empty: return {g: {"u": "DESC", "n": 0, "d": 0} for g in grupos}
@@ -62,7 +63,6 @@ def guardar_excel(df_nuevo, nombre_archivo):
         contents = repo.get_contents(nombre_archivo)
         df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
         df_previo['Fecha_Raw'] = pd.to_datetime(df_previo['Fecha_Raw'])
-        # Limpiar solapamientos para que el filtro de inicio funcione
         fechas_nuevas = df_nuevo['Fecha_Raw'].unique()
         df_final = pd.concat([df_previo[~df_previo['Fecha_Raw'].isin(fechas_nuevas)], df_nuevo]).sort_values(['Fecha_Raw', 'Grupo'])
         output = io.BytesIO()
@@ -78,6 +78,7 @@ def guardar_excel(df_nuevo, nombre_archivo):
 def modulo_programacion():
     st.header("📅 Programación Maestra y Auditoría")
     repo = conectar_github()
+    grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     
     with st.expander("🚀 Generar Periodo", expanded=True):
         c1, c2 = st.columns(2)
@@ -93,25 +94,25 @@ def modulo_programacion():
     if not df_m.empty:
         df_view = df_m[(df_m['Fecha_Raw'] >= pd.to_datetime(f_ini)) & (df_m['Fecha_Raw'] <= pd.to_datetime(f_fin))]
         
-        # Auditoría de Ley
-        st.subheader(f"📊 Auditoría de Deuda ({f_ini.strftime('%B %Y')})")
-        cols = st.columns(4)
-        for i, g in enumerate(["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]):
+        # Auditoría de Métricas
+        st.subheader("📊 Auditoría de Deuda")
+        m_cols = st.columns(4)
+        for i, g in enumerate(grupos_n):
             g_data = df_view[df_view["Grupo"] == g]
             deuda = g_data.iloc[-1]["Deuda_Compensatorio"] if not g_data.empty else 0
-            cols[i].markdown(f'<div class="metric-card"><b>{g}</b><br><span style="color:{"red" if deuda > 0 else "green"}">Deuda: {deuda} días</span></div>', unsafe_allow_html=True)
+            m_cols[i].markdown(f'<div class="metric-card"><b>{g}</b><br><span style="color:{"red" if deuda > 0 else "green"}">Deuda: {deuda} días</span></div>', unsafe_allow_html=True)
 
         st.subheader("✍️ Editor Maestro")
         matriz = df_view.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_view.sort_values("Fecha_Raw")["Fecha_Col"].unique())
         matriz_editada = st.data_editor(matriz, use_container_width=True)
-        if st.button("💾 Guardar Cambios Manuales"):
+        if st.button("💾 Guardar Cambios"):
             df_edit = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
             df_upd = df_view.drop(columns=['Turno']).merge(df_edit, on=['Grupo', 'Fecha_Col'])
             guardar_excel(df_upd, "malla_historica.xlsx"); st.rerun()
 
         # Localizador de Alertas
         alertas = []
-        for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
+        for g in grupos_n:
             h = df_m[df_m["Grupo"] == g].sort_values("Fecha_Raw").to_dict('records')
             for i in range(1, len(h)):
                 if h[i]['Fecha_Raw'] >= pd.to_datetime(f_ini) and h[i]['Fecha_Raw'] <= pd.to_datetime(f_fin):
@@ -125,20 +126,22 @@ def modulo_detallado():
     if not df_m.empty and not df_e.empty:
         df_det = df_e.merge(df_m, on="Grupo")
         matriz = df_det.pivot_table(index=["Grupo", "Nombre"], columns="Fecha_Col", values="Turno", aggfunc='first')
-        st.dataframe(matriz.style.applymap(color_t), use_container_width=True)
+        # CORRECCIÓN DE ERROR: .style.map en lugar de .applymap
+        st.dataframe(matriz.style.map(color_t), use_container_width=True)
 
 def modulo_nomina():
     st.header("💰 Reporte de Nómina")
     df_m, df_e = cargar_excel("malla_historica.xlsx"), cargar_excel("empleados.xlsx")
     if not df_m.empty and not df_e.empty:
         df_nom = df_e.merge(df_m, on="Grupo")
-        st.dataframe(df_nom[["Fecha_Raw", "Nombre", "Cedula", "Grupo", "Turno"]], use_container_width=True)
+        df_nom["Hora Inicio"], df_nom["Hora Fin"] = zip(*df_nom["Turno"].map(obtener_horario))
+        st.dataframe(df_nom[["Fecha_Raw", "Nombre", "Cedula", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]], use_container_width=True)
 
 def modulo_personal():
     st.header("👥 Gestión de Personal")
     df_emp = cargar_excel("empleados.xlsx")
     df_edit = st.data_editor(df_emp, use_container_width=True, num_rows="dynamic")
-    if st.button("💾 Guardar Cambios"): guardar_excel(df_edit, "empleados.xlsx"); st.rerun()
+    if st.button("💾 Guardar"): guardar_excel(df_edit, "empleados.xlsx"); st.rerun()
 
 # --- FLUJO PRINCIPAL ---
 
@@ -170,7 +173,7 @@ else:
         st.divider(); menu = st.radio("MENÚ", ["🏠 Inicio", "📅 Programación", "📋 Detallado", "💰 Nómina", "👥 Personal"])
         if st.button("🚪 Salir"): st.session_state.empresa = None; st.rerun()
     
-    if menu == "🏠 Inicio": st.markdown(f'<div class="welcome-card"><h1>{st.session_state.empresa}</h1><p>MovilGo v2.0</p></div>', unsafe_allow_html=True)
+    if menu == "🏠 Inicio": st.markdown(f'<div class="welcome-card"><h1>{st.session_state.empresa}</h1><p>Sistema MovilGo v2.0</p></div>', unsafe_allow_html=True)
     elif menu == "📅 Programación": modulo_programacion()
     elif menu == "📋 Detallado": modulo_detallado()
     elif menu == "💰 Nómina": modulo_nomina()
