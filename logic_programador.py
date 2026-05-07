@@ -80,16 +80,15 @@ def pantalla_programador():
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         
-        # 1. CARGA DE MEMORIA HISTÓRICA (Crucial para la equidad)
-        # Traemos no solo el último turno, sino el conteo total acumulado si es posible
-        # Por ahora, usamos el estado_ayer_dict que ya tienes
+        # 1. ESTADO INICIAL (Traemos la historia de GitHub)
         mem_t = {g: estado_ayer_dict[g]["u"] for g in grupos_n}
         mem_n = {g: estado_ayer_dict[g]["n"] for g in grupos_n}
         deudas = {g: estado_ayer_dict[g]["d"] for g in grupos_n}
         
-        # Diccionario de carga histórica para balancear (T3 pesa más, T1 menos)
-        # Esto asegura que si el Grupo 1 hizo muchas noches el mes pasado, este mes descanse más
-        carga_acumulada = {g: 0 for g in grupos_n} 
+        # 2. CONTADOR GLOBAL DE CARGA (Para evitar lo de la foto)
+        # Aquí sumamos lo que ya traían de antes para que la equidad sea histórica
+        # Si no tienes el acumulado total, empezamos en 0 pero se equilibrará en este periodo
+        conteo_t3 = {g: 0 for g in grupos_n} 
         
         co_h = holidays.Colombia(years=[2024, 2025, 2026])
 
@@ -100,7 +99,7 @@ def pantalla_programador():
             es_fest = fecha_dt in co_h
             col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # --- A. LÓGICA DE LIBRANZAS (Igual) ---
+            # --- A. LIBRANZAS ---
             libranza = None
             if dia_idx == 5:
                 libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
@@ -109,60 +108,55 @@ def pantalla_programador():
                 libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
                 deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
             else:
-                # Prioridad de compensatorio al que tenga más deuda
-                posibles_comp = sorted([g for g in grupos_n if g != libranza], 
-                                     key=lambda x: deudas[x], reverse=True)
-                if deudas[posibles_comp[0]] > 0 and mem_t[posibles_comp[0]] != "T3":
-                    libranza = posibles_comp[0]
-                    deudas[libranza] -= 1
+                # Prioridad de compensatorio al que tenga más deuda y no esté en T3
+                candidatos_comp = sorted([g for g in grupos_n], key=lambda x: deudas[x], reverse=True)
+                for g in candidatos_comp:
+                    if deudas[g] > 0 and mem_t[g] != "T3":
+                        libranza = g
+                        deudas[g] -= 1
+                        break
 
             activos = [g for g in grupos_n if g != libranza]
-            
-            # --- B. ASIGNACIÓN POR EQUIDAD DE CARGA ---
-            # Definimos los turnos a cubrir
-            turnos_disponibles = ["T3", "T2", "T1"]
             turnos_hoy = {}
+            # Prioridad de asignación: Primero cubrimos T3, luego T2, luego T1
+            turnos_a_cubrir = ["T3", "T2", "T1"]
 
-            # 1. Primero asignamos el T3 (el más pesado) al que menos carga lleve
-            # 2. Luego el T2 y finalmente T1
-            for t_necesario in turnos_disponibles:
-                # Ordenamos activos por carga acumulada (menor carga primero)
-                # Y filtramos los que ya tienen turno asignado hoy
+            # --- B. ASIGNACIÓN POR SUBASTA DE CARGA ---
+            for turno in turnos_a_cubrir:
+                # Buscamos quién de los disponibles tiene menos T3 acumulados
+                # y que el cambio sea saludable
                 candidatos = [g for g in activos if g not in turnos_hoy]
+                # Ordenamos por: 1. Menos T3 acumulados, 2. Saludable (T1 < T2 < T3)
+                candidatos = sorted(candidatos, key=lambda x: conteo_t3[x])
                 
-                # Ordenar candidatos: 1. Menos carga, 2. Que sea saludable
-                candidatos = sorted(candidatos, key=lambda x: (carga_acumulada[x], x))
-                
-                asignado = False
                 for c in candidatos:
-                    if es_cambio_saludable(mem_t[c], t_necesario):
-                        # Control estricto de noches (Max 6)
-                        if not (t_necesario == "T3" and mem_n[c] >= 6):
-                            turnos_hoy[c] = t_necesario
-                            # Aumentamos el peso: T3 vale 3 puntos, T2 vale 2, T1 vale 1
-                            carga_acumulada[c] += {"T3": 3, "T2": 2, "T1": 1}[t_necesario]
-                            asignado = True
+                    if es_cambio_saludable(mem_t[c], turno):
+                        if not (turno == "T3" and mem_n[c] >= 6): # Regla de 6 noches max
+                            turnos_hoy[c] = turno
+                            if turno == "T3":
+                                conteo_t3[c] += 1
                             break
                 
-                # Si nadie podía por salud (bloqueo), forzamos T1 al que falte
-                if not asignado and candidatos:
-                    c = candidatos[0]
-                    turnos_hoy[c] = "T1"
-                    carga_acumulada[c] += 1
+                # Si por reglas de salud nadie puede tomar un turno (ej. T3), 
+                # se asigna el disponible al que falte (fallback)
+                if len(turnos_hoy) < len(activos) and turno == turnos_a_cubrir[-1]:
+                    faltante = [g for g in activos if g not in turnos_hoy][0]
+                    turnos_hoy[faltante] = "T1"
 
-            # --- C. PERSISTENCIA ---
+            # --- C. GUARDADO ---
             for g in grupos_n:
                 t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
                 n_a = mem_n[g] + 1 if t_f == "T3" else 0
-                
                 resultados.append({
                     "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, 
                     "Fecha_Raw": fecha_dt, "Noches_Acum": n_a,
                     "Deuda_Compensatorio": deudas[g]
                 })
-                mem_t[g] = t_f
-                mem_n[g] = n_a
+                mem_t[g] = t_f; mem_n[g] = n_a
 
+        st.session_state.malla_generada = pd.DataFrame(resultados)
+        guardar_malla_en_historico(st.session_state.malla_generada)
+        st.rerun()
         st.session_state.malla_generada = pd.DataFrame(resultados)
         guardar_malla_en_historico(st.session_state.malla_generada)
         st.rerun()
