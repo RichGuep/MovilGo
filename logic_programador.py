@@ -6,9 +6,9 @@ import random
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. CONFIGURACIÓN DE ESTILOS Y COLORES ---
+# --- 1. CONFIGURACIÓN DE ESTILOS (CORREGIDO PARA PANDAS 2.x) ---
 def aplicar_estilos_malla(styler):
-    """Aplica el código de colores oficial a los dataframes y editores."""
+    """Aplica el código de colores oficial usando el nuevo método .map() de Pandas."""
     colores = {
         "T1": "background-color: #1f77b4; color: white;",
         "T2": "background-color: #2ca02c; color: white;",
@@ -16,7 +16,8 @@ def aplicar_estilos_malla(styler):
         "DESC": "background-color: #d62728; color: white;",
         "COMP": "background-color: #ff7f0e; color: white;"
     }
-    return styler.applymap(lambda x: colores.get(x, "background-color: transparent; color: inherit"))
+    # Se cambió .applymap por .map para evitar el AttributeError
+    return styler.map(lambda x: colores.get(x, "background-color: transparent; color: inherit"))
 
 # --- 2. PERSISTENCIA GITHUB ---
 def conectar_github():
@@ -35,45 +36,55 @@ def obtener_estado_inicial(repo):
             regs = df[df['Grupo'] == g].sort_values('Fecha_Raw')
             if not regs.empty:
                 u = regs.iloc[-1]
-                estado[g] = {"u": u['Turno'], "d": int(u.get('Deuda_Compensatorio', 0)), "sem_deuda": int(u.get('Semana_Deuda', 0))}
+                estado[g] = {
+                    "u": u['Turno'], 
+                    "d": int(u.get('Deuda_Compensatorio', 0)),
+                    "sem_deuda": int(u.get('Semana_Deuda', 0))
+                }
             else:
                 estado[g] = {"u": "DESC", "d": 0, "sem_deuda": 0}
         return estado
     except:
         return {g: {"u": "DESC", "d": 0, "sem_deuda": 0} for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
 
-# --- 3. AUDITORÍA VISUAL COMPACTA ---
+def guardar_malla_github(df):
+    repo = conectar_github()
+    if not repo: return
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False)
+    try:
+        contents = repo.get_contents("malla_historica.xlsx")
+        repo.update_file("malla_historica.xlsx", "Malla Actualizada V7", output.getvalue(), contents.sha)
+        st.success("✅ Sincronizado con GitHub")
+    except:
+        repo.create_file("malla_historica.xlsx", "Archivo Inicial", output.getvalue())
+
+# --- 3. AUDITORÍA VISUAL ---
 def auditar_malla_visual(df):
     st.divider()
-    st.subheader("🛡️ Resumen de Auditoría Operativa")
+    st.subheader("🛡️ Auditoría Operativa")
     
     alertas_salud = []
     for g in df['Grupo'].unique():
         g_data = df[df['Grupo'] == g].sort_values('Fecha_Raw')
         for i in range(1, len(g_data)):
             ayer, hoy = g_data.iloc[i-1]['Turno'], g_data.iloc[i]['Turno']
-            # Salto prohibido T3 a T1/T2 sin descanso intermedio
             if ayer == "T3" and hoy in ["T1", "T2"]:
                 alertas_salud.append({"Fecha": g_data.iloc[i]['Fecha_Col'], "Grupo": g, "Fallo": f"{ayer} → {hoy}"})
 
-    cobertura = df.groupby(['Fecha_Col', 'Turno']).size().unstack(fill_value=0)
+    cobertura = df.groupby(['Fecha_Col', 'Turno'], observed=False).size().unstack(fill_value=0)
     dias_sin_cob = [f for f in cobertura.index if any(cobertura.loc[f, t] == 0 for t in ["T1", "T2", "T3"])]
 
-    # Métricas en columnas
     m1, m2, m3 = st.columns(3)
-    m1.metric("Saltos de Salud", len(alertas_salud), delta=len(alertas_salud), delta_color="inverse")
-    m2.metric("Días sin T1/T2/T3", len(dias_sin_cob), delta=len(dias_sin_cob), delta_color="inverse")
-    m3.metric("Equidad Noches", f"{df[df['Turno']=='T3'].groupby('Grupo').size().std():.2f} σ")
+    m1.metric("Saltos de Salud", len(alertas_salud), delta_color="inverse")
+    m2.metric("Días sin Cobertura", len(dias_sin_cob), delta_color="inverse")
+    m3.metric("Equidad T3", f"{df[df['Turno']=='T3'].groupby('Grupo').size().std():.2f} σ")
 
     if alertas_salud or dias_sin_cob:
-        with st.expander("🔍 Ver Detalle de Inconsistencias"):
-            if alertas_salud:
-                st.write("**Errores de Rotación:**")
-                st.table(pd.DataFrame(alertas_salud))
-            if dias_sin_cob:
-                st.error(f"Falta cobertura mínima en: {', '.join(dias_sin_cob)}")
-    else:
-        st.success("✅ Malla Validada: Cobertura total y saltos de salud correctos.")
+        with st.expander("🔍 Ver Inconsistencias"):
+            if alertas_salud: st.table(pd.DataFrame(alertas_salud))
+            if dias_sin_cob: st.error(f"Falta T1, T2 o T3 en: {', '.join(dias_sin_cob)}")
 
 # --- 4. PANTALLA PRINCIPAL ---
 def pantalla_programador():
@@ -84,7 +95,6 @@ def pantalla_programador():
         st.subheader("⚙️ Configuración de Staffing y Descansos")
         c_desc, c_staff = st.columns([2, 1])
         with c_desc:
-            st.write("**Descansos Fijos:**")
             cd1, cd2 = st.columns(2)
             d_g1 = cd1.selectbox("Descanso G1", dias_semana, index=5)
             d_g2 = cd2.selectbox("Descanso G2", dias_semana, index=5)
@@ -92,7 +102,6 @@ def pantalla_programador():
             d_g4 = cd2.selectbox("Descanso G4", dias_semana, index=6)
             map_idx = {"Grupo 1": dias_semana.index(d_g1), "Grupo 2": dias_semana.index(d_g2), "Grupo 3": dias_semana.index(d_g3), "Grupo 4": dias_semana.index(d_g4)}
         with c_staff:
-            st.write("**Requerimiento:**")
             rm = st.number_input("Masters", 1, 10, 3)
             rta = st.number_input("Téc A", 1, 20, 7)
             rtb = st.number_input("Téc B", 1, 20, 2)
@@ -100,7 +109,7 @@ def pantalla_programador():
     f_ini = st.date_input("Inicio", datetime.now())
     f_fin = st.date_input("Fin", datetime.now() + timedelta(days=28))
 
-    if st.button("🚀 Generar Malla Inteligente"):
+    if st.button("🚀 Generar Malla con Compensación Inmediata"):
         repo = conectar_github()
         estado = obtener_estado_inicial(repo)
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
@@ -116,7 +125,7 @@ def pantalla_programador():
             turnos_hoy = {}
             quieren_fijo = [g for g, d_idx in map_idx.items() if d_idx == dia_idx]
             
-            # Compensatorio inmediato
+            # Priorizar compensatorio de semana pasada
             for g in grupos_n:
                 if deudas[g] > 0 and n_sem > sem_deuda[g] and g not in quieren_fijo:
                     if "COMP" not in turnos_hoy.values():
@@ -128,7 +137,6 @@ def pantalla_programador():
                 sem_deuda[sacrificado] = n_sem; activos.append(sacrificado)
             
             for g in quieren_fijo: turnos_hoy[g] = "DESC"
-            
             t_op = ["T1", "T2", "T3"]; random.shuffle(t_op)
             for g in activos: turnos_hoy[g] = t_op.pop(0) if t_op else "T1"
 
@@ -142,13 +150,17 @@ def pantalla_programador():
         df_v = st.session_state.malla_generada.copy()
         matriz = df_v.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_v["Fecha_Col"].unique())
         
-        st.subheader("✍️ Editor de Turnos")
+        st.subheader("✍️ Editor Maestro (Colores)")
         config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"]) for c in matriz.columns}
         
+        # EL FIX: .style.map en lugar de .applymap
         matriz_editada = st.data_editor(matriz.style.pipe(aplicar_estilos_malla), column_config=config_col, use_container_width=True)
         
-        if st.button("💾 Sincronizar Cambios"):
-            # Lógica de guardado en GitHub omitida por brevedad pero funcional aquí
-            st.success("Cambios aplicados localmente.")
+        if st.button("💾 Guardar en GitHub"):
+            df_man = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
+            df_final = df_v.drop(columns=['Turno']).merge(df_man, on=['Grupo', 'Fecha_Col'])
+            guardar_malla_github(df_final)
+            st.session_state.malla_generada = df_final
+            st.rerun()
 
         auditar_malla_visual(df_v)
