@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 import holidays
-import random
 from datetime import datetime, timedelta
 from github import Github
 
@@ -14,9 +13,9 @@ URL_BASE = "https://raw.githubusercontent.com/RichGuep/movilgo/main/"
 LOGO_APP = f"{URL_BASE}MovilGo.png"
 LOGO_CABLE = f"{URL_BASE}logo_empresa_2.png" 
 
-# --- ESTILOS CSS ---
+# --- ESTILOS CSS (Corregidos con doble llave para evitar NameError) ---
 PRIMARY_COLOR = "#1E3D59" 
-st.markdown(f"""
+estilos = f"""
     <style>
     .main {{ background-color: #f8f9fa; }}
     [data-testid="stSidebar"] {{ background-color: {PRIMARY_COLOR}; }}
@@ -26,9 +25,14 @@ st.markdown(f"""
         background: linear-gradient(135deg, {PRIMARY_COLOR} 0%, #3a6073 100%);
         color: white; padding: 2.5rem; border-radius: 20px; margin-bottom: 2rem;
     }}
-    .card-empresa { text-align: center; padding: 2rem; background: white; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .card-empresa {{ 
+        text-align: center; padding: 2rem; background: white; border-radius: 15px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); color: black !important;
+    }}
+    .card-empresa h3 {{ color: black !important; }}
     </style>
-    """, unsafe_allow_html=True)
+"""
+st.markdown(estilos, unsafe_allow_html=True)
 
 # --- 1. FUNCIONES DE DATOS Y CONEXIÓN ---
 
@@ -57,8 +61,7 @@ def guardar_excel(df_nuevo, nombre_archivo, mensaje):
         contents = repo.get_contents(nombre_archivo)
         df_previo = pd.read_excel(io.BytesIO(contents.decoded_content))
         df_previo['Fecha_Raw'] = pd.to_datetime(df_previo['Fecha_Raw'])
-        
-        # Combinar y eliminar duplicados priorizando lo nuevo
+        # Unimos y eliminamos duplicados (mantenemos lo más reciente)
         df_final = pd.concat([df_previo, df_nuevo]).drop_duplicates(subset=['Grupo', 'Fecha_Raw'], keep='last')
         sha = contents.sha
     except:
@@ -73,14 +76,14 @@ def guardar_excel(df_nuevo, nombre_archivo, mensaje):
         repo.update_file(nombre_archivo, mensaje, output.getvalue(), sha)
     else:
         repo.create_file(nombre_archivo, mensaje, output.getvalue())
-    
     st.session_state.malla_generada = df_final
 
 def obtener_ultimo_estado_github(repo):
     df_hist = cargar_excel("malla_historica.xlsx")
-    if df_hist.empty: return {g: {"u": "DESC", "n": 0, "d": 0} for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
+    grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    if df_hist.empty: return {g: {"u": "DESC", "n": 0, "d": 0} for g in grupos}
     estado = {}
-    for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]:
+    for g in grupos:
         regs = df_hist[df_hist['Grupo'] == g].sort_values('Fecha_Raw', ascending=False)
         if not regs.empty:
             u = regs.iloc[0]
@@ -108,20 +111,20 @@ def obtener_horario(turno):
 # --- 3. MÓDULOS ---
 
 def modulo_programacion():
-    st.header("📅 Programación Maestra y Validación")
+    st.header("📅 Programación Maestra")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     repo = conectar_github()
 
-    # Filtros de Fecha
-    with st.expander("🚀 Parámetros de Visualización y Generación", expanded=True):
+    # --- SELECTORES DE RANGO ---
+    with st.expander("🚀 Filtros y Generación Automática", expanded=True):
         c1, c2 = st.columns(2)
-        f_ini = c1.date_input("Fecha Inicio", datetime.now().date())
-        f_fin = c2.date_input("Fecha Fin", (datetime.now() + timedelta(days=28)).date())
+        f_ini = c1.date_input("Ver desde:", datetime.now().date())
+        f_fin = c2.date_input("Ver hasta:", (datetime.now() + timedelta(days=30)).date())
         
         f_ini_dt = pd.to_datetime(f_ini)
         f_fin_dt = pd.to_datetime(f_fin)
 
-        if st.button("Generar Nueva Malla Inteligente"):
+        if st.button("Generar Nueva Malla (Rango Seleccionado)"):
             estado_ayer = obtener_ultimo_estado_github(repo)
             lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
             resultados = []
@@ -163,75 +166,64 @@ def modulo_programacion():
                     })
                     mem_t[g] = t_f; mem_n[g] = n_a
 
-            df_nueva_malla = pd.DataFrame(resultados)
-            guardar_excel(df_nueva_malla, "malla_historica.xlsx", "Generación de Periodo")
+            guardar_excel(pd.DataFrame(resultados), "malla_historica.xlsx", "Gen Auto")
             st.rerun()
 
-    # Cargar y FILTRAR Data
+    # --- VISUALIZACIÓN FILTRADA ---
     df_base = cargar_excel("malla_historica.xlsx")
     if not df_base.empty:
-        # EL FILTRO CORRECTO:
         df_filtrada = df_base[(df_base['Fecha_Raw'] >= f_ini_dt) & (df_base['Fecha_Raw'] <= f_fin_dt)].copy()
         
         if not df_filtrada.empty:
-            st.subheader("✍️ Editor de Turnos (Rango Seleccionado)")
+            st.subheader("✍️ Editor Maestro")
             matriz = df_filtrada.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_filtrada["Fecha_Col"].unique())
-            
             config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"], width="small") for c in matriz.columns}
             matriz_editada = st.data_editor(matriz, column_config=config_col, use_container_width=True)
 
-            if st.button("💾 Guardar Cambios Manuales"):
+            if st.button("💾 Guardar Cambios"):
                 matriz_final = matriz.copy()
                 matriz_final.update(matriz_editada)
                 df_man = matriz_final.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
                 df_final_upd = df_filtrada.drop(columns=['Turno']).merge(df_man, on=['Grupo', 'Fecha_Col'])
-                guardar_excel(df_final_upd, "malla_historica.xlsx", "Ajuste Manual")
-                st.success("Cambios aplicados correctamente.")
+                guardar_excel(df_final_upd, "malla_historica.xlsx", "Update Manual")
+                st.success("Guardado exitoso.")
                 st.rerun()
         else:
-            st.info("No hay datos para las fechas seleccionadas. Usa 'Generar Nueva Malla'.")
+            st.info("No hay datos para este rango. Pulsa el botón de generar arriba.")
 
 def modulo_detallado():
     st.header("📋 Detallado por Técnico")
     df_m = cargar_excel("malla_historica.xlsx")
     df_e = cargar_excel("empleados.xlsx")
-    if df_m.empty or df_e.empty: 
-        st.warning("Faltan datos de malla o empleados.")
-        return
+    if df_m.empty or df_e.empty: return
     
-    df_e["Grupo"] = df_e["Grupo"].astype(str)
-    df_m["Grupo"] = df_m["Grupo"].astype(str)
     df_det = df_e.merge(df_m, on="Grupo")
-    
     matriz_full = df_det.pivot_table(index=["Grupo", "Nombre"], columns="Fecha_Col", values="Turno", aggfunc='first').reindex(columns=df_m["Fecha_Col"].unique())
     st.dataframe(matriz_full.style.map(color_t), use_container_width=True)
 
 def modulo_nomina():
-    st.header("💰 Reporte para Nómina")
+    st.header("💰 Nómina")
     df_m = cargar_excel("malla_historica.xlsx")
     df_e = cargar_excel("empleados.xlsx")
     if df_m.empty or df_e.empty: return
     
     df_nom = df_e.merge(df_m, on="Grupo")
     df_nom["Hora Inicio"], df_nom["Hora Fin"] = zip(*df_nom["Turno"].map(obtener_horario))
-    reporte = df_nom[["Fecha_Raw", "Nombre", "Cedula", "Cargo", "Turno", "Hora Inicio", "Hora Fin"]].sort_values("Fecha_Raw")
-    st.dataframe(reporte, use_container_width=True, hide_index=True)
+    st.dataframe(df_nom[["Fecha_Raw", "Nombre", "Cedula", "Turno", "Hora Inicio", "Hora Fin"]].sort_values("Fecha_Raw"), use_container_width=True)
 
 def modulo_personal():
-    st.header("👥 Gestión de Personal")
+    st.header("👥 Personal")
     df_emp = cargar_excel("empleados.xlsx")
     if df_emp.empty: df_emp = pd.DataFrame(columns=["Nombre", "Cedula", "Cargo", "Grupo"])
-    
     df_edit = st.data_editor(df_emp, use_container_width=True, num_rows="dynamic")
-    if st.button("💾 Guardar Cambios en Personal"):
+    if st.button("💾 Guardar"):
         guardar_excel(df_edit, "empleados.xlsx", "Update Personal")
         st.rerun()
 
-# --- 4. FLUJO PRINCIPAL ---
+# --- 4. FLUJO ---
 
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'empresa' not in st.session_state: st.session_state.empresa = None
-if 'malla_generada' not in st.session_state: st.session_state.malla_generada = None
 
 if not st.session_state.logged_in:
     _, col, _ = st.columns([1, 1.2, 1])
@@ -244,20 +236,19 @@ elif st.session_state.empresa is None:
     _, c2, _ = st.columns([1, 1.5, 1])
     with c2:
         st.markdown(f'<div class="card-empresa"><img src="{LOGO_CABLE}" width="200"><h3>Cable Móvil</h3></div>', unsafe_allow_html=True)
-        if st.button("Acceder a Operación"): 
+        if st.button("Acceder"): 
             st.session_state.empresa = "Cable Móvil"
             st.rerun()
 else:
     with st.sidebar:
         st.image(LOGO_CABLE, width=150)
-        st.title("MovilGo")
         menu = st.radio("MENÚ", ["🏠 Inicio", "📅 Programación", "📋 Detallado", "💰 Nómina", "👥 Personal"])
         if st.button("🚪 Salir"): 
             st.session_state.clear()
             st.rerun()
     
     if menu == "🏠 Inicio":
-        st.markdown(f'<div class="welcome-card"><h1>Operación {st.session_state.empresa}</h1><p>Gestión de turnos y personal técnico</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="welcome-card"><h1>Operación {st.session_state.empresa}</h1></div>', unsafe_allow_html=True)
     elif menu == "📅 Programación": modulo_programacion()
     elif menu == "📋 Detallado": modulo_detallado()
     elif menu == "💰 Nómina": modulo_nomina()
