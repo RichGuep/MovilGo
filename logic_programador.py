@@ -18,12 +18,16 @@ def aplicar_estilos_malla(styler, errores_coords):
             "DESC": "#d62728", # Rojo
             "COMP": "#ff7f0e"  # Naranja
         }
-
-    def aplicar_celda(val, row_name, col_name):
-        estilo = colores.get(val, "background-color: transparent; color: inherit;")
-        # Si la celda es un error detectado, aplicamos un borde amarillo neón
+        
+        bg = colores_bg.get(val, "transparent")
+        color_texto = "white" if val in colores_bg else "black"
+        
+        estilo = f"background-color: {bg}; color: {color_texto}; font-weight: bold; text-align: center;"
+        
+        # RESALTADO DE ERRORES: Borde amarillo neón si la celda tiene novedad
         if (row_name, col_name) in errores_coords:
-            estilo += "border: 3px solid #FFFF00 !important; font-weight: bold; color: #FFFF00 !important;"
+            estilo += "border: 3px solid #FFFF00 !important; box-shadow: inset 0 0 10px #FFFF00;"
+        
         return estilo
 
     return styler.apply(lambda df: pd.DataFrame(
