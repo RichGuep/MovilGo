@@ -30,56 +30,128 @@ def conectar_github():
 # GUARDAR EMPLEADOS EN GITHUB
 # =====================================
 
-def guardar_empleados(repo, df):
+def modulo_personal():
+    st.header("👥 Gestión de Plantilla y Asignación de Grupos")
 
-    output = io.BytesIO()
+    df_emp = cargar_excel("empleados.xlsx")
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
+    if df_emp.empty:
+        st.warning("⚠️ No hay personal registrado.")
+        df_emp = pd.DataFrame(columns=["Nombre", "Cargo", "Cedula", "Grupo"])
 
-    contenido = output.getvalue()
+    st.info("💡 Aquí puedes editar personal y asignar grupos automáticamente según tipo de cargo.")
 
-    try:
-        file = repo.get_contents("empleados.xlsx")
+    df_edit = st.data_editor(
+        df_emp,
+        use_container_width=True,
+        num_rows="dynamic",
+        key="editor_plantilla"
+    )
 
-        repo.update_file(
-            "empleados.xlsx",
-            "Actualización de grupos MovilGo",
-            contenido,
-            file.sha
-        )
+    # =====================================================
+    # CONFIGURACIÓN DE GRUPOS
+    # =====================================================
 
-    except Exception:
-        repo.create_file(
-            "empleados.xlsx",
-            "Creación empleados MovilGo",
-            contenido
-        )
+    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
 
+    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
-# =====================================
-# BOTÓN (VA DENTRO DE TU PANTALLA)
-# =====================================
+    # =====================================================
+    # BOTÓN ASIGNACIÓN
+    # =====================================================
 
-def boton_guardar_grupos():
+    if st.button("🚀 Asignar grupos automáticamente"):
 
-    if st.button("💾 Guardar en GitHub"):
+        df = df_edit.copy()
 
-        repo = conectar_github()
+        if "Grupo" not in df.columns:
+            df["Grupo"] = None
 
-        if not repo:
-            st.error("❌ Sin conexión con GitHub")
-            return
+        nombres = df["Nombre"].tolist()
 
-        if "df_grupos" not in st.session_state:
-            st.error("❌ No hay datos para guardar")
-            return
+        asignacion = {}
 
-        df_final = st.session_state["df_grupos"]
+        # contador por grupo técnico para balance
+        contador_tecnicos = {g: 0 for g in grupos_tecnicos}
+        contador_abordaje = {g: 0 for g in grupos_abordaje}
 
-        guardar_empleados(repo, df_final)
+        for i, row in df.iterrows():
 
-        st.success("✅ Grupos guardados correctamente en GitHub")
+            nombre = row["Nombre"]
+            cargo = str(row["Cargo"])
+
+            # ==========================
+            # 👷 TÉCNICOS (Master, A, B)
+            # ==========================
+            if any(x in cargo for x in ["Master", "Tecnico A", "Tecnico B"]):
+
+                grupo_asignado = grupos_tecnicos[i % len(grupos_tecnicos)]
+                asignacion[nombre] = grupo_asignado
+
+            # ==========================
+            # 🚌 ABORDAJE
+            # ==========================
+            elif "Abordaje" in cargo:
+
+                grupo_asignado = grupos_abordaje[i % len(grupos_abordaje)]
+                asignacion[nombre] = grupo_asignado
+
+            else:
+                asignacion[nombre] = "SIN GRUPO"
+
+        df["Grupo"] = df["Nombre"].map(asignacion)
+
+        st.session_state["df_grupos"] = df
+
+        st.success("✅ Grupos asignados correctamente")
+
+    # =====================================================
+    # RESULTADO
+    # =====================================================
+
+    if "df_grupos" in st.session_state:
+
+        st.subheader("📊 Resultado de Asignación")
+
+        st.dataframe(st.session_state["df_grupos"], use_container_width=True)
+
+        # =====================================================
+        # GUARDAR EN GITHUB
+        # =====================================================
+
+        if st.button("💾 Guardar en GitHub"):
+
+            repo = conectar_github()
+
+            if not repo:
+                st.error("❌ Sin conexión con GitHub")
+                return
+
+            output = io.BytesIO()
+
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                st.session_state["df_grupos"].to_excel(writer, index=False)
+
+            contenido = output.getvalue()
+
+            try:
+                file = repo.get_contents("empleados.xlsx")
+
+                repo.update_file(
+                    "empleados.xlsx",
+                    "Actualización de grupos automática (MovilGo)",
+                    contenido,
+                    file.sha
+                )
+
+            except Exception:
+                repo.create_file(
+                    "empleados.xlsx",
+                    "Creación empleados con grupos (MovilGo)",
+                    contenido
+                )
+
+            st.success("✅ Guardado en GitHub correctamente")
 # inicio pantallas
 
 def pantalla_tecnicos():
