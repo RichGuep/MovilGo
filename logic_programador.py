@@ -6,10 +6,12 @@ import random
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. ESTILOS Y RESALTADO DE ERRORES ---
+# --- 1. CONFIGURACIÓN DE ESTILOS (COLORES CORREGIDOS Y LEGIBLES) ---
 def aplicar_estilos_malla(styler, errores_coords):
-    """Aplica colores de turnos y resalta celdas con errores de salud/cobertura."""
- def aplicar_celda(val, row_name, col_name):
+    """
+    Aplica colores de fondo y asegura que el texto sea blanco para máxima legibilidad.
+    """
+    def aplicar_celda(val, row_name, col_name):
         # Mapeo de colores de fondo
         colores_bg = {
             "T1": "#1f77b4",   # Azul
