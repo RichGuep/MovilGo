@@ -535,46 +535,40 @@ def pantalla_asignacion_grupos():
 
     if st.button("🚀 Asignar grupos automáticamente"):
 
-        df = df.copy()
+    df = df.copy()
 
-        if "Grupo" not in df.columns:
-            df["Grupo"] = None
+    if "Grupo" not in df.columns:
+        df["Grupo"] = None
 
-        nombres = df["Nombre"].tolist()
+    nombres = df["Nombre"].tolist()
+    random.shuffle(nombres)
 
-        random.shuffle(nombres)
+    asignacion = {}
 
-        asignacion = {
-            nombre: grupos[i % len(grupos)]
-            for i, nombre in enumerate(nombres)
-        }
+    # ==========================
+    # LÓGICA SEGÚN CARGO
+    # ==========================
 
-        df["Grupo"] = df["Nombre"].map(asignacion)
+    for i, nombre in enumerate(nombres):
 
-        st.session_state["df_grupos"] = df
-        st.success("✅ Grupos asignados correctamente")
+        cargo = df[df["Nombre"] == nombre]["Cargo"].values[0]
 
-    if "df_grupos" in st.session_state:
+        # 👷 TÉCNICOS → 4 GRUPOS
+        if "Tecnico" in str(cargo):
+            asignacion[nombre] = grupos[i % 4]
 
-        st.subheader("📊 Resultado")
-        st.dataframe(st.session_state["df_grupos"], use_container_width=True)
+        # 🚌 ABORDAJE → 5 GRUPOS
+        elif "Abordaje" in str(cargo):
+            grupos_ab = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
+            asignacion[nombre] = grupos_ab[i % 5]
 
-        if st.button("💾 Guardar en GitHub"):
+        else:
+            asignacion[nombre] = "SIN GRUPO"
 
-            output = io.BytesIO()
+    df["Grupo"] = df["Nombre"].map(asignacion)
 
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                st.session_state["df_grupos"].to_excel(writer, index=False)
+    st.session_state["df_grupos"] = df
 
-            contents = repo.get_contents("empleados.xlsx")
-
-            repo.update_file(
-                "empleados.xlsx",
-                "Asignación de grupos MovilGo",
-                output.getvalue(),
-                contents.sha
-            )
-
-            st.success("✅ Guardado en GitHub")
+    st.success("✅ Grupos asignados correctamente por tipo de operación")
 
   
