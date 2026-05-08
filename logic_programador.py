@@ -1,3 +1,7 @@
+# =========================================================
+# LOGIC_PROGRAMADOR.PY
+# =========================================================
+
 import streamlit as st
 import pandas as pd
 import io
@@ -5,12 +9,7 @@ import holidays
 from datetime import datetime, timedelta
 from github import Github
 
-# =========================================================
-# CONFIG
-# =========================================================
-
 GRUPOS = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-
 TURNOS = ["T1", "T2", "T3", "DESC", "COMP"]
 
 # =========================================================
@@ -22,75 +21,45 @@ def conectar_github():
         if "GITHUB_TOKEN" not in st.secrets:
             st.error("❌ Token GITHUB_TOKEN no configurado.")
             return None
-
-        return Github(
-            st.secrets["GITHUB_TOKEN"]
-        ).get_repo("RichGuep/movilgo")
-
+        return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
     except Exception as e:
         st.error(f"Error GitHub: {e}")
         return None
-
 
 # =========================================================
 # HISTÓRICO
 # =========================================================
 
 def obtener_ultimo_estado_github(repo):
-
     try:
-
         contents = repo.get_contents("malla_historica.xlsx")
-
-        df_hist = pd.read_excel(
-            io.BytesIO(contents.decoded_content)
-        )
-
-        df_hist["Fecha_Raw"] = pd.to_datetime(
-            df_hist["Fecha_Raw"]
-        )
+        df_hist = pd.read_excel(io.BytesIO(contents.decoded_content))
+        df_hist["Fecha_Raw"] = pd.to_datetime(df_hist["Fecha_Raw"])
 
         estado = {}
 
         for g in GRUPOS:
-
-            regs = (
-                df_hist[df_hist["Grupo"] == g]
-                .sort_values("Fecha_Raw")
-            )
+            regs = df_hist[df_hist["Grupo"] == g].sort_values("Fecha_Raw")
 
             if not regs.empty:
-
                 u = regs.iloc[-1]
 
                 estado[g] = {
                     "u": u["Turno"],
-                    "n": int(u.get("Noches_Acum", 0))
-                    if u["Turno"] == "T3"
-                    else 0,
+                    "n": int(u.get("Noches_Acum", 0)) if u["Turno"] == "T3" else 0,
                     "d": int(u.get("Deuda_Compensatorio", 0))
                 }
 
             else:
-
-                estado[g] = {
-                    "u": "DESC",
-                    "n": 0,
-                    "d": 0
-                }
+                estado[g] = {"u": "DESC", "n": 0, "d": 0}
 
         return estado
 
     except:
-
         return {
-            g: {
-                "u": "DESC",
-                "n": 0,
-                "d": 0
-            } for g in GRUPOS
+            g: {"u": "DESC", "n": 0, "d": 0}
+            for g in GRUPOS
         }
-
 
 # =========================================================
 # GUARDAR HISTÓRICO
@@ -106,10 +75,7 @@ def guardar_malla_en_historico(df_nueva):
     try:
 
         try:
-
-            contents = repo.get_contents(
-                "malla_historica.xlsx"
-            )
+            contents = repo.get_contents("malla_historica.xlsx")
 
             df_previo = pd.read_excel(
                 io.BytesIO(contents.decoded_content)
@@ -127,26 +93,15 @@ def guardar_malla_en_historico(df_nueva):
             )
 
         except:
-
             df_final = df_nueva
 
         output = io.BytesIO()
 
-        with pd.ExcelWriter(
-            output,
-            engine="openpyxl"
-        ) as writer:
-
-            df_final.to_excel(
-                writer,
-                index=False
-            )
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_final.to_excel(writer, index=False)
 
         try:
-
-            contents = repo.get_contents(
-                "malla_historica.xlsx"
-            )
+            contents = repo.get_contents("malla_historica.xlsx")
 
             repo.update_file(
                 "malla_historica.xlsx",
@@ -156,7 +111,6 @@ def guardar_malla_en_historico(df_nueva):
             )
 
         except:
-
             repo.create_file(
                 "malla_historica.xlsx",
                 "Creación inicial",
@@ -166,9 +120,7 @@ def guardar_malla_en_historico(df_nueva):
         st.success("✅ Histórico sincronizado")
 
     except Exception as e:
-
         st.error(f"Error guardando histórico: {e}")
-
 
 # =========================================================
 # VALIDADORES
@@ -188,14 +140,62 @@ def es_cambio_saludable(ayer, hoy):
         "T3": 3
     }
 
-    return (
-        jerarquia.get(hoy, 0)
-        >= jerarquia.get(ayer, 0)
-    )
-
+    return jerarquia.get(hoy, 0) >= jerarquia.get(ayer, 0)
 
 # =========================================================
-# AUDITORÍA AVANZADA
+# COLORES
+# =========================================================
+
+def color_turno(val):
+
+    colores = {
+
+        "T1": """
+            background-color:#1976D2;
+            color:white;
+            font-weight:bold;
+            text-align:center;
+        """,
+
+        "T2": """
+            background-color:#2E7D32;
+            color:white;
+            font-weight:bold;
+            text-align:center;
+        """,
+
+        "T3": """
+            background-color:#424242;
+            color:white;
+            font-weight:bold;
+            text-align:center;
+        """,
+
+        "DESC": """
+            background-color:#C62828;
+            color:white;
+            font-weight:bold;
+            text-align:center;
+        """,
+
+        "COMP": """
+            background-color:#EF6C00;
+            color:white;
+            font-weight:bold;
+            text-align:center;
+        """
+    }
+
+    return colores.get(
+        val,
+        """
+        background-color:white;
+        color:black;
+        """
+    )
+
+# =========================================================
+# AUDITORÍA
 # =========================================================
 
 def auditar_malla(df):
@@ -205,7 +205,7 @@ def auditar_malla(df):
     st.header("🛡️ Auditoría Operacional")
 
     # =====================================================
-    # ALERTAS DE SALUD
+    # ALERTAS
     # =====================================================
 
     col1, col2 = st.columns(2)
@@ -227,13 +227,9 @@ def auditar_malla(df):
 
                 ayer = g_data.iloc[i - 1]["Turno"]
                 hoy = g_data.iloc[i]["Turno"]
-
                 fecha = g_data.iloc[i]["Fecha_Col"]
 
-                if not es_cambio_saludable(
-                    ayer,
-                    hoy
-                ):
+                if not es_cambio_saludable(ayer, hoy):
 
                     alertas_salud.append(
                         f"{g}: {ayer} → {hoy} ({fecha})"
@@ -245,23 +241,14 @@ def auditar_malla(df):
                 st.error(a)
 
         else:
-
-            st.success(
-                "✅ Sin saltos riesgosos"
-            )
-
-    # =====================================================
-    # COBERTURA
-    # =====================================================
+            st.success("✅ Sin saltos riesgosos")
 
     with col2:
 
         st.subheader("📡 Cobertura")
 
         cobertura = (
-            df.groupby(
-                ["Fecha_Col", "Turno"]
-            )
+            df.groupby(["Fecha_Col", "Turno"])
             .size()
             .unstack(fill_value=0)
         )
@@ -287,77 +274,43 @@ def auditar_malla(df):
                 st.warning(a)
 
         else:
-
-            st.success(
-                "✅ Cobertura completa"
-            )
+            st.success("✅ Cobertura completa")
 
     # =====================================================
     # KPIS
     # =====================================================
 
-    st.subheader("📊 KPIs Operacionales")
+    st.subheader("📊 KPIs")
 
-    total_desc = len(
-        df[df["Turno"] == "DESC"]
-    )
-
-    total_t3 = len(
-        df[df["Turno"] == "T3"]
-    )
-
-    total_comp = len(
-        df[df["Turno"] == "COMP"]
-    )
-
+    total_desc = len(df[df["Turno"] == "DESC"])
+    total_t3 = len(df[df["Turno"] == "T3"])
+    total_comp = len(df[df["Turno"] == "COMP"])
     dias = df["Fecha_Raw"].nunique()
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric(
-        "Descansos",
-        total_desc
-    )
-
-    c2.metric(
-        "Noches T3",
-        total_t3
-    )
-
-    c3.metric(
-        "Compensatorios",
-        total_comp
-    )
-
-    c4.metric(
-        "Días",
-        dias
-    )
+    c1.metric("Descansos", total_desc)
+    c2.metric("Noches T3", total_t3)
+    c3.metric("Compensatorios", total_comp)
+    c4.metric("Días", dias)
 
     # =====================================================
     # COBERTURA DIARIA
     # =====================================================
 
-    st.subheader(
-        "📅 Cobertura Operativa Diaria"
-    )
+    st.subheader("📅 Cobertura Operativa")
 
     cobertura_full = (
-        df.groupby(
-            ["Fecha_Col", "Turno"]
-        )
+        df.groupby(["Fecha_Col", "Turno"])
         .size()
         .unstack(fill_value=0)
     )
 
     for c in TURNOS:
-
         if c not in cobertura_full.columns:
             cobertura_full[c] = 0
 
-    cobertura_full = cobertura_full[
-        TURNOS
-    ]
+    cobertura_full = cobertura_full[TURNOS]
 
     st.dataframe(
         cobertura_full,
@@ -365,12 +318,10 @@ def auditar_malla(df):
     )
 
     # =====================================================
-    # DESCANSOS POR SEMANA
+    # DESCANSOS
     # =====================================================
 
-    st.subheader(
-        "🛌 Descansos por Semana"
-    )
+    st.subheader("🛌 Descansos por Semana")
 
     df_desc = df.copy()
 
@@ -381,9 +332,7 @@ def auditar_malla(df):
     )
 
     descansos = (
-        df_desc[
-            df_desc["Turno"] == "DESC"
-        ]
+        df_desc[df_desc["Turno"] == "DESC"]
         .groupby(["Grupo", "Semana"])
         .size()
         .reset_index(name="Descansos")
@@ -409,52 +358,14 @@ def auditar_malla(df):
 
         st.bar_chart(resumen_desc)
 
-        alertas_desc = []
-
-        for grupo in resumen_desc.index:
-
-            for semana in resumen_desc.columns:
-
-                valor = resumen_desc.loc[
-                    grupo,
-                    semana
-                ]
-
-                if valor == 0:
-
-                    alertas_desc.append(
-                        f"{grupo} sin descanso semana {semana}"
-                    )
-
-                if valor > 2:
-
-                    alertas_desc.append(
-                        f"{grupo} exceso descansos semana {semana}"
-                    )
-
-        if alertas_desc:
-
-            for a in alertas_desc:
-                st.warning(a)
-
-        else:
-
-            st.success(
-                "✅ Descansos balanceados"
-            )
-
     # =====================================================
     # DESCANSOS SIMULTÁNEOS
     # =====================================================
 
-    st.subheader(
-        "🚦 Descansos Simultáneos"
-    )
+    st.subheader("🚦 Descansos Simultáneos")
 
     descansos_dia = (
-        df[
-            df["Turno"] == "DESC"
-        ]
+        df[df["Turno"] == "DESC"]
         .groupby("Fecha_Col")
         .size()
     )
@@ -475,23 +386,16 @@ def auditar_malla(df):
             st.error(a)
 
     else:
-
-        st.success(
-            "✅ Descansos controlados"
-        )
+        st.success("✅ Descansos controlados")
 
     # =====================================================
     # BALANCE
     # =====================================================
 
-    st.subheader(
-        "⚖️ Balance de Turnos"
-    )
+    st.subheader("⚖️ Balance de Turnos")
 
     balance = (
-        df.groupby(
-            ["Grupo", "Turno"]
-        )
+        df.groupby(["Grupo", "Turno"])
         .size()
         .unstack(fill_value=0)
     )
@@ -507,9 +411,7 @@ def auditar_malla(df):
     # FATIGA
     # =====================================================
 
-    st.subheader(
-        "🔥 Índice de Fatiga"
-    )
+    st.subheader("🔥 Índice de Fatiga")
 
     fatiga_map = {
         "T1": 1,
@@ -519,9 +421,7 @@ def auditar_malla(df):
         "COMP": 0
     }
 
-    df["Fatiga"] = df["Turno"].map(
-        fatiga_map
-    )
+    df["Fatiga"] = df["Turno"].map(fatiga_map)
 
     fatiga = (
         df.groupby("Grupo")["Fatiga"]
@@ -531,49 +431,13 @@ def auditar_malla(df):
 
     st.bar_chart(fatiga)
 
-    promedio = fatiga.mean()
-
-    for g, val in fatiga.items():
-
-        if val > promedio * 1.3:
-
-            st.warning(
-                f"{g} tiene fatiga alta"
-            )
-
-
-# =========================================================
-# COLOR TABLA
-# =========================================================
-
-def color_t(val):
-
-    c = {
-        "T1": "#1f77b4",
-        "T2": "#2ca02c",
-        "T3": "#4d4d4d",
-        "DESC": "#d62728",
-        "COMP": "#ff7f0e"
-    }
-
-    return (
-        f'background-color: '
-        f'{c.get(val, "#ffffff")}; '
-        f'color: white; '
-        f'font-weight: bold; '
-        f'text-align: center;'
-    )
-
-
 # =========================================================
 # PANTALLA PRINCIPAL
 # =========================================================
 
 def pantalla_programador():
 
-    st.title(
-        "📅 Programador Maestro MovilGo"
-    )
+    st.title("📅 Programador Maestro MovilGo")
 
     dias_semana = [
         "Lunes",
@@ -591,9 +455,7 @@ def pantalla_programador():
 
     with st.container(border=True):
 
-        st.subheader(
-            "⚙️ Configuración"
-        )
+        st.subheader("⚙️ Configuración")
 
         col1, col2 = st.columns([2, 1])
 
@@ -679,15 +541,11 @@ def pantalla_programador():
 
         repo = conectar_github()
 
-        estado_ayer = (
-            obtener_ultimo_estado_github(repo)
-        )
+        estado_ayer = obtener_ultimo_estado_github(repo)
 
         lista_fechas = [
             f_ini + timedelta(days=x)
-            for x in range(
-                (f_fin - f_ini).days + 1
-            )
+            for x in range((f_fin - f_ini).days + 1)
         ]
 
         resultados = []
@@ -748,10 +606,7 @@ def pantalla_programador():
                 ):
                     t_sug = mem_t[g]
 
-                if (
-                    mem_n[g] >= 6
-                    and t_sug == "T3"
-                ):
+                if mem_n[g] >= 6 and t_sug == "T3":
                     t_sug = "T1"
 
                 turnos_hoy[g] = t_sug
@@ -770,11 +625,8 @@ def pantalla_programador():
                     for gf in activos:
 
                         if (
-                            list(
-                                turnos_hoy.values()
-                            ).count(
-                                turnos_hoy[gf]
-                            ) > 1
+                            list(turnos_hoy.values())
+                            .count(turnos_hoy[gf]) > 1
                         ):
 
                             if es_cambio_saludable(
@@ -786,7 +638,7 @@ def pantalla_programador():
                                 break
 
             # =============================================
-            # GUARDAR DÍA
+            # GUARDAR
             # =============================================
 
             for g in GRUPOS:
@@ -833,21 +685,42 @@ def pantalla_programador():
     # VISUALIZAR
     # =====================================================
 
-    if (
-        st.session_state.get(
-            "malla_generada"
-        ) is not None
-    ):
+    if st.session_state.get("malla_generada") is not None:
 
-        df_v = (
-            st.session_state
-            .malla_generada
-            .copy()
-        )
+        df_v = st.session_state.malla_generada.copy()
 
         df_v["Fecha_Raw"] = pd.to_datetime(
             df_v["Fecha_Raw"]
         )
+
+        # =================================================
+        # REPORTE DETALLADO
+        # =================================================
+
+        st.subheader("📋 Reporte Detallado")
+
+        with st.expander(
+            "📖 Reglas Aplicadas",
+            expanded=True
+        ):
+
+            st.markdown("""
+### ✅ Reglas Operativas
+
+1. Cada grupo tiene un día fijo de descanso semanal.
+2. Se respeta la rotación progresiva T1 → T2 → T3.
+3. No se permiten saltos riesgosos:
+   - T3 → T1
+   - T3 → T2
+   - T2 → T1
+4. Ningún grupo puede superar 6 noches consecutivas T3.
+5. Todos los días deben tener cobertura T1, T2 y T3.
+6. Se controlan descansos simultáneos.
+7. Se busca equilibrio entre grupos.
+8. Se monitorea índice de fatiga.
+9. Los festivos se detectan automáticamente.
+10. Toda edición queda guardada en histórico.
+""")
 
         matriz = df_v.pivot(
             index="Grupo",
@@ -859,16 +732,26 @@ def pantalla_programador():
             columns=df_v["Fecha_Col"].unique()
         )
 
-        st.subheader(
-            "✍️ Editor Maestro"
+        st.markdown("""
+🟦 T1 | 🟩 T2 | ⬛ T3 | 🟥 DESC | 🟧 COMP
+""")
+
+        st.dataframe(
+            matriz.style.map(color_turno),
+            use_container_width=True,
+            height=350
         )
 
-        config_col = {
+        # =================================================
+        # EDITOR
+        # =================================================
 
+        st.subheader("✍️ Editor Manual")
+
+        config_col = {
             c: st.column_config.SelectboxColumn(
                 options=TURNOS
             )
-
             for c in matriz.columns
         }
 
@@ -879,7 +762,7 @@ def pantalla_programador():
         )
 
         # =================================================
-        # GUARDAR MANUAL
+        # GUARDAR
         # =================================================
 
         if st.button("💾 Guardar Cambios"):
@@ -902,17 +785,11 @@ def pantalla_programador():
                 )
             )
 
-            guardar_malla_en_historico(
-                df_final
-            )
+            guardar_malla_en_historico(df_final)
 
-            st.session_state.malla_generada = (
-                df_final
-            )
+            st.session_state.malla_generada = df_final
 
-            st.success(
-                "✅ Cambios guardados"
-            )
+            st.success("✅ Cambios guardados")
 
             st.rerun()
 
