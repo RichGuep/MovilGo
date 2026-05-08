@@ -67,32 +67,81 @@ def pantalla_abordaje():
         "Domingo"
     ]
 
-    # =====================================
-    # CARGAR PERSONAL
-    # =====================================
+    # =========================================
+# CARGAR PERSONAL ABORDAJE
+# =========================================
 
-    repo = conectar_github()
+repo = conectar_github()
 
-    try:
-        contents = repo.get_contents("empleados.xlsx")
+if not repo:
+    st.error("No se pudo conectar a GitHub.")
+    return
 
-        df_emp = pd.read_excel(
-            io.BytesIO(contents.decoded_content)
+try:
+    contents = repo.get_contents(
+        "empleados.xlsx"
+    )
+
+    df_emp = pd.read_excel(
+        io.BytesIO(contents.decoded_content)
+    )
+
+    df_emp.columns = (
+        df_emp.columns.str.strip()
+    )
+
+    # validar columnas
+    columnas_necesarias = [
+        "Nombre",
+        "Cedula",
+        "Cargo"
+    ]
+
+    for c in columnas_necesarias:
+        if c not in df_emp.columns:
+            st.error(
+                f"Falta columna '{c}' en empleados.xlsx"
+            )
+            return
+
+    # filtrar solo abordaje
+    df_ab = df_emp[
+        df_emp["Cargo"]
+        .astype(str)
+        .str.strip()
+        .str.contains(
+            "Auxiliar de Abordaje",
+            case=False,
+            na=False
         )
+    ]
 
-        df_emp.columns = df_emp.columns.str.strip()
-
-        df_ab = df_emp[
-            df_emp["Area"] == "Abordaje"
-        ]
-
-    except Exception as e:
-        st.error(f"Error cargando abordaje: {e}")
+    if df_ab.empty:
+        st.error(
+            "No se encontró personal de abordaje."
+        )
         return
 
     st.success(
-        f"{len(df_ab)} personas cargadas."
+        f"Personal abordaje cargado: {len(df_ab)} personas"
     )
+
+    # convertir a lista
+    personal_abordaje = []
+
+    for _, row in df_ab.iterrows():
+
+        personal_abordaje.append({
+            "Nombre": str(row["Nombre"]),
+            "Cedula": str(row["Cedula"]),
+            "TR_Acum": 0
+        })
+
+except Exception as e:
+    st.error(
+        f"Error cargando abordaje: {e}"
+    )
+    return
 
     # =====================================
     # PARAMETRIZADOR DESCANSOS
