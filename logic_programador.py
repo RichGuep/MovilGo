@@ -38,8 +38,150 @@ def conectar_github():
 # inicio pantallas
 
 def pantalla_tecnicos():
-    st.title("👷 Programador Técnicos")
-    st.success("Módulo técnicos funcionando")
+
+    st.title("👷 Control de Técnicos - MovilGo")
+
+    repo = conectar_github()
+
+    if not repo:
+        st.error("No hay conexión con GitHub")
+        return
+
+    # =========================================
+    # CARGA DE PERSONAL
+    # =========================================
+
+    try:
+
+        contents = repo.get_contents("empleados.xlsx")
+
+        df = pd.read_excel(io.BytesIO(contents.decoded_content))
+
+        df.columns = df.columns.str.strip()
+
+    except Exception as e:
+
+        st.error(f"Error cargando personal: {e}")
+        return
+
+    # =========================================
+    # FILTROS
+    # =========================================
+
+    st.subheader("🔎 Filtros")
+
+    col1, col2, col3 = st.columns(3)
+
+    grupos = st.multiselect(
+        "Filtrar por grupo",
+        options=df["Grupo"].unique(),
+        default=df["Grupo"].unique()
+    )
+
+    cargos = st.multiselect(
+        "Filtrar por cargo",
+        options=df["Cargo"].unique() if "Cargo" in df.columns else [],
+        default=df["Cargo"].unique() if "Cargo" in df.columns else []
+    )
+
+    df_f = df.copy()
+
+    if grupos:
+        df_f = df_f[df_f["Grupo"].isin(grupos)]
+
+    if cargos:
+        df_f = df_f[df_f["Cargo"].isin(cargos)]
+
+    # =========================================
+    # KPIs TÉCNICOS
+    # =========================================
+
+    st.subheader("📊 KPIs de Personal")
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("Total Técnicos", len(df_f))
+    c2.metric("Grupos Activos", df_f["Grupo"].nunique())
+    c3.metric("Cargos", df_f["Cargo"].nunique() if "Cargo" in df_f.columns else 0)
+
+    st.divider()
+
+    # =========================================
+    # DISTRIBUCIÓN POR GRUPO
+    # =========================================
+
+    st.subheader("📦 Distribución por Grupo")
+
+    dist = df_f.groupby("Grupo").size().reset_index(name="Cantidad")
+
+    st.bar_chart(dist.set_index("Grupo"))
+
+    # =========================================
+    # TABLA EDITABLE (CONTROL OPERATIVO)
+    # =========================================
+
+    st.subheader("✍️ Gestión de Personal")
+
+    df_edit = st.data_editor(
+        df_f,
+        use_container_width=True,
+        num_rows="dynamic"
+    )
+
+    # =========================================
+    # GUARDAR CAMBIOS
+    # =========================================
+
+    if st.button("💾 Guardar cambios de personal"):
+
+        try:
+
+            output = io.BytesIO()
+
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+                df_edit.to_excel(writer, index=False)
+
+            try:
+
+                contents = repo.get_contents("empleados.xlsx")
+
+                repo.update_file(
+                    "empleados.xlsx",
+                    "Actualización técnicos",
+                    output.getvalue(),
+                    contents.sha
+                )
+
+            except:
+
+                repo.create_file(
+                    "empleados.xlsx",
+                    "Creación empleados",
+                    output.getvalue()
+                )
+
+            st.success("✅ Personal actualizado correctamente")
+
+        except Exception as e:
+
+            st.error(f"Error guardando: {e}")
+
+    # =========================================
+    # ANALÍTICA SIMPLE POR TÉCNICO
+    # =========================================
+
+    st.divider()
+
+    st.subheader("📈 Análisis de distribución")
+
+    if st.checkbox("Ver distribución avanzada"):
+
+        col = "Grupo"
+
+        analisis = df_f.groupby(col).size()
+
+        st.bar_chart(analisis)
 
     
 # =========================================================
