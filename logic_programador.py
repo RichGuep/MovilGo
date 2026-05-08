@@ -110,7 +110,7 @@ try:
         .astype(str)
         .str.strip()
         .str.contains(
-            "Auxiliar de Abordaje",
+            "Auxiliar de Abordaje y Atención al Público ",
             case=False,
             na=False
         )
