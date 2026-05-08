@@ -459,7 +459,7 @@ def pantalla_programador():
 
         hora_fin_t3 = st.time_input(
             "Fin T3",
-            value=datetime.strptime("28:50", "%H:%M").time()
+            value=datetime.strptime("04:50", "%H:%M").time()
         )
 
     HORARIOS = {
