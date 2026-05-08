@@ -500,40 +500,7 @@ def pantalla_programador():
 
 def pantalla_asignacion_grupos():
 
-    st.title("🧩 Asignación de Grupos - MovilGo")
-
-    repo = conectar_github()
-
-    if not repo:
-        st.error("❌ Sin conexión GitHub")
-        return
-
-    try:
-        contents = repo.get_contents("empleados.xlsx")
-        df = pd.read_excel(io.BytesIO(contents.decoded_content))
-    except Exception as e:
-        st.error(f"Error cargando empleados: {e}")
-        return
-
-    st.subheader("📋 Personal actual")
-    st.dataframe(df, use_container_width=True)
-
-    st.divider()
-
-    st.subheader("⚙️ Parámetros de asignación")
-
-    grupos = st.multiselect(
-        "Grupos disponibles",
-        ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"],
-        default=["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-    )
-
-    modo = st.selectbox(
-        "Modo de asignación",
-        ["balanceado", "aleatorio"]
-    )
-
-    if st.button("🚀 Asignar grupos automáticamente"):
+if st.button("🚀 Asignar grupos automáticamente"):
 
     df = df.copy()
 
@@ -570,5 +537,3 @@ def pantalla_asignacion_grupos():
     st.session_state["df_grupos"] = df
 
     st.success("✅ Grupos asignados correctamente por tipo de operación")
-
-  
