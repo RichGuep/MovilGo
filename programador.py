@@ -1,10 +1,10 @@
+import pandas as pd
 from logic.rotacion import rotar_grupos
 from logic.reglas import obtener_descanso, asignar_tr
 
 def generar_malla(fecha_ini, fecha_fin, grupos, personal_grupos, descansos):
 
     resultados = []
-
     fechas = pd.date_range(fecha_ini, fecha_fin)
 
     tr_counter = {}
@@ -22,14 +22,15 @@ def generar_malla(fecha_ini, fecha_fin, grupos, personal_grupos, descansos):
 
         grupo_descanso = obtener_descanso(dia, descansos)
 
+        # DESCANSO
         resultados.append({
             "Fecha": fecha,
             "Grupo": grupo_descanso,
             "Turno": "DESC"
         })
 
+        # ACTIVOS
         activos = [g for g in grupos if g != grupo_descanso]
-
         t1, t2 = rotar_grupos(activos, semana)
 
         for g in t1:
@@ -38,7 +39,8 @@ def generar_malla(fecha_ini, fecha_fin, grupos, personal_grupos, descansos):
         for g in t2:
             resultados.append({"Fecha": fecha, "Grupo": g, "Turno": "T2"})
 
-        tr = asignar_tr(grupo_descanso, personas, tr_counter)
+        # TR
+        tr = asignar_tr(grupo_descanso, personas, tr_counter, fecha)
 
         if tr:
             resultados.append(tr)
