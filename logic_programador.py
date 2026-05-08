@@ -371,48 +371,48 @@ if st.button(
         "✅ Malla de abordaje generada correctamente"
     )
 
-    # ============================================
-    # MOSTRAR
-    # ============================================
+# =========================================
+# MOSTRAR MALLA
+# =========================================
 
-    if "malla_abordaje" in st.session_state:
+if "malla_abordaje" in st.session_state:
 
-        df = st.session_state[
-            "malla_abordaje"
-        ]
+    df = st.session_state[
+        "malla_abordaje"
+    ]
 
-        st.subheader(
-            "📋 Malla Grupal"
-        )
+    st.subheader(
+        "📋 Malla Grupal"
+    )
 
-        matriz = df.pivot(
-            index="Grupo",
-            columns="Fecha",
-            values="Turno"
-        )
+    matriz = df.pivot_table(
+        index="Grupo",
+        columns="Fecha",
+        values="Turno",
+        aggfunc="first"
+    )
 
-        st.dataframe(
-            matriz,
-            use_container_width=True
-        )
+    st.dataframe(
+        matriz,
+        use_container_width=True
+    )
 
-        st.subheader(
-            "👥 Personal asignado a TR"
-        )
+    st.subheader(
+        "👤 Personal asignado a TR"
+    )
 
-        tr_df = df[
-            df["Turno"] == "TR"
-        ][[
-            "Fecha",
-            "Grupo",
-            "Persona TR"
-        ]]
+    tr_df = df[
+        df["Turno"] == "TR"
+    ][[
+        "Fecha",
+        "Grupo",
+        "Persona_TR"
+    ]]
 
-        st.dataframe(
-            tr_df,
-            use_container_width=True
-        )
-
+    st.dataframe(
+        tr_df,
+        use_container_width=True
+    )
 
 
 def pantalla_programador():
