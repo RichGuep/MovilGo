@@ -487,14 +487,8 @@ def pantalla_programador():
     submodulo = st.radio(
         "Seleccione módulo",
         [
-            "👷 Programación Técnicos",
-            "🚍 Personal Abordaje"
-        ],
-        horizontal=True
-    )
-
-    dias_semana = [
-
+            if submodulo == "👷 Programación Técnicos":
+        dias_semana = [
         "Lunes",
         "Martes",
         "Miércoles",
@@ -502,8 +496,35 @@ def pantalla_programador():
         "Viernes",
         "Sábado",
         "Domingo"
-
     ]
+
+    with st.container(border=True):
+
+
+        
+         elif submodulo == "🚍 Personal Abordaje":
+
+    st.subheader(
+        "🚍 Programador Personal Abordaje"
+    )
+
+    st.info(
+        "Aquí construiremos la lógica de programación para el personal de abordaje."
+    )
+
+    st.write(
+        "Próximamente configuraremos:"
+    )
+
+    st.markdown("""
+    - Cantidad de personal requerido por día
+    - Horarios de abordaje
+    - Puntos o estaciones
+    - Rotación de descansos
+    - Cobertura mínima
+    - Reemplazos automáticos
+    - Auditoría de cobertura
+    """)
 
     # =====================================================
     # CONFIG
