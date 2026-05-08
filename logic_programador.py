@@ -56,54 +56,57 @@ def modulo_personal():
 
     grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
-    # =====================================================
-    # BOTÓN ASIGNACIÓN
-    # =====================================================
+# =====================================================
+# BOTÓN ASIGNACIÓN
+# =====================================================
 
-    if st.button("🚀 Asignar grupos automáticamente"):
+if st.button("🚀 Asignar grupos automáticamente"):
 
-        df = df_edit.copy()
+    df = df_edit.copy()
 
-        if "Grupo" not in df.columns:
-            df["Grupo"] = None
+    if "Grupo" not in df.columns:
+        df["Grupo"] = None
 
-        nombres = df["Nombre"].tolist()
+    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
-        asignacion = {}
+    asignacion = {}
 
-        # contador por grupo técnico para balance
-        contador_tecnicos = {g: 0 for g in grupos_tecnicos}
-        contador_abordaje = {g: 0 for g in grupos_abordaje}
+    # contadores reales por grupo
+    carga_tecnicos = {g: 0 for g in grupos_tecnicos}
+    carga_abordaje = {g: 0 for g in grupos_abordaje}
 
-        for i, row in df.iterrows():
+    for _, row in df.iterrows():
 
-            nombre = row["Nombre"]
-            cargo = str(row["Cargo"])
+        nombre = row["Nombre"]
+        cargo = str(row["Cargo"])
 
-            # ==========================
-            # 👷 TÉCNICOS (Master, A, B)
-            # ==========================
-            if any(x in cargo for x in ["Master", "Tecnico A", "Tecnico B"]):
+        # ==========================
+        # 👷 TÉCNICOS
+        # ==========================
+        if any(x in cargo for x in ["Master", "Tecnico A", "Tecnico B"]):
 
-                grupo_asignado = grupos_tecnicos[i % len(grupos_tecnicos)]
-                asignacion[nombre] = grupo_asignado
+            grupo = min(carga_tecnicos, key=carga_tecnicos.get)
+            asignacion[nombre] = grupo
+            carga_tecnicos[grupo] += 1
 
-            # ==========================
-            # 🚌 ABORDAJE
-            # ==========================
-            elif "Abordaje" in cargo:
+        # ==========================
+        # 🚌 ABORDAJE
+        # ==========================
+        elif "Abordaje" in cargo:
 
-                grupo_asignado = grupos_abordaje[i % len(grupos_abordaje)]
-                asignacion[nombre] = grupo_asignado
+            grupo = min(carga_abordaje, key=carga_abordaje.get)
+            asignacion[nombre] = grupo
+            carga_abordaje[grupo] += 1
 
-            else:
-                asignacion[nombre] = "SIN GRUPO"
+        else:
+            asignacion[nombre] = "SIN GRUPO"
 
-        df["Grupo"] = df["Nombre"].map(asignacion)
+    df["Grupo"] = df["Nombre"].map(asignacion)
 
-        st.session_state["df_grupos"] = df
+    st.session_state["df_grupos"] = df
 
-        st.success("✅ Grupos asignados correctamente")
+    st.success("✅ Grupos asignados correctamente (balance real aplicado)")
 
     # =====================================================
     # RESULTADO
