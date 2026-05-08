@@ -494,46 +494,80 @@ def pantalla_programador():
         pantalla_asignacion_grupos()
 
 
-# =====================================
-# SUBMÓDULO: ASIGNACIÓN DE GRUPOS
-# =====================================
-
 def pantalla_asignacion_grupos():
+
+    st.title("🧩 Asignación de Grupos - MovilGo")
+
+    repo = conectar_github()
+
+    if not repo:
+        st.error("❌ Sin conexión GitHub")
+        return
+
+    try:
+        contents = repo.get_contents("empleados.xlsx")
+        df = pd.read_excel(io.BytesIO(contents.decoded_content))
+    except Exception as e:
+        st.error(f"Error cargando empleados: {e}")
+        return
+
+    st.subheader("📋 Personal actual")
+    st.dataframe(df, use_container_width=True)
+
+    st.divider()
+
+    # ==========================
+    # CONFIGURACIÓN DE GRUPOS
+    # ==========================
+
+    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
+
+    # ==========================
+    # BOTÓN
+    # ==========================
 
     if st.button("🚀 Asignar grupos automáticamente"):
 
-    df = df.copy()
+        df = df.copy()
 
-    if "Grupo" not in df.columns:
-        df["Grupo"] = None
+        if "Grupo" not in df.columns:
+            df["Grupo"] = None
 
-    nombres = df["Nombre"].tolist()
-    random.shuffle(nombres)
+        nombres = df["Nombre"].tolist()
+        random.shuffle(nombres)
 
-    asignacion = {}
+        asignacion = {}
+
+        # ==========================
+        # LÓGICA SEGÚN CARGO
+        # ==========================
+
+        for i, nombre in enumerate(nombres):
+
+            cargo = df[df["Nombre"] == nombre]["Cargo"].values[0]
+
+            # 👷 TÉCNICOS
+            if "Tecnico" in str(cargo):
+                asignacion[nombre] = grupos_tecnicos[i % len(grupos_tecnicos)]
+
+            # 🚌 ABORDAJE
+            elif "Abordaje" in str(cargo):
+                asignacion[nombre] = grupos_abordaje[i % len(grupos_abordaje)]
+
+            else:
+                asignacion[nombre] = "SIN GRUPO"
+
+        df["Grupo"] = df["Nombre"].map(asignacion)
+
+        st.session_state["df_grupos"] = df
+
+        st.success("✅ Grupos asignados correctamente por tipo de operación")
 
     # ==========================
-    # LÓGICA SEGÚN CARGO
+    # RESULTADO
     # ==========================
 
-    for i, nombre in enumerate(nombres):
-
-        cargo = df[df["Nombre"] == nombre]["Cargo"].values[0]
-
-        # 👷 TÉCNICOS → 4 GRUPOS
-        if "Tecnico" in str(cargo):
-            asignacion[nombre] = grupos[i % 4]
-
-        # 🚌 ABORDAJE → 5 GRUPOS
-        elif "Abordaje" in str(cargo):
-            grupos_ab = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
-            asignacion[nombre] = grupos_ab[i % 5]
-
-        else:
-            asignacion[nombre] = "SIN GRUPO"
-
-    df["Grupo"] = df["Nombre"].map(asignacion)
-
-    st.session_state["df_grupos"] = df
-
-    st.success("✅ Grupos asignados correctamente por tipo de operación")
+    if "df_grupos" in st.session_state:
+        st.subheader("📊 Resultado")
+        st.dataframe(st.session_state["df_grupos"], use_container_width=True)
