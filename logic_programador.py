@@ -31,6 +31,7 @@ def conectar_github():
 # =====================================
 
 def modulo_personal():
+
     st.header("👥 Gestión de Plantilla y Asignación de Grupos")
 
     df_emp = cargar_excel("empleados.xlsx")
@@ -53,60 +54,51 @@ def modulo_personal():
     # =====================================================
 
     grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-
     grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
-# =====================================================
-# BOTÓN ASIGNACIÓN
-# =====================================================
+    # =====================================================
+    # BOTÓN ASIGNACIÓN
+    # =====================================================
 
-if st.button("🚀 Asignar grupos automáticamente"):
+    if st.button("🚀 Asignar grupos automáticamente"):
 
-    df = df_edit.copy()
+        df = df_edit.copy()
 
-    if "Grupo" not in df.columns:
-        df["Grupo"] = None
+        if "Grupo" not in df.columns:
+            df["Grupo"] = None
 
-    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
+        asignacion = {}
 
-    asignacion = {}
+        carga_tecnicos = {g: 0 for g in grupos_tecnicos}
+        carga_abordaje = {g: 0 for g in grupos_abordaje}
 
-    # contadores reales por grupo
-    carga_tecnicos = {g: 0 for g in grupos_tecnicos}
-    carga_abordaje = {g: 0 for g in grupos_abordaje}
+        for _, row in df.iterrows():
 
-    for _, row in df.iterrows():
+            nombre = row["Nombre"]
+            cargo = str(row["Cargo"])
 
-        nombre = row["Nombre"]
-        cargo = str(row["Cargo"])
+            # 👷 TÉCNICOS (incluye Master)
+            if any(x in cargo for x in ["Master", "Tecnico A", "Tecnico B"]):
 
-        # ==========================
-        # 👷 TÉCNICOS
-        # ==========================
-        if any(x in cargo for x in ["Master", "Tecnico A", "Tecnico B"]):
+                grupo = min(carga_tecnicos, key=carga_tecnicos.get)
+                asignacion[nombre] = grupo
+                carga_tecnicos[grupo] += 1
 
-            grupo = min(carga_tecnicos, key=carga_tecnicos.get)
-            asignacion[nombre] = grupo
-            carga_tecnicos[grupo] += 1
+            # 🚌 ABORDAJE
+            elif "Abordaje" in cargo:
 
-        # ==========================
-        # 🚌 ABORDAJE
-        # ==========================
-        elif "Abordaje" in cargo:
+                grupo = min(carga_abordaje, key=carga_abordaje.get)
+                asignacion[nombre] = grupo
+                carga_abordaje[grupo] += 1
 
-            grupo = min(carga_abordaje, key=carga_abordaje.get)
-            asignacion[nombre] = grupo
-            carga_abordaje[grupo] += 1
+            else:
+                asignacion[nombre] = "SIN GRUPO"
 
-        else:
-            asignacion[nombre] = "SIN GRUPO"
+        df["Grupo"] = df["Nombre"].map(asignacion)
 
-    df["Grupo"] = df["Nombre"].map(asignacion)
+        st.session_state["df_grupos"] = df
 
-    st.session_state["df_grupos"] = df
-
-    st.success("✅ Grupos asignados correctamente (balance real aplicado)")
+        st.success("✅ Grupos asignados correctamente (balance real aplicado)")
 
     # =====================================================
     # RESULTADO
@@ -114,9 +106,46 @@ if st.button("🚀 Asignar grupos automáticamente"):
 
     if "df_grupos" in st.session_state:
 
-        st.subheader("📊 Resultado de Asignación")
+        st.subheader("📊 Resultado")
 
         st.dataframe(st.session_state["df_grupos"], use_container_width=True)
+
+        if st.button("💾 Guardar en GitHub"):
+
+            repo = conectar_github()
+
+            if not repo:
+                st.error("❌ Sin conexión GitHub")
+                return
+
+            output = io.BytesIO()
+
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                st.session_state["df_grupos"].to_excel(writer, index=False)
+
+            contenido = output.getvalue()
+
+            try:
+                file = repo.get_contents("empleados.xlsx")
+
+                repo.update_file(
+                    "empleados.xlsx",
+                    "Actualización de grupos MovilGo",
+                    contenido,
+                    file.sha
+                )
+
+                st.success("✅ Guardado en GitHub")
+
+            except Exception:
+
+                repo.create_file(
+                    "empleados.xlsx",
+                    "Creación empleados MovilGo",
+                    contenido
+                )
+
+                st.success("✅ Archivo creado en GitHub")
 
         # =====================================================
         # GUARDAR EN GITHUB
