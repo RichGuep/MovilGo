@@ -309,29 +309,29 @@ def pantalla_abordaje():
             # identificar grupo descanso
             # ==============================
 
-            grupos_descanso = [
-                g for g, d in descansos.items()
-                if d == dia_semana
-            ]
+           grupos_descanso = [
+    g for g, d in descansos.items()
+    if d == dia_semana
+]
 
-            if not grupos_descanso:
-                st.error(
-                    f"No hay grupo configurado para descansar el día {dias_semana[dia_semana]}"
-                )
-                return
+if not grupos_descanso:
+    st.error(
+        f"No hay grupo configurado para descansar el día {dias_semana[dia_semana]}"
+    )
+    return
 
-            if len(grupos_descanso) > 1:
-                st.error(
-                    f"Hay varios grupos descansando el mismo día ({dias_semana[dia_semana]}). Cada grupo debe tener un día diferente."
-                )
-                return
+if len(grupos_descanso) > 1:
+    st.error(
+        f"Hay varios grupos descansando el mismo día ({dias_semana[dia_semana]}). Cada grupo debe tener un día diferente."
+    )
+    return
 
-            grupo_descanso = grupos_descanso[0]
+grupo_descanso = grupos_descanso[0]
 
-            grupos_activos = [
-                g for g in GRUPOS_AB
-                if g != grupo_descanso
-            ]
+grupos_activos = [
+    g for g in GRUPOS_AB
+    if g != grupo_descanso
+]
 
             # ==============================
             # rotación semanal
