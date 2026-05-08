@@ -19,31 +19,57 @@ GRUPOS = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
 TURNOS = ["T1", "T2", "T3", "DESC", "COMP"]
 
 # =========================================================
-# PERSONAL
+# CARGAR PERSONAL DESDE GITHUB
 # =========================================================
 
-PERSONAL = {
+def cargar_personal():
 
-    "Grupo 1": [
-        {"Nombre": "Juan Perez", "Cedula": "1010"},
-        {"Nombre": "Maria Lopez", "Cedula": "2020"}
-    ],
+    repo = conectar_github()
 
-    "Grupo 2": [
-        {"Nombre": "Carlos Ruiz", "Cedula": "3030"},
-        {"Nombre": "Ana Torres", "Cedula": "4040"}
-    ],
+    if not repo:
+        return {}
 
-    "Grupo 3": [
-        {"Nombre": "Pedro Diaz", "Cedula": "5050"},
-        {"Nombre": "Luisa Mora", "Cedula": "6060"}
-    ],
+    try:
 
-    "Grupo 4": [
-        {"Nombre": "Jorge Silva", "Cedula": "7070"},
-        {"Nombre": "Paula Rojas", "Cedula": "8080"}
-    ]
-}
+        contents = repo.get_contents(
+            "empleados.xlsx"
+        )
+
+        df_emp = pd.read_excel(
+            io.BytesIO(contents.decoded_content)
+        )
+
+        # Se espera estructura:
+        # Nombre | Cedula | Grupo
+
+        personal = {}
+
+        for grupo in GRUPOS:
+
+            grupo_df = df_emp[
+                df_emp["Grupo"] == grupo
+            ]
+
+            personal[grupo] = []
+
+            for _, row in grupo_df.iterrows():
+
+                personal[grupo].append({
+
+                    "Nombre": row["Nombre"],
+                    "Cedula": str(row["Cedula"])
+
+                })
+
+        return personal
+
+    except Exception as e:
+
+        st.error(
+            f"Error cargando empleados.xlsx: {e}"
+        )
+
+        return {}
 
 # =========================================================
 # GITHUB
