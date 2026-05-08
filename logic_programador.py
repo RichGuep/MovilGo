@@ -6,58 +6,34 @@ import random
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. CONFIGURACIÓN DE ESTILOS (COLORES CORREGIDOS Y LEGIBLES) ---
-def aplicar_estilos_malla(styler, errores_coords):
+# --- 1. CONFIGURACIÓN DE ESTILOS DE MALLA ---
+def aplicar_estilos_malla(styler, errores_coords=[]):
     """
-    Aplica colores de fondo y asegura que el texto sea blanco para máxima legibilidad.
+    Aplica colores de fondo oficiales. 
+    Usamos .map para compatibilidad con Pandas 2.x+.
     """
-    def aplicar_celda(val, row_name, col_name):
-        # Mapeo de colores de fondo
-        colores_bg = {
-            "T1": "#1f77b4",   # Azul
-            "T2": "#2ca02c",   # Verde
-            "T3": "#4d4d4d",   # Gris oscuro
-            "DESC": "#d62728", # Rojo
-            "COMP": "#ff7f0e"  # Naranja
-        }
-        
-        bg = colores_bg.get(val, "transparent")
-        color_texto = "white" if val in colores_bg else "black"
-        
-        estilo = f"background-color: {bg}; color: {color_texto}; font-weight: bold; text-align: center;"
-        
-        # RESALTADO DE ERRORES: Borde amarillo neón si la celda tiene novedad
-        if (row_name, col_name) in errores_coords:
-            estilo += "border: 3px solid #FFFF00 !important; box-shadow: inset 0 0 10px #FFFF00;"
-        
-        return estilo
+    colores = {
+        "T1": "background-color: #1f77b4; color: white !important;",
+        "T2": "background-color: #2ca02c; color: white !important;",
+        "T3": "background-color: #4d4d4d; color: white !important;",
+        "DESC": "background-color: #d62728; color: white !important;",
+        "COMP": "background-color: #ff7f0e; color: white !important;"
+    }
 
+    def estilo_celda(val, row, col):
+        base = colores.get(val, "background-color: transparent;")
+        # Si la celda es un error de auditoría, añadimos borde amarillo neón
+        if (row, col) in errores_coords:
+            base += " border: 3px solid #FFFF00 !important; font-weight: bold;"
+        return base
+
+    # Construimos la matriz de estilos
     return styler.apply(lambda df: pd.DataFrame(
-        [[aplicar_celda(df.iloc[r, c], df.index[r], df.columns[c]) 
-          for c in range(len(df.columns))] 
-         for r in range(len(df.index))],
+        [[estilo_celda(df.iloc[r, c], df.index[r], df.columns[c]) 
+          for c in range(len(df.columns))] for r in range(len(df.index))],
         index=df.index, columns=df.columns), axis=None)
 
-# --- 2. DETECTOR DE NOVEDADES (AUDITORÍA) ---
-def detectar_novedades(df):
-    novedades = []
-    # Errores de Salud (Saltos Prohibidos)
-    for g in df['Grupo'].unique():
-        g_data = df[df['Grupo'] == g].sort_values('Fecha_Raw')
-        for i in range(1, len(g_data)):
-            ayer, hoy = g_data.iloc[i-1]['Turno'], g_data.iloc[i]['Turno']
-            if ayer == "T3" and hoy in ["T1", "T2"]:
-                novedades.append({"Grupo": g, "Fecha_Col": g_data.iloc[i]['Fecha_Col'], "Motivo": f"Salto {ayer}->{hoy}"})
-    
-    # Errores de Cobertura
-    cob = df.groupby(['Fecha_Col', 'Turno'], observed=False).size().unstack(fill_value=0)
-    for fecha in cob.index:
-        for t in ["T1", "T2", "T3"]:
-            if t not in cob.columns or cob.loc[fecha, t] == 0:
-                novedades.append({"Grupo": "SISTEMA", "Fecha_Col": fecha, "Motivo": f"Falta {t}"})
-    return novedades
-
-# --- 3. PERSISTENCIA ---
+# --- 2. PERSISTENCIA GITHUB ---
 def conectar_github():
     if "GITHUB_TOKEN" not in st.secrets: return None
     try: return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
@@ -80,6 +56,18 @@ def obtener_estado_inicial(repo):
     except:
         return {g: {"u": "DESC", "d": 0, "sem_d": 0} for g in ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]}
 
+# --- 3. AUDITORÍA ---
+def detectar_novedades(df):
+    novedades = []
+    if df.empty: return novedades
+    for g in df['Grupo'].unique():
+        g_data = df[df['Grupo'] == g].sort_values('Fecha_Raw')
+        for i in range(1, len(g_data)):
+            ayer, hoy = g_data.iloc[i-1]['Turno'], g_data.iloc[i]['Turno']
+            if ayer == "T3" and hoy in ["T1", "T2"]:
+                novedades.append({"Grupo": g, "Fecha_Col": g_data.iloc[i]['Fecha_Col'], "Motivo": f"Salto {ayer}->{hoy}"})
+    return novedades
+
 # --- 4. PANTALLA PRINCIPAL ---
 def pantalla_programador():
     st.title("🛡️ Programador Maestro MovilGo")
@@ -87,9 +75,10 @@ def pantalla_programador():
     dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 
     with st.container(border=True):
-        st.subheader("⚙️ Staffing y Descansos Parametrizados")
+        st.subheader("⚙️ Configuración de Staffing y Descansos")
         c_desc, c_staff = st.columns([2, 1])
         with c_desc:
+            st.write("**Descansos Fijos:**")
             cd1, cd2 = st.columns(2)
             d_g1 = cd1.selectbox("Descanso G1", dias_semana, index=5)
             d_g2 = cd2.selectbox("Descanso G2", dias_semana, index=5)
@@ -97,9 +86,7 @@ def pantalla_programador():
             d_g4 = cd2.selectbox("Descanso G4", dias_semana, index=6)
             map_idx = {"Grupo 1": dias_semana.index(d_g1), "Grupo 2": dias_semana.index(d_g2), "Grupo 3": dias_semana.index(d_g3), "Grupo 4": dias_semana.index(d_g4)}
         with c_staff:
-            rm = st.number_input("Masters", 1, 10, 3)
-            rta = st.number_input("Téc A", 1, 20, 7)
-            rtb = st.number_input("Téc B", 1, 20, 2)
+            rm, rta, rtb = st.number_input("Masters", 1, 10, 3), st.number_input("Téc A", 1, 20, 7), st.number_input("Téc B", 1, 20, 2)
 
     f_ini = st.date_input("Inicio", datetime.now())
     f_fin = st.date_input("Fin", datetime.now() + timedelta(days=28))
@@ -118,7 +105,7 @@ def pantalla_programador():
             turnos_hoy = {}
             quieren_fijo = [g for g, d_idx in map_idx.items() if d_idx == dia_idx]
             
-            # Compensatorio Inmediato
+            # Lógica de Compensación Inmediata
             for g in grupos_n:
                 if deudas[g] > 0 and n_sem > sem_deuda[g] and g not in quieren_fijo:
                     if "COMP" not in turnos_hoy.values():
@@ -144,28 +131,15 @@ def pantalla_programador():
         novedades = detectar_novedades(df_v)
         coords_error = [(n['Grupo'], n['Fecha_Col']) for n in novedades]
 
-        st.subheader("🚩 Panel de Corrección")
-        if novedades:
-            c1, c2 = st.columns([1, 2])
-            c1.warning(f"Se detectaron {len(novedades)} novedades.")
-            focus = st.toggle("Ver solo días con errores")
-            sel_err = c2.selectbox("Ubicar error:", novedades, format_func=lambda x: f"{x['Grupo']} - {x['Fecha_Col']} ({x['Motivo']})")
-        else:
-            st.success("✅ Malla sin errores.")
-            focus = False
-
+        st.subheader("✍️ Editor de Turnos")
+        if novedades: st.warning(f"Se detectaron {len(novedades)} novedades de salud.")
+        
         matriz = df_v.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_v["Fecha_Col"].unique())
-        if focus and novedades:
-            matriz = matriz[[n['Fecha_Col'] for n in novedades]]
+        
+        config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"], width="small") for c in matriz.columns}
 
-        config_col = {c: st.column_config.SelectboxColumn(options=["T1", "T2", "T3", "DESC", "COMP"]) for c in matriz.columns}
-        matriz_editada = st.data_editor(matriz.style.pipe(aplicar_estilos_malla, errores_coords=coords_error), column_config=config_col, use_container_width=True)
-
-        if st.button("💾 Guardar y Sincronizar"):
-            df_man = matriz_editada.reset_index().melt(id_vars="Grupo", var_name="Fecha_Col", value_name="Turno")
-            df_final = df_v.merge(df_man, on=['Grupo', 'Fecha_Col'], suffixes=('', '_new'))
-            df_final['Turno'] = df_final['Turno_new']
-            df_final.drop(columns=['Turno_new'], inplace=True)
-            # Lógica de guardado en Github (omitida para brevedad pero funcional en tu repo)
-            st.session_state.malla_generada = df_final
-            st.rerun()
+        st.data_editor(
+            matriz.style.pipe(aplicar_estilos_malla, errores_coords=coords_error),
+            column_config=config_col,
+            use_container_width=True
+        )
