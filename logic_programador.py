@@ -36,6 +36,36 @@ def conectar_github():
         )
         return None
 
+def guardar_empleados(repo, df):
+
+    import io
+
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+
+    contenido = output.getvalue()
+
+    try:
+        file = repo.get_contents("empleados.xlsx")
+
+        repo.update_file(
+            "empleados.xlsx",
+            "Actualización de grupos MovilGo",
+            contenido,
+            file.sha
+        )
+
+    except Exception:
+        repo.create_file(
+            "empleados.xlsx",
+            "Creación archivo empleados MovilGo",
+            contenido
+        )
+
+
+
 # inicio pantallas
 
 def pantalla_tecnicos():
