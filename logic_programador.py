@@ -269,11 +269,19 @@ def pantalla_abordaje():
     fecha_fin = f2.date_input(...)
 
 
-if st.button("🚀 Generar Malla Inteligente", use_container_width=True):
+    if st.button("🚀 Generar Malla Abordaje", use_container_width=True):
 
-    resultados = []
+        resultados = []
 
-    fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
+        fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
+
+        tr_acumulado = {
+            nombre: 0
+            for grupo in personal_grupos.values()
+            for nombre in grupo
+        }
+
+        for fecha in fechas:
 
     # 🔷 estructura de control
     tr_counter = {nombre: 0 for grupo in personal_grupos.values() for nombre in grupo}
