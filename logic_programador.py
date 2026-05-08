@@ -542,3 +542,9 @@ def pantalla_programador():
         pantalla_tecnicos()
     else:
         pantalla_abordaje()
+
+    elif modulo == "🚍 Personal Abordaje":
+        pantalla_abordaje()
+
+    elif modulo == "🧩 Grupos":
+        pantalla_asignacion_grupos()
