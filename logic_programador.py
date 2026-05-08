@@ -482,6 +482,9 @@ def pantalla_programador():
         "📅 Programador Maestro MovilGo"
     )
 
+    # cargar personal desde empleados.xlsx
+    PERSONAL = cargar_personal()
+
     dias_semana = [
 
         "Lunes",
