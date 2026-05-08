@@ -265,80 +265,89 @@ def pantalla_abordaje():
         key="ab_ff"
     )
 
-# =========================================
-# BOTÓN GENERAR
-# =========================================
-
-if st.button("🚀 Generar Malla Abordaje", use_container_width=True):
+if st.button("🚀 Generar Malla Inteligente", use_container_width=True):
 
     resultados = []
 
     fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
 
-    # FIX: personal correcto (strings)
-    tr_acumulado = {
-        nombre: 0
-        for grupo in personal_grupos.values()
-        for nombre in grupo
-    }
+    # 🔷 estructura de control
+    tr_counter = {nombre: 0 for grupo in personal_grupos.values() for nombre in grupo}
+
+    personas = []
+    for g, lista in personal_grupos.items():
+        for nombre in lista:
+            personas.append({
+                "nombre": nombre,
+                "grupo": g
+            })
 
     for fecha in fechas:
 
         dia_semana = fecha.weekday()
         semana = fecha.isocalendar().week
 
+        # ======================
+        # DESCANSOS
+        # ======================
         grupo_descanso = None
-
         for g, d in descansos.items():
             if d == dia_semana:
                 grupo_descanso = g
                 break
 
         resultados.append({
-            "Fecha": fecha.strftime("%Y-%m-%d"),
+            "Fecha": fecha,
             "Grupo": grupo_descanso,
             "Turno": "DESC"
         })
 
-        grupos_activos = [g for g in GRUPOS_AB if g != grupo_descanso]
+        # ======================
+        # GRUPOS ACTIVOS
+        # ======================
+        activos = [g for g in GRUPOS_AB if g != grupo_descanso]
 
-        if semana % 2 == 0:
-            grupos_t1 = grupos_activos[:2]
-            grupos_t2 = grupos_activos[2:]
-        else:
-            grupos_t2 = grupos_activos[:2]
-            grupos_t1 = grupos_activos[2:]
+        t1, t2 = rotar_grupos(activos, semana)
 
-        for g in grupos_t1:
+        for g in t1:
             resultados.append({
-                "Fecha": fecha.strftime("%Y-%m-%d"),
+                "Fecha": fecha,
                 "Grupo": g,
                 "Turno": "T1"
             })
 
-        for g in grupos_t2:
+        for g in t2:
             resultados.append({
-                "Fecha": fecha.strftime("%Y-%m-%d"),
+                "Fecha": fecha,
                 "Grupo": g,
                 "Turno": "T2"
             })
 
-        personas_descanso = personal_grupos.get(grupo_descanso, [])
+        # ======================
+        # TR INTELIGENTE
+        # ======================
+        grupo_personas = [
+            p for p in personas if p["grupo"] == grupo_descanso
+        ]
 
-        if personas_descanso:
-            relevo = min(personas_descanso, key=lambda x: tr_acumulado[x])
-            tr_acumulado[relevo] += 1
+        if grupo_personas:
+            seleccion = min(
+                grupo_personas,
+                key=lambda p: tr_counter[p["nombre"]]
+            )
+
+            tr_counter[seleccion["nombre"]] += 1
 
             resultados.append({
-                "Fecha": fecha.strftime("%Y-%m-%d"),
+                "Fecha": fecha,
                 "Grupo": grupo_descanso,
                 "Turno": "TR",
-                "Persona_TR": relevo
+                "Persona_TR": seleccion["nombre"]
             })
 
     st.session_state["malla_abordaje"] = pd.DataFrame(resultados)
 
-    st.success("✅ Malla de abordaje generada correctamente")
+    st.success("✅ Malla optimizada generada correctamente")
 # =========================================
 # MOSTRAR MALLA
 # =========================================
