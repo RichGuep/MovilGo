@@ -6,7 +6,6 @@ import streamlit as st
 import pandas as pd
 import io
 import holidays
-import random
 
 from datetime import datetime, timedelta
 from github import Github
@@ -20,131 +19,31 @@ GRUPOS = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
 TURNOS = ["T1", "T2", "T3", "DESC", "COMP"]
 
 # =========================================================
-# CARGAR PERSONAL DESDE GITHUB
+# PERSONAL
 # =========================================================
 
-def cargar_personal():
+PERSONAL = {
 
-    repo = conectar_github()
+    "Grupo 1": [
+        {"Nombre": "Juan Perez", "Cedula": "1010"},
+        {"Nombre": "Maria Lopez", "Cedula": "2020"}
+    ],
 
-    if not repo:
-        return {}
+    "Grupo 2": [
+        {"Nombre": "Carlos Ruiz", "Cedula": "3030"},
+        {"Nombre": "Ana Torres", "Cedula": "4040"}
+    ],
 
-    try:
+    "Grupo 3": [
+        {"Nombre": "Pedro Diaz", "Cedula": "5050"},
+        {"Nombre": "Luisa Mora", "Cedula": "6060"}
+    ],
 
-        contents = repo.get_contents(
-            "empleados.xlsx"
-        )
-
-        df_emp = pd.read_excel(
-            io.BytesIO(contents.decoded_content)
-        )
-
-        # Se espera estructura:
-        # Nombre | Cedula | Grupo
-
-        personal = {}
-
-        for grupo in GRUPOS:
-
-            grupo_df = df_emp[
-                df_emp["Grupo"] == grupo
-            ]
-
-            personal[grupo] = []
-
-            for _, row in grupo_df.iterrows():
-
-                personal[grupo].append({
-
-                    "Nombre": row["Nombre"],
-                    "Cedula": str(row["Cedula"])
-
-                })
-
-        return personal
-
-    except Exception as e:
-
-        st.error(
-            f"Error cargando empleados.xlsx: {e}"
-        )
-
-        return {}
-
-
-def asignar_grupos_aleatorios(df_emp):
-
-    grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-
-    df_emp = df_emp.copy()
-
-    df_emp["Grupo"] = [
-        random.choice(grupos)
-        for _ in range(len(df_emp))
+    "Grupo 4": [
+        {"Nombre": "Jorge Silva", "Cedula": "7070"},
+        {"Nombre": "Paula Rojas", "Cedula": "8080"}
     ]
-
-    return df_emp
-
-
-def pantalla_personal():
-
-    st.title("👥 Gestión de Personal")
-
-    archivo = st.file_uploader(
-        "Subir empleados.xlsx",
-        type=["xlsx"]
-    )
-
-    if archivo:
-
-        df = pd.read_excel(archivo)
-
-        st.write("Vista previa:")
-        st.dataframe(df)
-
-        if st.button("🎲 Asignar grupos aleatorios"):
-
-            df = asignar_grupos_aleatorios(df)
-
-            st.success("Grupos asignados")
-
-            st.dataframe(df)
-
-            # guardar en GitHub
-            guardar_empleados_github(df)
-
-
-def guardar_empleados_github(df):
-
-    repo = conectar_github()
-
-    if not repo:
-        return
-
-    output = io.BytesIO()
-
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
-
-    try:
-        contents = repo.get_contents("empleados.xlsx")
-
-        repo.update_file(
-            "empleados.xlsx",
-            "Actualización empleados",
-            output.getvalue(),
-            contents.sha
-        )
-
-    except:
-        repo.create_file(
-            "empleados.xlsx",
-            "Creación empleados",
-            output.getvalue()
-        )
-
-    st.success("✅ Personal guardado en GitHub")
+}
 
 # =========================================================
 # GITHUB
@@ -560,7 +459,6 @@ def pantalla_programador():
     st.title(
         "📅 Programador Maestro MovilGo"
     )
-    PERSONAL = cargar_personal()
 
     dias_semana = [
 
