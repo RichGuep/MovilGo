@@ -491,7 +491,7 @@ def pantalla_abordaje():
 
     with h1:
         st.markdown("### T1")
-        st.time_input("Inicio T1", datetime.strptime("06:00", "%H:%M").time(), key="t1i")
+        st.time_input("Inicio T1", datetime.strpti("06:00", "%H:%M").time())
         st.time_input("Fin T1", datetime.strptime("14:00", "%H:%M").time(), key="t1f")
 
     with h2:
