@@ -66,28 +66,52 @@ def es_cambio_saludable(ayer, hoy):
     jerarquia = {"T1": 1, "T2": 2, "T3": 3}
     return jerarquia.get(hoy, 0) >= jerarquia.get(ayer, 0)
 
-def auditar_malla(df):
-    st.divider()
-    st.header("🛡️ Auditoría de Seguridad y Cobertura")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("🚩 Alertas de Salud (Saltos)")
-        alertas_salud = []
-        for g in df['Grupo'].unique():
-            g_data = df[df['Grupo'] == g].sort_values('Fecha_Raw')
-            for i in range(1, len(g_data)):
-                ayer = g_data.iloc[i-1]['Turno']
-                hoy = g_data.iloc[i]['Turno']
-                fecha = g_data.iloc[i]['Fecha_Col']
-                if not es_cambio_saludable(ayer, hoy):
-                    alertas_salud.append(f"**{g}**: Salto riesgoso de {ayer} a {hoy} el {fecha}")
-        
-        if alertas_salud:
-            for a in alertas_salud: st.error(a)
-        else:
-            st.success("✅ No se detectaron saltos prohibidos.")
+    # --- AUDITORÍA DE DESCANSOS ---
+    st.subheader("🛌 Auditoría de Descansos")
+
+    df_desc = df.copy()
+    df_desc['Semana'] = df_desc['Fecha_Raw'].dt.isocalendar().week
+
+    descansos = (
+        df_desc[df_desc['Turno'] == 'DESC']
+        .groupby(['Grupo', 'Semana'])
+        .size()
+        .reset_index(name='Descansos')
+    )
+
+    resumen_desc = (
+        descansos
+        .pivot(index='Grupo', columns='Semana', values='Descansos')
+        .fillna(0)
+        .astype(int)
+    )
+
+    st.dataframe(resumen_desc, use_container_width=True)
+
+    st.bar_chart(resumen_desc)
+
+    # ALERTAS
+    alertas_desc = []
+
+    for grupo in resumen_desc.index:
+        for semana in resumen_desc.columns:
+            valor = resumen_desc.loc[grupo, semana]
+
+            if valor == 0:
+                alertas_desc.append(
+                    f"🚨 {grupo} no tuvo descansos en semana {semana}"
+                )
+
+            if valor > 2:
+                alertas_desc.append(
+                    f"⚠️ {grupo} tuvo demasiados descansos ({valor}) en semana {semana}"
+                )
+
+    if alertas_desc:
+        for a in alertas_desc:
+            st.warning(a)
+    else:
+        st.success("✅ Distribución de descansos balanceada.")
 
     with col2:
         st.subheader("📡 Alertas de Cobertura")
@@ -130,9 +154,9 @@ def pantalla_programador():
 
         with col_staff:
             st.write("**Personal Requerido:**")
-            req_lider = st.number_input("Líderes", 1, 10, 1)
-            req_tecnico = st.number_input("Técnicos", 1, 20, 3)
-            req_aux = st.number_input("Auxiliares", 0, 20, 2)
+            req_lider = st.number_input("Master", 1, 10, 1)
+            req_tecnico = st.number_input("Técnicos A", 1, 20, 3)
+            req_aux = st.number_input("Técnicos B", 0, 20, 2)
 
     st.subheader("1. Definir Periodo")
     c_f1, c_f2 = st.columns(2)
