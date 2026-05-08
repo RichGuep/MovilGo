@@ -19,11 +19,9 @@ GRUPOS = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
 TURNOS = ["T1", "T2", "T3", "DESC", "COMP"]
 
 # =========================================================
-# CARGAR PERSONAL DESDE GITHUB
+# CARGAR PERSONAL DESDE empleados.xlsx
 # =========================================================
-
 def cargar_personal():
-
     repo = conectar_github()
 
     if not repo:
@@ -36,14 +34,15 @@ def cargar_personal():
             io.BytesIO(contents.decoded_content)
         )
 
-        # validar columnas
-        columnas_requeridas = ["Nombre", "Cedula", "Grupo"]
+        # limpiar nombres de columnas
+        df_emp.columns = df_emp.columns.str.strip()
 
-        for c in columnas_requeridas:
+        # validar columnas
+        columnas = ["Nombre", "Cedula", "Grupo"]
+
+        for c in columnas:
             if c not in df_emp.columns:
-                st.error(
-                    f"Falta columna '{c}' en empleados.xlsx"
-                )
+                st.error(f"Falta columna '{c}' en empleados.xlsx")
                 return {}
 
         personal = {}
@@ -59,20 +58,15 @@ def cargar_personal():
             for _, row in grupo_df.iterrows():
 
                 personal[grupo].append({
-                    "Nombre": row["Nombre"],
+                    "Nombre": str(row["Nombre"]),
                     "Cedula": str(row["Cedula"])
                 })
 
         return personal
 
     except Exception as e:
-
-        st.error(
-            f"Error cargando empleados.xlsx: {e}"
-        )
-
+        st.error(f"Error cargando empleados.xlsx: {e}")
         return {}
-
 # =========================================================
 # GITHUB
 # =========================================================
