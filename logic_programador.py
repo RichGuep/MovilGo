@@ -474,6 +474,70 @@ def pantalla_programador():
         horizontal=True
     )
 
+    def pantalla_asignacion_grupos():
+
+    st.title("🧩 Asignación de Grupos - MovilGo")
+
+    repo = conectar_github()
+
+    if not repo:
+        st.error("Sin conexión GitHub")
+        return
+
+    contents = repo.get_contents("empleados.xlsx")
+    df = pd.read_excel(io.BytesIO(contents.decoded_content))
+
+    st.subheader("📋 Personal sin asignación de grupos")
+
+    st.dataframe(df)
+
+    st.divider()
+
+    grupos = st.multiselect(
+        "Grupos disponibles",
+        ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"],
+        default=["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    )
+
+    modo = st.selectbox(
+        "Modo de asignación",
+        ["balanceado", "aleatorio"]
+    )
+
+    if st.button("🚀 Asignar grupos automáticamente"):
+
+        from logic.grouping.asignador_grupos import asignar_grupos
+
+        df_asignado = asignar_grupos(df, grupos, modo)
+
+        st.session_state["df_asignado"] = df_asignado
+
+        st.success("Grupos asignados correctamente")
+
+    if "df_asignado" in st.session_state:
+
+        st.subheader("📊 Resultado")
+
+        st.dataframe(st.session_state["df_asignado"])
+
+        if st.button("💾 Guardar en GitHub"):
+
+            output = io.BytesIO()
+
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                st.session_state["df_asignado"].to_excel(writer, index=False)
+
+            contents = repo.get_contents("empleados.xlsx")
+
+            repo.update_file(
+                "empleados.xlsx",
+                "Asignación de grupos automática",
+                output.getvalue(),
+                contents.sha
+            )
+
+            st.success("Guardado en GitHub")
+
     if modulo == "👷 Técnicos":
         pantalla_tecnicos()
     else:
