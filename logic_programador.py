@@ -41,6 +41,9 @@ def pantalla_tecnicos():
     st.title("👷 Programador Técnicos")
     st.success("Módulo técnicos funcionando")
 
+    
+def pantalla_abordaje():
+    
     st.header("🚍 Programador Personal Abordaje")
 
     dias_semana = [
