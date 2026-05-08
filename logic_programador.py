@@ -1,5 +1,6 @@
 import streamlit as st
 import io
+import random
 import pandas as pd
 from datetime import datetime, timedelta
 
