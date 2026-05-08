@@ -90,7 +90,7 @@ def pantalla_tecnicos():
             df_emp["Cargo"]
             .astype(str)
             .str.contains(
-                "Auxiliar de Abordaje",
+                "Auxiliar de Abordaje y Atención al Público ",
                 case=False,
                 na=False
             )
