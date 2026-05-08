@@ -469,30 +469,34 @@ def pantalla_abordaje():
 
 def pantalla_programador():
 
-    st.title("📅 Programador MovilGo")
-
     modulo = st.radio(
         "Selecciona módulo",
-        [
-            "👷 Técnicos",
-            "🚍 Personal Abordaje",
-            "🧩 Grupos"
-        ],
+        ["👷 Técnicos", "🚍 Personal Abordaje", "🧩 Grupos"],
         horizontal=True
     )
 
     # =========================
-    # ROUTER LIMPIO
+    # TÉCNICOS
     # =========================
-
     if modulo == "👷 Técnicos":
         pantalla_tecnicos()
 
+    # =========================
+    # ABORDAJE
+    # =========================
     elif modulo == "🚍 Personal Abordaje":
         pantalla_abordaje()
 
+    # =========================
+    # GRUPOS
+    # =========================
     elif modulo == "🧩 Grupos":
         pantalla_asignacion_grupos()
+
+
+# =====================================
+# SUBMÓDULO: ASIGNACIÓN DE GRUPOS
+# =====================================
 
 def pantalla_asignacion_grupos():
 
@@ -516,6 +520,8 @@ def pantalla_asignacion_grupos():
 
     st.divider()
 
+    st.subheader("⚙️ Parámetros de asignación")
+
     grupos = st.multiselect(
         "Grupos disponibles",
         ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"],
@@ -529,20 +535,19 @@ def pantalla_asignacion_grupos():
 
     if st.button("🚀 Asignar grupos automáticamente"):
 
-        import random
-
         df = df.copy()
 
         if "Grupo" not in df.columns:
             df["Grupo"] = None
 
         nombres = df["Nombre"].tolist()
+
         random.shuffle(nombres)
 
-        asignacion = {}
-
-        for i, nombre in enumerate(nombres):
-            asignacion[nombre] = grupos[i % len(grupos)]
+        asignacion = {
+            nombre: grupos[i % len(grupos)]
+            for i, nombre in enumerate(nombres)
+        }
 
         df["Grupo"] = df["Nombre"].map(asignacion)
 
@@ -572,13 +577,4 @@ def pantalla_asignacion_grupos():
 
             st.success("✅ Guardado en GitHub")
 
-    if modulo == "👷 Técnicos":
-        pantalla_tecnicos()
-    else:
-        pantalla_abordaje()
-
-    elif modulo == "🚍 Personal Abordaje":
-        pantalla_abordaje()
-
-    elif modulo == "🧩 Grupos":
-        pantalla_asignacion_grupos()
+  
