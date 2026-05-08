@@ -367,7 +367,21 @@ if st.button(
         "✅ Malla generada correctamente"
     )
 
+if "malla_abordaje" in st.session_state:
 
+    st.subheader(
+        "📋 Malla Personal Abordaje"
+    )
+
+    df = st.session_state[
+        "malla_abordaje"
+    ]
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        height=500
+    )
 
 
 
