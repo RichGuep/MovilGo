@@ -44,47 +44,80 @@ def pantalla_tecnicos():
     repo = conectar_github()
 
     if not repo:
-        st.error("No hay conexión con GitHub")
+        st.error("❌ No hay conexión con GitHub")
         return
 
-    # =========================================
-    # CARGA DE PERSONAL
-    # =========================================
+    # =====================================================
+    # CARGA SEGURA DE EXCEL
+    # =====================================================
 
     try:
-
         contents = repo.get_contents("empleados.xlsx")
-
         df = pd.read_excel(io.BytesIO(contents.decoded_content))
 
-        df.columns = df.columns.str.strip()
-
     except Exception as e:
-
-        st.error(f"Error cargando personal: {e}")
+        st.error(f"❌ Error cargando empleados.xlsx: {e}")
         return
 
-    # =========================================
-    # FILTROS
-    # =========================================
+    # =====================================================
+    # VALIDACIÓN BASE
+    # =====================================================
 
-    st.subheader("🔎 Filtros")
+    if df is None or df.empty:
+        st.warning("⚠️ No hay personal registrado en el sistema")
+        return
 
-    col1, col2, col3 = st.columns(3)
+    # normalizar columnas (CRÍTICO)
+    df.columns = df.columns.str.strip()
 
-    grupos = st.multiselect(
-        "Filtrar por grupo",
-        options=df["Grupo"].unique(),
-        default=df["Grupo"].unique()
-    )
+    # validar columnas mínimas
+    required_cols = ["Nombre", "Grupo", "Cargo"]
 
-    cargos = st.multiselect(
-        "Filtrar por cargo",
-        options=df["Cargo"].unique() if "Cargo" in df.columns else [],
-        default=df["Cargo"].unique() if "Cargo" in df.columns else []
-    )
+    for col in required_cols:
+        if col not in df.columns:
+            st.error(f"❌ Falta columna obligatoria: {col}")
+            st.write("Columnas disponibles:", list(df.columns))
+            return
 
-    df_f = df.copy()
+    # =====================================================
+    # FILTRO OPERATIVO POR CARGO (CLAVE DE TU SISTEMA)
+    # =====================================================
+
+    df_operativo = df[
+        df["Cargo"].astype(str).str.contains(
+            "Master|Tecnico A|Tecnico B",
+            case=False,
+            na=False
+        )
+    ].copy()
+
+    if df_operativo.empty:
+        st.warning("⚠️ No hay técnicos válidos (Master / Técnico A / Técnico B)")
+        return
+
+    # =====================================================
+    # FILTROS UI
+    # =====================================================
+
+    st.subheader("🔎 Filtros de Personal")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        grupos = st.multiselect(
+            "Filtrar por Grupo",
+            options=sorted(df_operativo["Grupo"].unique()),
+            default=list(df_operativo["Grupo"].unique())
+        )
+
+    with col2:
+        cargos = st.multiselect(
+            "Filtrar por Cargo",
+            options=sorted(df_operativo["Cargo"].unique()),
+            default=list(df_operativo["Cargo"].unique())
+        )
+
+    df_f = df_operativo.copy()
 
     if grupos:
         df_f = df_f[df_f["Grupo"].isin(grupos)]
@@ -92,23 +125,23 @@ def pantalla_tecnicos():
     if cargos:
         df_f = df_f[df_f["Cargo"].isin(cargos)]
 
-    # =========================================
-    # KPIs TÉCNICOS
-    # =========================================
+    # =====================================================
+    # KPIs OPERATIVOS
+    # =====================================================
 
-    st.subheader("📊 KPIs de Personal")
+    st.subheader("📊 KPIs de Fuerza Laboral")
 
     c1, c2, c3 = st.columns(3)
 
     c1.metric("Total Técnicos", len(df_f))
     c2.metric("Grupos Activos", df_f["Grupo"].nunique())
-    c3.metric("Cargos", df_f["Cargo"].nunique() if "Cargo" in df_f.columns else 0)
+    c3.metric("Tipos de Cargo", df_f["Cargo"].nunique())
 
     st.divider()
 
-    # =========================================
+    # =====================================================
     # DISTRIBUCIÓN POR GRUPO
-    # =========================================
+    # =====================================================
 
     st.subheader("📦 Distribución por Grupo")
 
@@ -116,72 +149,86 @@ def pantalla_tecnicos():
 
     st.bar_chart(dist.set_index("Grupo"))
 
-    # =========================================
-    # TABLA EDITABLE (CONTROL OPERATIVO)
-    # =========================================
+    st.dataframe(dist, use_container_width=True)
 
-    st.subheader("✍️ Gestión de Personal")
+    st.divider()
+
+    # =====================================================
+    # DISTRIBUCIÓN POR CARGO
+    # =====================================================
+
+    st.subheader("👷 Distribución por Cargo")
+
+    dist_cargo = df_f.groupby("Cargo").size().reset_index(name="Cantidad")
+
+    st.bar_chart(dist_cargo.set_index("Cargo"))
+
+    st.dataframe(dist_cargo, use_container_width=True)
+
+    st.divider()
+
+    # =====================================================
+    # TABLA EDITABLE (CONTROL OPERATIVO)
+    # =====================================================
+
+    st.subheader("✍️ Gestión de Personal (Editable)")
 
     df_edit = st.data_editor(
         df_f,
         use_container_width=True,
-        num_rows="dynamic"
+        num_rows="dynamic",
+        key="editor_tecnicos"
     )
 
-    # =========================================
-    # GUARDAR CAMBIOS
-    # =========================================
+    # =====================================================
+    # GUARDAR CAMBIOS EN GITHUB
+    # =====================================================
 
-    if st.button("💾 Guardar cambios de personal"):
+    if st.button("💾 Guardar cambios en empleados"):
 
         try:
-
             output = io.BytesIO()
 
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-
                 df_edit.to_excel(writer, index=False)
 
             try:
-
                 contents = repo.get_contents("empleados.xlsx")
 
                 repo.update_file(
                     "empleados.xlsx",
-                    "Actualización técnicos",
+                    "Actualización de técnicos (MovilGo)",
                     output.getvalue(),
                     contents.sha
                 )
 
             except:
-
                 repo.create_file(
                     "empleados.xlsx",
-                    "Creación empleados",
+                    "Creación empleados (MovilGo)",
                     output.getvalue()
                 )
 
-            st.success("✅ Personal actualizado correctamente")
+            st.success("✅ Personal actualizado correctamente en GitHub")
 
         except Exception as e:
+            st.error(f"❌ Error guardando: {e}")
 
-            st.error(f"Error guardando: {e}")
-
-    # =========================================
-    # ANALÍTICA SIMPLE POR TÉCNICO
-    # =========================================
+    # =====================================================
+    # ANALÍTICA SIMPLE DE CARGA
+    # =====================================================
 
     st.divider()
 
-    st.subheader("📈 Análisis de distribución")
+    st.subheader("📈 Análisis de carga operativa")
 
-    if st.checkbox("Ver distribución avanzada"):
+    if st.checkbox("Ver análisis de distribución avanzada"):
 
-        col = "Grupo"
+        carga = df_f.groupby(["Grupo", "Cargo"]).size().unstack(fill_value=0)
 
-        analisis = df_f.groupby(col).size()
+        st.bar_chart(carga)
 
-        st.bar_chart(analisis)
+        st.dataframe(carga)
 
     
 # =========================================================
