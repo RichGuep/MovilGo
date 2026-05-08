@@ -7,7 +7,7 @@ from github import Github
 
 # --- IMPORTACIÓN DEL MOTOR DE LÓGICA ---
 try:
-    from logic_programador import pantalla_programador
+   from logic_programador import pantalla_programador
 except ImportError:
     st.error("⚠️ No se encontró 'logic_programador.py'. Asegúrate de que ambos archivos estén en la misma carpeta.")
 
