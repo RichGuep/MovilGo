@@ -265,10 +265,14 @@ def pantalla_abordaje():
         key="ab_ff"
     )
 
-   # =========================================
-# GENERAR MALLA
 # =========================================
-if st.button("🚀 Generar Malla Abordaje"):
+# BOTÓN GENERAR
+# =========================================
+
+if st.button(
+    "🚀 Generar Malla Abordaje",
+    use_container_width=True
+):
 
     resultados = []
 
@@ -289,9 +293,7 @@ if st.button("🚀 Generar Malla Abordaje"):
         dia_semana = fecha.weekday()
         semana = fecha.isocalendar().week
 
-        # ====================================
-        # GRUPO EN DESCANSO
-        # ====================================
+        # identificar grupo descanso
         grupo_descanso = None
 
         for g, d in descansos.items():
@@ -299,26 +301,20 @@ if st.button("🚀 Generar Malla Abordaje"):
                 grupo_descanso = g
                 break
 
-        # ====================================
-        # PRIMERO GUARDAR DESCANSO
-        # ====================================
+        # guardar DESC
         resultados.append({
             "Fecha": fecha.strftime("%Y-%m-%d"),
             "Grupo": grupo_descanso,
             "Turno": "DESC"
         })
 
-        # ====================================
-        # GRUPOS ACTIVOS
-        # ====================================
+        # grupos activos
         grupos_activos = [
             g for g in GRUPOS_AB
             if g != grupo_descanso
         ]
 
-        # ====================================
-        # ROTACIÓN SEMANAL
-        # ====================================
+        # rotación semanal
         if semana % 2 == 0:
             grupos_t1 = grupos_activos[:2]
             grupos_t2 = grupos_activos[2:]
@@ -326,9 +322,7 @@ if st.button("🚀 Generar Malla Abordaje"):
             grupos_t2 = grupos_activos[:2]
             grupos_t1 = grupos_activos[2:]
 
-        # ====================================
-        # GUARDAR T1
-        # ====================================
+        # guardar T1
         for g in grupos_t1:
             resultados.append({
                 "Fecha": fecha.strftime("%Y-%m-%d"),
@@ -336,9 +330,7 @@ if st.button("🚀 Generar Malla Abordaje"):
                 "Turno": "T1"
             })
 
-        # ====================================
-        # GUARDAR T2
-        # ====================================
+        # guardar T2
         for g in grupos_t2:
             resultados.append({
                 "Fecha": fecha.strftime("%Y-%m-%d"),
@@ -346,9 +338,7 @@ if st.button("🚀 Generar Malla Abordaje"):
                 "Turno": "T2"
             })
 
-        # ====================================
-        # ASIGNAR TR
-        # ====================================
+        # asignar relevo TR
         personas_descanso = personal_grupos[
             grupo_descanso
         ]
@@ -371,19 +361,14 @@ if st.button("🚀 Generar Malla Abordaje"):
             "Persona_TR": relevo["Nombre"]
         })
 
-    # ====================================
-    # GUARDAR
-    # ====================================
-    df_resultado = pd.DataFrame(
+    st.session_state[
+        "malla_abordaje"
+    ] = pd.DataFrame(
         resultados
     )
 
-    st.session_state[
-        "malla_abordaje"
-    ] = df_resultado
-
     st.success(
-        "✅ Malla generada correctamente"
+        "✅ Malla de abordaje generada correctamente"
     )
 
     # ============================================
