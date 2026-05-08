@@ -3,6 +3,40 @@ import io
 import pandas as pd
 from datetime import datetime, timedelta
 
+from github import Github
+import streamlit as st
+
+# =====================================
+# CONEXIÓN GITHUB
+# =====================================
+
+def conectar_github():
+
+    try:
+        if "GITHUB_TOKEN" not in st.secrets:
+            st.error(
+                "❌ Token GITHUB_TOKEN no configurado"
+            )
+            return None
+
+        g = Github(
+            st.secrets["GITHUB_TOKEN"]
+        )
+
+        repo = g.get_repo(
+            "RichGuep/movilgo"
+        )
+
+        return repo
+
+    except Exception as e:
+        st.error(
+            f"Error GitHub: {e}"
+        )
+        return None
+
+# inicio pantallas
+
 def pantalla_tecnicos():
     st.title("👷 Programador Técnicos")
     st.success("Módulo técnicos funcionando")
