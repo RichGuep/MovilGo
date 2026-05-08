@@ -30,17 +30,21 @@ def cargar_personal():
         return {}
 
     try:
-
-        contents = repo.get_contents(
-            "empleados.xlsx"
-        )
+        contents = repo.get_contents("empleados.xlsx")
 
         df_emp = pd.read_excel(
             io.BytesIO(contents.decoded_content)
         )
 
-        # Se espera estructura:
-        # Nombre | Cedula | Grupo
+        # validar columnas
+        columnas_requeridas = ["Nombre", "Cedula", "Grupo"]
+
+        for c in columnas_requeridas:
+            if c not in df_emp.columns:
+                st.error(
+                    f"Falta columna '{c}' en empleados.xlsx"
+                )
+                return {}
 
         personal = {}
 
@@ -55,10 +59,8 @@ def cargar_personal():
             for _, row in grupo_df.iterrows():
 
                 personal[grupo].append({
-
                     "Nombre": row["Nombre"],
                     "Cedula": str(row["Cedula"])
-
                 })
 
         return personal
