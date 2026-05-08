@@ -269,23 +269,17 @@ def pantalla_abordaje():
 # BOTÓN GENERAR
 # =========================================
 
-if st.button(
-    "🚀 Generar Malla Abordaje",
-    use_container_width=True
-):
+if st.button("🚀 Generar Malla Abordaje", use_container_width=True):
 
     resultados = []
 
-    fechas = pd.date_range(
-        fecha_ini,
-        fecha_fin,
-        freq="D"
-    )
+    fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
 
+    # FIX: personal correcto (strings)
     tr_acumulado = {
-        p["Nombre"]: 0
+        nombre: 0
         for grupo in personal_grupos.values()
-        for p in grupo
+        for nombre in grupo
     }
 
     for fecha in fechas:
@@ -293,7 +287,6 @@ if st.button(
         dia_semana = fecha.weekday()
         semana = fecha.isocalendar().week
 
-        # identificar grupo descanso
         grupo_descanso = None
 
         for g, d in descansos.items():
@@ -301,20 +294,14 @@ if st.button(
                 grupo_descanso = g
                 break
 
-        # guardar DESC
         resultados.append({
             "Fecha": fecha.strftime("%Y-%m-%d"),
             "Grupo": grupo_descanso,
             "Turno": "DESC"
         })
 
-        # grupos activos
-        grupos_activos = [
-            g for g in GRUPOS_AB
-            if g != grupo_descanso
-        ]
+        grupos_activos = [g for g in GRUPOS_AB if g != grupo_descanso]
 
-        # rotación semanal
         if semana % 2 == 0:
             grupos_t1 = grupos_activos[:2]
             grupos_t2 = grupos_activos[2:]
@@ -322,7 +309,6 @@ if st.button(
             grupos_t2 = grupos_activos[:2]
             grupos_t1 = grupos_activos[2:]
 
-        # guardar T1
         for g in grupos_t1:
             resultados.append({
                 "Fecha": fecha.strftime("%Y-%m-%d"),
@@ -330,7 +316,6 @@ if st.button(
                 "Turno": "T1"
             })
 
-        # guardar T2
         for g in grupos_t2:
             resultados.append({
                 "Fecha": fecha.strftime("%Y-%m-%d"),
@@ -338,39 +323,22 @@ if st.button(
                 "Turno": "T2"
             })
 
-        # asignar relevo TR
-        personas_descanso = personal_grupos[
-            grupo_descanso
-        ]
+        personas_descanso = personal_grupos.get(grupo_descanso, [])
 
-        relevo = min(
-            personas_descanso,
-            key=lambda x: tr_acumulado[
-                x["Nombre"]
-            ]
-        )
+        if personas_descanso:
+            relevo = min(personas_descanso, key=lambda x: tr_acumulado[x])
+            tr_acumulado[relevo] += 1
 
-        tr_acumulado[
-            relevo["Nombre"]
-        ] += 1
+            resultados.append({
+                "Fecha": fecha.strftime("%Y-%m-%d"),
+                "Grupo": grupo_descanso,
+                "Turno": "TR",
+                "Persona_TR": relevo
+            })
 
-        resultados.append({
-            "Fecha": fecha.strftime("%Y-%m-%d"),
-            "Grupo": grupo_descanso,
-            "Turno": "TR",
-            "Persona_TR": relevo["Nombre"]
-        })
+    st.session_state["malla_abordaje"] = pd.DataFrame(resultados)
 
-    st.session_state[
-        "malla_abordaje"
-    ] = pd.DataFrame(
-        resultados
-    )
-
-    st.success(
-        "✅ Malla de abordaje generada correctamente"
-    )
-
+    st.success("✅ Malla de abordaje generada correctamente")
 # =========================================
 # MOSTRAR MALLA
 # =========================================
