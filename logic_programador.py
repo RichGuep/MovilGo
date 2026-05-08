@@ -494,6 +494,9 @@ def pantalla_programador():
     elif modulo == "🧩 Grupos":
         pantalla_asignacion_grupos()
 
+# =====================================
+# SUBMÓDULO: ASIGNACIÓN DE GRUPOS
+# =====================================
 
 def pantalla_asignacion_grupos():
 
@@ -505,83 +508,90 @@ def pantalla_asignacion_grupos():
         st.error("❌ Sin conexión GitHub")
         return
 
-    try:
-        contents = repo.get_contents("empleados.xlsx")
-        df = pd.read_excel(io.BytesIO(contents.decoded_content))
-    except Exception as e:
-        st.error(f"Error cargando empleados: {e}")
-        return
+    contents = repo.get_contents("empleados.xlsx")
+    df = pd.read_excel(io.BytesIO(contents.decoded_content))
 
     st.subheader("📋 Personal actual")
     st.dataframe(df, use_container_width=True)
 
-    st.divider()
-
     # ==========================
-    # CONFIGURACIÓN DE GRUPOS
+    # GRUPOS
     # ==========================
 
-    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
+    grupos_tecnicos = ["T1", "T2", "T3", "T4"]
+    grupos_abordaje = ["A", "B", "C", "D", "E"]
+
+    # ==========================
+    # BOTÓN
+    # ==========================
 
     if st.button("🚀 Asignar grupos automáticamente"):
 
-    df = df.copy()
-
-    if "Grupo" not in df.columns:
+        df = df.copy()
         df["Grupo"] = None
 
-    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
+        # separar por tipo
+        tecnicos_a = df[df["Cargo"].str.contains("Tecnico A", na=False)].sample(frac=1).reset_index(drop=True)
+        tecnicos_b = df[df["Cargo"].str.contains("Tecnico B", na=False)].sample(frac=1).reset_index(drop=True)
+        masters = df[df["Cargo"].str.contains("Master", na=False)].sample(frac=1).reset_index(drop=True)
 
-    # ==========================
-    # SEPARAR POR CARGO
-    # ==========================
+        abordaje = df[df["Cargo"].str.contains("Abordaje", na=False)].sample(frac=1).reset_index(drop=True)
 
-    tech_A = df[df["Cargo"].str.contains("Tecnico A", na=False)].copy()
-    tech_B = df[df["Cargo"].str.contains("Tecnico B", na=False)].copy()
-    masters = df[df["Cargo"].str.contains("Master", na=False)].copy()
+        asignacion = {}
 
-    otros = df[~df.index.isin(tech_A.index)
-               & ~df.index.isin(tech_B.index)
-               & ~df.index.isin(masters.index)].copy()
+        # ==========================
+        # TECNICOS (4 GRUPOS)
+        # ==========================
 
-    asignacion = {}
+        grupos_tecnicos_data = {g: [] for g in grupos_tecnicos}
 
-    # ==========================
-    # FUNCIÓN DE ASIGNACIÓN POR CUPOS
-    # ==========================
-
-    def repartir(df_subset, grupos, cupo_por_grupo):
+        # 7 Técnico A por grupo
         idx = 0
-        for _, row in df_subset.iterrows():
-            grupo = grupos[idx // cupo_por_grupo]
-            asignacion[row["Nombre"]] = grupo
+        for _, row in tecnicos_a.iterrows():
+            grupo = grupos_tecnicos[idx % 4]
+            grupos_tecnicos_data[grupo].append((row["Nombre"], "Tecnico A"))
             idx += 1
 
+        # 3 Técnico B por grupo
+        idx = 0
+        for _, row in tecnicos_b.iterrows():
+            grupo = grupos_tecnicos[idx % 4]
+            grupos_tecnicos_data[grupo].append((row["Nombre"], "Tecnico B"))
+            idx += 1
+
+        # 2 Master por grupo
+        idx = 0
+        for _, row in masters.iterrows():
+            grupo = grupos_tecnicos[idx % 4]
+            grupos_tecnicos_data[grupo].append((row["Nombre"], "Master"))
+            idx += 1
+
+        # guardar asignación técnicos
+        for grupo, lista in grupos_tecnicos_data.items():
+            for nombre, _ in lista:
+                asignacion[nombre] = grupo
+
+        # ==========================
+        # ABORDAJE (5 GRUPOS)
+        # ==========================
+
+        for i, row in enumerate(abordaje.itertuples()):
+            asignacion[row.Nombre] = grupos_abordaje[i % 5]
+
+        # ==========================
+        # MAPEO FINAL
+        # ==========================
+
+        df["Grupo"] = df["Nombre"].map(asignacion)
+
+        st.session_state["df_grupos"] = df
+
+        st.success("✅ Grupos asignados correctamente (Técnicos + Abordaje)")
+
     # ==========================
-    # REGLA TÉCNICOS
+    # RESULTADO
     # ==========================
 
-    repartir(tech_A, grupos_tecnicos, 7)
-    repartir(tech_B, grupos_tecnicos, 3)
-    repartir(masters, grupos_tecnicos, 2)
-
-    # ==========================
-    # ABORDAJE
-    # ==========================
-
-    random.shuffle(otros["Nombre"].tolist() if len(otros) > 0 else [])
-
-    for i, (_, row) in enumerate(otros.iterrows()):
-        asignacion[row["Nombre"]] = grupos_abordaje[i % len(grupos_abordaje)]
-
-    # ==========================
-    # APLICAR RESULTADO
-    # ==========================
-
-    df["Grupo"] = df["Nombre"].map(asignacion)
-
-    st.session_state["df_grupos"] = df
-
-    st.success("✅ Grupos asignados con estructura 7-3-2 por técnico")
+    if "df_grupos" in st.session_state:
+        st.subheader("📊 Resultado")
+        st.dataframe(st.session_state["df_grupos"], use_container_width=True)
