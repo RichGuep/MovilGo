@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 import io
 import holidays
+import random
 
 from datetime import datetime, timedelta
 from github import Github
@@ -70,6 +71,80 @@ def cargar_personal():
         )
 
         return {}
+
+
+def asignar_grupos_aleatorios(df_emp):
+
+    grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+
+    df_emp = df_emp.copy()
+
+    df_emp["Grupo"] = [
+        random.choice(grupos)
+        for _ in range(len(df_emp))
+    ]
+
+    return df_emp
+
+
+def pantalla_personal():
+
+    st.title("👥 Gestión de Personal")
+
+    archivo = st.file_uploader(
+        "Subir empleados.xlsx",
+        type=["xlsx"]
+    )
+
+    if archivo:
+
+        df = pd.read_excel(archivo)
+
+        st.write("Vista previa:")
+        st.dataframe(df)
+
+        if st.button("🎲 Asignar grupos aleatorios"):
+
+            df = asignar_grupos_aleatorios(df)
+
+            st.success("Grupos asignados")
+
+            st.dataframe(df)
+
+            # guardar en GitHub
+            guardar_empleados_github(df)
+
+
+def guardar_empleados_github(df):
+
+    repo = conectar_github()
+
+    if not repo:
+        return
+
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+
+    try:
+        contents = repo.get_contents("empleados.xlsx")
+
+        repo.update_file(
+            "empleados.xlsx",
+            "Actualización empleados",
+            output.getvalue(),
+            contents.sha
+        )
+
+    except:
+        repo.create_file(
+            "empleados.xlsx",
+            "Creación empleados",
+            output.getvalue()
+        )
+
+    st.success("✅ Personal guardado en GitHub")
 
 # =========================================================
 # GITHUB
