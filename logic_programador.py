@@ -426,12 +426,12 @@ def pantalla_programador():
 
         hora_inicio_t1 = st.time_input(
             "Inicio T1",
-            value=datetime.strptime("06:00", "%H:%M").time()
+            value=datetime.strptime("05:30", "%H:%M").time()
         )
 
         hora_fin_t1 = st.time_input(
             "Fin T1",
-            value=datetime.strptime("14:00", "%H:%M").time()
+            value=datetime.strptime("12:50", "%H:%M").time()
         )
 
     with h2:
@@ -440,12 +440,12 @@ def pantalla_programador():
 
         hora_inicio_t2 = st.time_input(
             "Inicio T2",
-            value=datetime.strptime("14:00", "%H:%M").time()
+            value=datetime.strptime("13:30", "%H:%M").time()
         )
 
         hora_fin_t2 = st.time_input(
             "Fin T2",
-            value=datetime.strptime("22:00", "%H:%M").time()
+            value=datetime.strptime("20:50", "%H:%M").time()
         )
 
     with h3:
@@ -454,12 +454,12 @@ def pantalla_programador():
 
         hora_inicio_t3 = st.time_input(
             "Inicio T3",
-            value=datetime.strptime("22:00", "%H:%M").time()
+            value=datetime.strptime("21:30", "%H:%M").time()
         )
 
         hora_fin_t3 = st.time_input(
             "Fin T3",
-            value=datetime.strptime("06:00", "%H:%M").time()
+            value=datetime.strptime("28:50", "%H:%M").time()
         )
 
     HORARIOS = {
