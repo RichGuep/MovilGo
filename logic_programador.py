@@ -19,31 +19,28 @@ GRUPOS = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
 TURNOS = ["T1", "T2", "T3", "DESC", "COMP"]
 
 # =========================================================
-# CARGAR PERSONAL DESDE empleados.xlsx
+# CARGAR PERSONAL DESDE GITHUB
 # =========================================================
+
 def cargar_personal():
+
     repo = conectar_github()
 
     if not repo:
         return {}
 
     try:
-        contents = repo.get_contents("empleados.xlsx")
+
+        contents = repo.get_contents(
+            "empleados.xlsx"
+        )
 
         df_emp = pd.read_excel(
             io.BytesIO(contents.decoded_content)
         )
 
-        # limpiar nombres de columnas
-        df_emp.columns = df_emp.columns.str.strip()
-
-        # validar columnas
-        columnas = ["Nombre", "Cedula", "Grupo"]
-
-        for c in columnas:
-            if c not in df_emp.columns:
-                st.error(f"Falta columna '{c}' en empleados.xlsx")
-                return {}
+        # Se espera estructura:
+        # Nombre | Cedula | Grupo
 
         personal = {}
 
@@ -58,15 +55,22 @@ def cargar_personal():
             for _, row in grupo_df.iterrows():
 
                 personal[grupo].append({
-                    "Nombre": str(row["Nombre"]),
+
+                    "Nombre": row["Nombre"],
                     "Cedula": str(row["Cedula"])
+
                 })
 
         return personal
 
     except Exception as e:
-        st.error(f"Error cargando empleados.xlsx: {e}")
+
+        st.error(
+            f"Error cargando empleados.xlsx: {e}"
+        )
+
         return {}
+
 # =========================================================
 # GITHUB
 # =========================================================
@@ -482,13 +486,8 @@ def pantalla_programador():
         "📅 Programador Maestro MovilGo"
     )
 
-    PERSONAL = cargar_personal()
+    dias_semana = [
 
-    submodulo = st.radio(
-        "Seleccione módulo",
-        [
-            if submodulo == "👷 Programación Técnicos":
-        dias_semana = [
         "Lunes",
         "Martes",
         "Miércoles",
@@ -496,35 +495,8 @@ def pantalla_programador():
         "Viernes",
         "Sábado",
         "Domingo"
+
     ]
-
-    with st.container(border=True):
-
-
-        
-         elif submodulo == "🚍 Personal Abordaje":
-
-    st.subheader(
-        "🚍 Programador Personal Abordaje"
-    )
-
-    st.info(
-        "Aquí construiremos la lógica de programación para el personal de abordaje."
-    )
-
-    st.write(
-        "Próximamente configuraremos:"
-    )
-
-    st.markdown("""
-    - Cantidad de personal requerido por día
-    - Horarios de abordaje
-    - Puntos o estaciones
-    - Rotación de descansos
-    - Cobertura mínima
-    - Reemplazos automáticos
-    - Auditoría de cobertura
-    """)
 
     # =====================================================
     # CONFIG
