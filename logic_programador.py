@@ -87,13 +87,11 @@ def pantalla_tecnicos():
 
         # Filtrar auxiliares de abordaje
         df_ab = df_emp[
-            df_emp["Cargo"]
-            .astype(str)
-            .str.contains(
-                "Auxiliar de Abordaje y Atención al Público ",
-                case=False,
-                na=False
-            )
+    df_emp["Cargo"]
+    .str.contains(
+        "Abordaje",
+        na=False
+    )
         ]
 
         if df_ab.empty:
