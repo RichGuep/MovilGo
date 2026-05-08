@@ -524,51 +524,64 @@ def pantalla_asignacion_grupos():
     grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
-    # ==========================
-    # BOTÓN
-    # ==========================
-
     if st.button("🚀 Asignar grupos automáticamente"):
 
-        df = df.copy()
+    df = df.copy()
 
-        if "Grupo" not in df.columns:
-            df["Grupo"] = None
+    if "Grupo" not in df.columns:
+        df["Grupo"] = None
 
-        nombres = df["Nombre"].tolist()
-        random.shuffle(nombres)
-
-        asignacion = {}
-
-        # ==========================
-        # LÓGICA SEGÚN CARGO
-        # ==========================
-
-        for i, nombre in enumerate(nombres):
-
-            cargo = df[df["Nombre"] == nombre]["Cargo"].values[0]
-
-            # 👷 TÉCNICOS
-            if "Tecnico" in str(cargo):
-                asignacion[nombre] = grupos_tecnicos[i % len(grupos_tecnicos)]
-
-            # 🚌 ABORDAJE
-            elif "Abordaje" in str(cargo):
-                asignacion[nombre] = grupos_abordaje[i % len(grupos_abordaje)]
-
-            else:
-                asignacion[nombre] = "SIN GRUPO"
-
-        df["Grupo"] = df["Nombre"].map(asignacion)
-
-        st.session_state["df_grupos"] = df
-
-        st.success("✅ Grupos asignados correctamente por tipo de operación")
+    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
     # ==========================
-    # RESULTADO
+    # SEPARAR POR CARGO
     # ==========================
 
-    if "df_grupos" in st.session_state:
-        st.subheader("📊 Resultado")
-        st.dataframe(st.session_state["df_grupos"], use_container_width=True)
+    tech_A = df[df["Cargo"].str.contains("Tecnico A", na=False)].copy()
+    tech_B = df[df["Cargo"].str.contains("Tecnico B", na=False)].copy()
+    masters = df[df["Cargo"].str.contains("Master", na=False)].copy()
+
+    otros = df[~df.index.isin(tech_A.index)
+               & ~df.index.isin(tech_B.index)
+               & ~df.index.isin(masters.index)].copy()
+
+    asignacion = {}
+
+    # ==========================
+    # FUNCIÓN DE ASIGNACIÓN POR CUPOS
+    # ==========================
+
+    def repartir(df_subset, grupos, cupo_por_grupo):
+        idx = 0
+        for _, row in df_subset.iterrows():
+            grupo = grupos[idx // cupo_por_grupo]
+            asignacion[row["Nombre"]] = grupo
+            idx += 1
+
+    # ==========================
+    # REGLA TÉCNICOS
+    # ==========================
+
+    repartir(tech_A, grupos_tecnicos, 7)
+    repartir(tech_B, grupos_tecnicos, 3)
+    repartir(masters, grupos_tecnicos, 2)
+
+    # ==========================
+    # ABORDAJE
+    # ==========================
+
+    random.shuffle(otros["Nombre"].tolist() if len(otros) > 0 else [])
+
+    for i, (_, row) in enumerate(otros.iterrows()):
+        asignacion[row["Nombre"]] = grupos_abordaje[i % len(grupos_abordaje)]
+
+    # ==========================
+    # APLICAR RESULTADO
+    # ==========================
+
+    df["Grupo"] = df["Nombre"].map(asignacion)
+
+    st.session_state["df_grupos"] = df
+
+    st.success("✅ Grupos asignados con estructura 7-3-2 por técnico")
