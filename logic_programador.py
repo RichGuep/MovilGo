@@ -42,9 +42,20 @@ def pantalla_tecnicos():
     st.success("Módulo técnicos funcionando")
 
     
+# =========================================================
+# PERSONAL ABORDAJE
+# =========================================================
 def pantalla_abordaje():
-    
-    st.header("🚍 Programador Personal Abordaje")
+
+    st.header("🚌 Programador Personal Abordaje")
+
+    GRUPOS_AB = [
+        "Grupo A",
+        "Grupo B",
+        "Grupo C",
+        "Grupo D",
+        "Grupo E"
+    ]
 
     dias_semana = [
         "Lunes",
@@ -56,14 +67,13 @@ def pantalla_abordaje():
         "Domingo"
     ]
 
-    # =========================================
-    # CARGAR PERSONAL ABORDAJE
-    # =========================================
+    # ============================================
+    # CARGAR PERSONAL DESDE empleados.xlsx
+    # ============================================
 
     repo = conectar_github()
 
     if not repo:
-        st.error("No se pudo conectar a GitHub.")
         return
 
     try:
@@ -75,26 +85,15 @@ def pantalla_abordaje():
 
         df_emp.columns = df_emp.columns.str.strip()
 
-        columnas = [
-            "Nombre",
-            "Cedula",
-            "Cargo"
-        ]
-
-        for c in columnas:
-            if c not in df_emp.columns:
-                st.error(
-                    f"Falta columna '{c}' en empleados.xlsx"
-                )
-                return
-
-        # Filtrar auxiliares de abordaje
+        # Filtrar personal de abordaje por Cargo
         df_ab = df_emp[
-    df_emp["Cargo"]
-    .str.contains(
-        "Abordaje",
-        na=False
-    )
+            df_emp["Cargo"]
+            .astype(str)
+            .str.contains(
+                "Auxiliar de Abordaje",
+                case=False,
+                na=False
+            )
         ]
 
         if df_ab.empty:
@@ -113,9 +112,26 @@ def pantalla_abordaje():
         )
         return
 
-    # =========================================
+    # ============================================
+    # CREAR GRUPOS AUTOMÁTICOS
+    # ============================================
+
+    personal_grupos = {}
+
+    nombres = list(df_ab["Nombre"])
+
+    for i, grupo in enumerate(GRUPOS_AB):
+
+        inicio = i * 5
+        fin = inicio + 5
+
+        personal_grupos[grupo] = nombres[
+            inicio:fin
+        ]
+
+    # ============================================
     # PARAMETRIZADOR DESCANSOS
-    # =========================================
+    # ============================================
 
     st.subheader(
         "📅 Parametrizador de Descansos"
@@ -126,125 +142,37 @@ def pantalla_abordaje():
     d_a = c1.selectbox(
         "Grupo A",
         dias_semana,
-        index=0
+        index=0,
+        key="ab_a"
     )
 
     d_b = c2.selectbox(
         "Grupo B",
         dias_semana,
-        index=1
+        index=1,
+        key="ab_b"
     )
 
     d_c = c1.selectbox(
         "Grupo C",
         dias_semana,
-        index=2
+        index=2,
+        key="ab_c"
     )
 
     d_d = c2.selectbox(
         "Grupo D",
         dias_semana,
-        index=3
+        index=3,
+        key="ab_d"
     )
 
     d_e = c1.selectbox(
         "Grupo E",
         dias_semana,
-        index=4
+        index=4,
+        key="ab_e"
     )
-
-    # =========================================
-    # HORARIOS
-    # =========================================
-
-    st.subheader("⏰ Horarios")
-
-    h1, h2, h3 = st.columns(3)
-
-    with h1:
-        st.markdown("### T1")
-        st.time_input(
-            "Inicio T1",
-            datetime.strptime(
-                "06:00",
-                "%H:%M"
-            ).time()
-        )
-        st.time_input(
-            "Fin T1",
-            datetime.strptime(
-                "14:00",
-                "%H:%M"
-            ).time()
-        )
-
-    with h2:
-        st.markdown("### T2")
-        st.time_input(
-            "Inicio T2",
-            datetime.strptime(
-                "14:00",
-                "%H:%M"
-            ).time()
-        )
-        st.time_input(
-            "Fin T2",
-            datetime.strptime(
-                "22:00",
-                "%H:%M"
-            ).time()
-        )
-
-    with h3:
-        st.markdown("### TR")
-        st.time_input(
-            "Inicio TR",
-            datetime.strptime(
-                "10:00",
-                "%H:%M"
-            ).time()
-        )
-        st.time_input(
-            "Fin TR",
-            datetime.strptime(
-                "18:00",
-                "%H:%M"
-            ).time()
-        )
-
-    # =========================================
-    # PERIODO
-    # =========================================
-
-    st.subheader("📆 Periodo")
-
-    f1, f2 = st.columns(2)
-
-    f1.date_input(
-        "Inicio",
-        datetime.now()
-    )
-
-    f2.date_input(
-        "Fin",
-        datetime.now() + timedelta(days=14)
-    )
-
-if st.button("🚀 Generar Malla Abordaje"):
-
-    # =====================================
-    # CREAR 5 GRUPOS DE 5 PERSONAS
-    # =====================================
-
-    personal = df_ab["Nombre"].tolist()
-
-    grupos = {
-        "Grupo A": personal[0:5],
-        "Grupo B": personal[5:10],
-        "Grupo C": personal[10:15],
-        "Grupo D": personal[15:20],
-        "Grupo E": personal[20:25]
-    }
 
     descansos = {
         "Grupo A": dias_semana.index(d_a),
@@ -254,129 +182,254 @@ if st.button("🚀 Generar Malla Abordaje"):
         "Grupo E": dias_semana.index(d_e)
     }
 
-    resultados = []
+    # ============================================
+    # HORARIOS
+    # ============================================
 
-    fecha_actual = f1.date_input(
-        "tmp_inicio",
-        datetime.now(),
-        key="hidden1"
-    )
+    st.subheader("⏰ Horarios")
 
-    fecha_final = f2.date_input(
-        "tmp_fin",
-        datetime.now() + timedelta(days=14),
-        key="hidden2"
-    )
+    h1, h2, h3 = st.columns(3)
 
-    fechas = [
-        fecha_actual + timedelta(days=x)
-        for x in range(
-            (fecha_final - fecha_actual).days + 1
+    with h1:
+
+        st.markdown("### T1")
+
+        inicio_t1 = st.time_input(
+            "Inicio T1",
+            datetime.strptime(
+                "06:00",
+                "%H:%M"
+            ).time(),
+            key="t1i"
         )
-    ]
 
-    tr_contador = {
-        persona: 0
-        for persona in personal
-    }
+        fin_t1 = st.time_input(
+            "Fin T1",
+            datetime.strptime(
+                "14:00",
+                "%H:%M"
+            ).time(),
+            key="t1f"
+        )
 
-    for fecha in fechas:
+    with h2:
 
-        dia = fecha.weekday()
+        st.markdown("### T2")
 
-        semana = fecha.isocalendar()[1]
+        inicio_t2 = st.time_input(
+            "Inicio T2",
+            datetime.strptime(
+                "14:00",
+                "%H:%M"
+            ).time(),
+            key="t2i"
+        )
 
-        grupo_descanso = None
+        fin_t2 = st.time_input(
+            "Fin T2",
+            datetime.strptime(
+                "22:00",
+                "%H:%M"
+            ).time(),
+            key="t2f"
+        )
 
-        for g, d in descansos.items():
-            if d == dia:
-                grupo_descanso = g
-                break
+    with h3:
 
-        grupos_activos = [
-            g for g in grupos
-            if g != grupo_descanso
+        st.markdown("### TR")
+
+        inicio_tr = st.time_input(
+            "Inicio TR",
+            datetime.strptime(
+                "10:00",
+                "%H:%M"
+            ).time(),
+            key="tri"
+        )
+
+        fin_tr = st.time_input(
+            "Fin TR",
+            datetime.strptime(
+                "18:00",
+                "%H:%M"
+            ).time(),
+            key="trf"
+        )
+
+    # ============================================
+    # PERIODO
+    # ============================================
+
+    st.subheader("📆 Periodo")
+
+    f1, f2 = st.columns(2)
+
+    fecha_ini = f1.date_input(
+        "Inicio",
+        datetime.now(),
+        key="ab_fi"
+    )
+
+    fecha_fin = f2.date_input(
+        "Fin",
+        datetime.now() + timedelta(days=14),
+        key="ab_ff"
+    )
+
+    # ============================================
+    # BOTÓN GENERAR
+    # ============================================
+
+    if st.button(
+        "🚀 Generar Malla Abordaje"
+    ):
+
+        resultados = []
+
+        fechas = [
+            fecha_ini + timedelta(days=x)
+            for x in range(
+                (fecha_fin - fecha_ini).days + 1
+            )
         ]
 
-        # rotación semanal
-        if semana % 2 == 0:
-            grupos_t1 = grupos_activos[:2]
-            grupos_t2 = grupos_activos[2:]
-        else:
-            grupos_t2 = grupos_activos[:2]
-            grupos_t1 = grupos_activos[2:]
+        conteo_tr = {}
 
-        # asignar grupos T1
-        for g in grupos_t1:
-            for persona in grupos[g]:
+        for grupo in GRUPOS_AB:
+            for persona in personal_grupos[grupo]:
+                conteo_tr[persona] = 0
+
+        for fecha in fechas:
+
+            fecha_dt = pd.to_datetime(fecha)
+
+            dia_semana = fecha_dt.weekday()
+
+            semana = fecha_dt.isocalendar()[1]
+
+            # ==============================
+            # identificar grupo descanso
+            # ==============================
+
+            grupo_descanso = None
+
+            for g, d in descansos.items():
+                if d == dia_semana:
+                    grupo_descanso = g
+
+            grupos_activos = [
+                g for g in GRUPOS_AB
+                if g != grupo_descanso
+            ]
+
+            # ==============================
+            # rotación semanal
+            # ==============================
+
+            if semana % 2 == 0:
+                grupos_t1 = grupos_activos[:2]
+                grupos_t2 = grupos_activos[2:]
+            else:
+                grupos_t2 = grupos_activos[:2]
+                grupos_t1 = grupos_activos[2:]
+
+            # ==============================
+            # asignar T1
+            # ==============================
+
+            for g in grupos_t1:
                 resultados.append({
-                    "Fecha": fecha,
-                    "Persona": persona,
+                    "Fecha": fecha_dt,
                     "Grupo": g,
                     "Turno": "T1"
                 })
 
-        # asignar grupos T2
-        for g in grupos_t2:
-            for persona in grupos[g]:
+            # ==============================
+            # asignar T2
+            # ==============================
+
+            for g in grupos_t2:
                 resultados.append({
-                    "Fecha": fecha,
-                    "Persona": persona,
+                    "Fecha": fecha_dt,
                     "Grupo": g,
                     "Turno": "T2"
                 })
 
-        # grupo descanso
-        for persona in grupos[grupo_descanso]:
+            # ==============================
+            # asignar relevo TR
+            # ==============================
+
+            personas = personal_grupos[
+                grupo_descanso
+            ]
+
+            persona_tr = min(
+                personas,
+                key=lambda x: conteo_tr[x]
+            )
+
+            conteo_tr[persona_tr] += 1
+
             resultados.append({
-                "Fecha": fecha,
-                "Persona": persona,
+                "Fecha": fecha_dt,
                 "Grupo": grupo_descanso,
-                "Turno": "DESC"
+                "Turno": "TR",
+                "Persona TR": persona_tr
             })
 
-        # elegir relevo TR
-        persona_tr = min(
-            tr_contador,
-            key=tr_contador.get
+        df_malla = pd.DataFrame(
+            resultados
         )
 
-        tr_contador[persona_tr] += 1
+        st.session_state[
+            "malla_abordaje"
+        ] = df_malla
 
-        resultados.append({
-            "Fecha": fecha,
-            "Persona": persona_tr,
-            "Grupo": "RELEVO",
-            "Turno": "TR"
-        })
+        st.success(
+            "✅ Malla abordaje generada"
+        )
 
-    df_malla = pd.DataFrame(
-        resultados
-    )
+    # ============================================
+    # VISUALIZAR
+    # ============================================
 
-    st.session_state[
-        "malla_abordaje"
-    ] = df_malla
+    if "malla_abordaje" in st.session_state:
 
-    st.success(
-        "✅ Malla generada correctamente"
-    )
+        df = st.session_state[
+            "malla_abordaje"
+        ]
 
-if "malla_abordaje" in st.session_state:
+        st.subheader(
+            "📋 Malla Grupal"
+        )
 
-    st.subheader(
-        "📋 Malla Personal Abordaje"
-    )
+        matriz = df.pivot(
+            index="Grupo",
+            columns="Fecha",
+            values="Turno"
+        )
 
-    df = st.session_state[
-        "malla_abordaje"
-    ]
+        st.dataframe(
+            matriz,
+            use_container_width=True
+        )
 
-    st.dataframe(
-        df,
-        use_container_width=True,
-        height=500
-    )
+        st.subheader(
+            "👥 Personal asignado a TR"
+        )
+
+        tr_df = df[
+            df["Turno"] == "TR"
+        ][[
+            "Fecha",
+            "Grupo",
+            "Persona TR"
+        ]]
+
+        st.dataframe(
+            tr_df,
+            use_container_width=True
+        )
 
 
 
