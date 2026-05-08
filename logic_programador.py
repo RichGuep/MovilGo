@@ -64,7 +64,46 @@ def guardar_empleados(repo, df):
             contenido
         )
 
+if st.button("💾 Guardar en GitHub"):
 
+    repo = conectar_github()
+
+    if not repo:
+        st.error("❌ Sin conexión")
+        return
+
+    df_final = st.session_state["df_grupos"]
+
+    import io
+
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_final.to_excel(writer, index=False)
+
+    contenido = output.getvalue()
+
+    try:
+        file = repo.get_contents("empleados.xlsx")
+
+        repo.update_file(
+            "empleados.xlsx",
+            "Actualización de grupos MovilGo",
+            contenido,
+            file.sha
+        )
+
+        st.success("✅ Guardado en GitHub correctamente")
+
+    except Exception as e:
+
+        repo.create_file(
+            "empleados.xlsx",
+            "Creación empleados MovilGo",
+            contenido
+        )
+
+        st.success("✅ Archivo creado en GitHub")
 
 # inicio pantallas
 
