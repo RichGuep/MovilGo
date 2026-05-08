@@ -468,13 +468,33 @@ def pantalla_abordaje():
 
 
 def pantalla_programador():
+
+    st.title("📅 Programador MovilGo")
+
     modulo = st.radio(
         "Selecciona módulo",
-        ["👷 Técnicos", "🚍 Personal Abordaje"],
+        [
+            "👷 Técnicos",
+            "🚍 Personal Abordaje",
+            "🧩 Grupos"
+        ],
         horizontal=True
     )
 
-    def pantalla_asignacion_grupos():
+    # =========================
+    # ROUTER LIMPIO
+    # =========================
+
+    if modulo == "👷 Técnicos":
+        pantalla_tecnicos()
+
+    elif modulo == "🚍 Personal Abordaje":
+        pantalla_abordaje()
+
+    elif modulo == "🧩 Grupos":
+        pantalla_asignacion_grupos()
+
+def pantalla_asignacion_grupos():
 
     st.title("🧩 Asignación de Grupos - MovilGo")
 
@@ -492,12 +512,9 @@ def pantalla_programador():
         return
 
     st.subheader("📋 Personal actual")
-
     st.dataframe(df, use_container_width=True)
 
     st.divider()
-
-    st.subheader("⚙️ Parámetros de asignación")
 
     grupos = st.multiselect(
         "Grupos disponibles",
@@ -512,13 +529,14 @@ def pantalla_programador():
 
     if st.button("🚀 Asignar grupos automáticamente"):
 
+        import random
+
         df = df.copy()
 
         if "Grupo" not in df.columns:
             df["Grupo"] = None
 
         nombres = df["Nombre"].tolist()
-
         random.shuffle(nombres)
 
         asignacion = {}
@@ -529,13 +547,11 @@ def pantalla_programador():
         df["Grupo"] = df["Nombre"].map(asignacion)
 
         st.session_state["df_grupos"] = df
-
         st.success("✅ Grupos asignados correctamente")
 
     if "df_grupos" in st.session_state:
 
         st.subheader("📊 Resultado")
-
         st.dataframe(st.session_state["df_grupos"], use_container_width=True)
 
         if st.button("💾 Guardar en GitHub"):
