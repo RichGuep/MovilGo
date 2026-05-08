@@ -6,7 +6,7 @@ import random
 from datetime import datetime, timedelta
 from github import Github
 
-# --- 1. ESTILOS Y COLORES ---
+# --- 1. ESTILOS CON ALTO CONTRASTE ---
 def aplicar_estilos_malla(styler, errores_coords):
     colores = {
         "T1": "background-color: #1f77b4; color: white !important;",
@@ -26,99 +26,124 @@ def aplicar_estilos_malla(styler, errores_coords):
           for c in range(len(df.columns))] for r in range(len(df.index))],
         index=df.index, columns=df.columns), axis=None)
 
-# --- 2. LOGICA DE SALUD ---
+# --- 2. VALIDACIÓN DE REGLAS DE SUEÑO ---
 def es_cambio_saludable(ayer, hoy):
+    """Garantiza que nunca se pase de T3 a T1 o T2."""
     if ayer in ["DESC", "COMP", "OFF"] or hoy in ["DESC", "COMP", "OFF"]: return True
+    # Jerarquía: T1 (1) -> T2 (2) -> T3 (3). Solo se permite subir o mantenerse.
     jerarquia = {"T1": 1, "T2": 2, "T3": 3}
     return jerarquia.get(hoy, 0) >= jerarquia.get(ayer, 0)
 
 def detectar_novedades(df):
     novedades = []
     if df.empty: return novedades
+    # 1. Validar Saltos de Sueño
     for g in df['Grupo'].unique():
         g_data = df[df['Grupo'] == g].sort_values('Fecha_Raw')
         for i in range(1, len(g_data)):
             ayer, hoy = g_data.iloc[i-1]['Turno'], g_data.iloc[i]['Turno']
             if not es_cambio_saludable(ayer, hoy):
-                novedades.append({"Grupo": g, "Fecha_Col": g_data.iloc[i]['Fecha_Col'], "Motivo": f"Salto {ayer}->{hoy}"})
+                novedades.append({"Grupo": g, "Fecha_Col": g_data.iloc[i]['Fecha_Col'], "Motivo": f"Salto {ayer}->{hoy} (Riesgo Fatiga)"})
+    
+    # 2. Validar Cobertura T1-T2-T3
+    cob = df.groupby(['Fecha_Col', 'Turno'], observed=False).size().unstack(fill_value=0)
+    for fecha in cob.index:
+        for t in ["T1", "T2", "T3"]:
+            if t not in cob.columns or cob.loc[fecha, t] == 0:
+                novedades.append({"Grupo": "SISTEMA", "Fecha_Col": fecha, "Motivo": f"Falta cobertura en {t}"})
     return novedades
 
-# --- 3. MOTOR DE GENERACIÓN (EL HIBRIDO) ---
+# --- 3. PANTALLA PRINCIPAL ---
 def pantalla_programador():
-    st.title("🛡️ Programador Maestro V8.0")
+    st.title("🛡️ Programador Maestro V8.5 - Cobertura Garantizada")
     grupos_n = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
     dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 
     with st.container(border=True):
-        st.subheader("⚙️ Configuración Staffing")
-        c1, c2, c3 = st.columns(3)
-        req_m = c1.number_input("Masters", 1, 10, 3)
-        req_ta = c2.number_input("Téc A", 1, 20, 7)
-        req_tb = c3.number_input("Téc B", 1, 20, 2)
+        st.subheader("⚙️ Configuración de Staffing y Descansos de Ley")
+        c_desc, c_staff = st.columns([2, 1])
+        with c_desc:
+            st.write("**Día de Descanso Parametrizado por Grupo:**")
+            cd1, cd2 = st.columns(2)
+            d_g1 = cd1.selectbox("Descanso G1", dias_semana, index=5)
+            d_g2 = cd2.selectbox("Descanso G2", dias_semana, index=5)
+            d_g3 = cd1.selectbox("Descanso G3", dias_semana, index=6)
+            d_g4 = cd2.selectbox("Descanso G4", dias_semana, index=6)
+            map_desc = {
+                "Grupo 1": dias_semana.index(d_g1), "Grupo 2": dias_semana.index(d_g2),
+                "Grupo 3": dias_semana.index(d_g3), "Grupo 4": dias_semana.index(d_g4)
+            }
+        with c_staff:
+            st.write("**Personal Requerido por Turno:**")
+            req_m = st.number_input("Masters", 1, 10, 3)
+            req_ta = st.number_input("Técnicos A", 1, 20, 7)
+            req_tb = st.number_input("Técnicos B", 1, 20, 2)
 
-    f_ini = st.date_input("Inicio", datetime.now())
-    f_fin = st.date_input("Fin", datetime.now() + timedelta(days=28))
+    f_ini = st.date_input("Fecha Inicio Programación", datetime.now())
+    f_fin = st.date_input("Fecha Fin Programación", datetime.now() + timedelta(days=28))
 
-    if st.button("🚀 Generar Malla Inteligente"):
-        from app import conectar_github, obtener_estado_inicial # Evitar circular import
+    if st.button("🚀 Generar Malla Inteligente y Saludable"):
+        from app import conectar_github, obtener_estado_inicial
         repo = conectar_github()
         estado = obtener_estado_inicial(repo)
         
         lista_fechas = [f_ini + timedelta(days=x) for x in range((f_fin - f_ini).days + 1)]
         resultados = []
         
-        # Recuperamos memoria de tu lógica original
         mem_t = {g: estado[g]["u"] for g in grupos_n}
         mem_n = {g: estado[g]["n"] for g in grupos_n}
         deudas = {g: estado[g]["d"] for g in grupos_n}
+        sem_deuda = {g: estado[g]["sem_d"] for g in grupos_n}
         co_h = holidays.Colombia(years=[2024, 2025, 2026])
 
         for fecha in lista_fechas:
             fecha_dt = pd.to_datetime(fecha); dia_idx = fecha_dt.weekday()
-            sem_iso = fecha_dt.isocalendar()[1]; es_fest = fecha_dt in co_h
+            n_sem = fecha_dt.isocalendar()[1]; es_fest = fecha_dt in co_h
             col_name = f"{fecha_dt.strftime('%a %d/%m')}{' 🇨🇴' if es_fest else ''}"
 
-            # REGLA 1: Libranza automática por bloques (Tu lógica original)
-            libranza = None
-            if dia_idx == 5: # Sábado
-                libranza = "Grupo 1" if sem_iso % 2 == 0 else "Grupo 2"
-                deudas["Grupo 2" if sem_iso % 2 == 0 else "Grupo 1"] += 1
-            elif dia_idx == 6: # Domingo
-                libranza = "Grupo 3" if sem_iso % 2 == 0 else "Grupo 4"
-                deudas["Grupo 4" if sem_iso % 2 == 0 else "Grupo 3"] += 1
-            else:
-                # Cobro de deudas entre semana
-                for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
-                    if deudas[g] > 0 and mem_t[g] != "T3":
-                        libranza = g; deudas[g] -= 1; break
-
-            # REGLA 2: Asignación Saludable
-            activos = [g for g in grupos_n if g != libranza]
+            # 1. Determinar quién solicita descanso según parámetro
+            solicitan_descanso = [g for g, d_idx in map_desc.items() if d_idx == dia_idx]
+            
+            # 2. Prioridad: Pagar deudas (Compensatorios) si hay cobertura
             turnos_hoy = {}
-            for g in activos:
+            for g in sorted(grupos_n, key=lambda x: deudas[x], reverse=True):
+                if deudas[g] > 0 and n_sem > sem_deuda[g] and g not in solicitan_descanso:
+                    if len([v for v in turnos_hoy.values() if v == "COMP"]) < 1:
+                        turnos_hoy[g] = "COMP"; deudas[g] -= 1; sem_deuda[g] = 0; break
+
+            # 3. GARANTÍA DE TURNOS: Necesitamos mínimo 3 grupos activos para T1, T2, T3
+            activos_seguros = [g for g in grupos_n if g not in turnos_hoy and g not in solicitan_descanso]
+            
+            while len(activos_seguros) < 3 and solicitan_descanso:
+                # Sacrificio Equitativo: Trabaja el que menos deudas tenga acumuladas
+                sacrificado = sorted(solicitan_descanso, key=lambda x: deudas[x])[0]
+                solicitan_descanso.remove(sacrificado)
+                deudas[sacrificado] += 1 # Se le debe el día
+                sem_deuda[sacrificado] = n_sem
+                activos_seguros.append(sacrificado)
+            
+            for g in solicitan_descanso: turnos_hoy[g] = "DESC"
+
+            # 4. Asignación de Turnos cuidando el sueño (T1->T2->T3)
+            turnos_disponibles = ["T1", "T2", "T3"]
+            random.shuffle(turnos_disponibles)
+            
+            for g in activos_seguros:
                 idx_g = grupos_n.index(g)
-                t_sug = ["T1", "T2", "T3"][(idx_g + sem_iso) % 3]
+                t_sug = turnos_disponibles.pop(0) if turnos_disponibles else "T1"
                 
-                # Validación de Salud (Tu lógica es_cambio_saludable)
-                if not es_cambio_saludable(mem_t[g], t_sug): t_sug = mem_t[g]
-                # Límite de 6 noches (Tu lógica mem_n)
-                if mem_n[g] >= 6 and t_sug == "T3": t_sug = "T1"
+                # Forzar salud: Si el salto es prohibido, intentar otro turno o mantener anterior
+                if not es_cambio_saludable(mem_t[g], t_sug):
+                    t_sug = mem_t[g] if mem_t[g] in ["T1", "T2", "T3"] else "T1"
+                
                 turnos_hoy[g] = t_sug
 
-            # REGLA 3: Motor Cobertura (Asegurar T1, T2, T3)
-            for tr in ["T1", "T2", "T3"]:
-                if tr not in turnos_hoy.values() and activos:
-                    for gf in activos:
-                        if list(turnos_hoy.values()).count(turnos_hoy[gf]) > 1:
-                            if es_cambio_saludable(mem_t[gf], tr):
-                                turnos_hoy[gf] = tr; break
-            
             for g in grupos_n:
-                t_f = ("DESC" if dia_idx >= 5 else "COMP") if g == libranza else turnos_hoy.get(g, "T1")
+                t_f = turnos_hoy.get(g, "T1")
                 n_a = mem_n[g] + 1 if t_f == "T3" else 0
                 resultados.append({
                     "Grupo": g, "Fecha_Col": col_name, "Turno": t_f, "Fecha_Raw": fecha_dt,
-                    "Noches_Acum": n_a, "Deuda_Compensatorio": deudas[g],
+                    "Noches_Acum": n_a, "Deuda_Compensatorio": deudas[g], "Semana_Deuda": sem_deuda[g],
                     "M_Req": req_m, "TA_Req": req_ta, "TB_Req": req_tb
                 })
                 mem_t[g] = t_f; mem_n[g] = n_a
@@ -126,20 +151,21 @@ def pantalla_programador():
         st.session_state.malla_generada = pd.DataFrame(resultados)
         st.rerun()
 
-    # --- 4. EDITOR Y LOCALIZADOR ---
+    # --- 4. EDITOR Y PANEL DE CORRECCIÓN ---
     if st.session_state.get('malla_generada') is not None:
         df_v = st.session_state.malla_generada
         novedades = detectar_novedades(df_v)
         coords_error = [(n['Grupo'], n['Fecha_Col']) for n in novedades]
 
-        st.subheader("🚩 Panel de Corrección")
-        col_nav, col_filtro = st.columns([2, 1])
-        with col_nav:
-            if novedades:
-                err_sel = st.selectbox("Ubicar error:", novedades, format_func=lambda x: f"{x['Grupo']} - {x['Fecha_Col']} ({x['Motivo']})")
-            else: st.success("✅ Malla Saludable y Cubierta.")
-        with col_filtro:
-            focus = st.toggle("🎯 Ver solo días con novedades")
+        st.subheader("🚩 Panel de Corrección de Novedades")
+        c_nav, c_foc = st.columns([2, 1])
+        if novedades:
+            c_nav.warning(f"Se detectaron {len(novedades)} novedades de salud o cobertura.")
+            sel_err = c_nav.selectbox("Seleccione error para ubicar:", novedades, format_func=lambda x: f"{x['Grupo']} - {x['Fecha_Col']} ({x['Motivo']})")
+            focus = c_foc.toggle("🎯 Ver solo columnas con errores")
+        else:
+            st.success("✅ Malla 100% Saludable y Cubierta.")
+            focus = False
 
         matriz = df_v.pivot(index="Grupo", columns="Fecha_Col", values="Turno").reindex(columns=df_v["Fecha_Col"].unique())
         if focus and novedades:
