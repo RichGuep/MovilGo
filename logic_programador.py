@@ -9,15 +9,13 @@ from github import Github
 # --- 1. ESTILOS Y RESALTADO DE ERRORES ---
 def aplicar_estilos_malla(styler, errores_coords):
     """Aplica colores de turnos y resalta celdas con errores de salud/cobertura."""
- def aplicar_celda(val, row_name, col_name):
-        # Mapeo de colores de fondo
-        colores_bg = {
-            "T1": "#1f77b4",   # Azul
-            "T2": "#2ca02c",   # Verde
-            "T3": "#4d4d4d",   # Gris oscuro
-            "DESC": "#d62728", # Rojo
-            "COMP": "#ff7f0e"  # Naranja
-        }
+    colores = {
+        "T1": "background-color: #1f77b4; color: white;",
+        "T2": "background-color: #2ca02c; color: white;",
+        "T3": "background-color: #4d4d4d; color: white;",
+        "DESC": "background-color: #d62728; color: white;",
+        "COMP": "background-color: #ff7f0e; color: white;"
+    }
 
     def aplicar_celda(val, row_name, col_name):
         estilo = colores.get(val, "background-color: transparent; color: inherit;")
