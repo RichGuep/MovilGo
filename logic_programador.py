@@ -230,12 +230,7 @@ def pantalla_abordaje():
         datetime.now() + timedelta(days=14)
     )
 
-    # =========================================
-    # BOTÓN
-    # =========================================
-if st.button(
-    "🚀 Generar Malla Abordaje"
-):
+if st.button("🚀 Generar Malla Abordaje"):
 
     # =====================================
     # CREAR 5 GRUPOS DE 5 PERSONAS
