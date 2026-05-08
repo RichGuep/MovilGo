@@ -472,11 +472,7 @@ def auditar_malla(df):
                 "✅ Cobertura completa"
             )
 # =========================================================
-# PANTALLA PRINCIPAL
-# =========================================================
-
-# =========================================================
-# PERSONAL ABORDAJE
+# MODULO PERSONAL ABORDAJE
 # =========================================================
 
 def pantalla_abordaje():
@@ -484,8 +480,13 @@ def pantalla_abordaje():
     st.header("🚍 Programador Personal Abordaje")
 
     st.info(
-        "Módulo inicial de programación para personal de abordaje."
+        "Módulo inicial para programación del personal de abordaje."
     )
+
+    dias_semana = [
+        "Lunes","Martes","Miércoles",
+        "Jueves","Viernes","Sábado","Domingo"
+    ]
 
     GRUPOS_AB = [
         "Grupo A",
@@ -495,25 +496,11 @@ def pantalla_abordaje():
         "Grupo E"
     ]
 
-    dias_semana = [
-        "Lunes",
-        "Martes",
-        "Miércoles",
-        "Jueves",
-        "Viernes",
-        "Sábado",
-        "Domingo"
-    ]
-
-    # =========================================
-    # CARGAR PERSONAL DESDE empleados.xlsx
-    # =========================================
+    # -----------------------------------
+    # Cargar personal
+    # -----------------------------------
 
     repo = conectar_github()
-
-    if not repo:
-        st.error("No se pudo conectar a GitHub.")
-        return
 
     try:
         contents = repo.get_contents(
@@ -528,78 +515,72 @@ def pantalla_abordaje():
             df_emp.columns.str.strip()
         )
 
-        if "Area" not in df_emp.columns:
-            st.error(
-                "Falta columna 'Area' en empleados.xlsx"
-            )
-            return
-
         df_ab = df_emp[
             df_emp["Area"] == "Abordaje"
         ]
 
         st.success(
-            f"Personal abordaje cargado: {len(df_ab)} personas"
+            f"{len(df_ab)} personas cargadas."
         )
 
     except Exception as e:
+
         st.error(
-            f"Error leyendo empleados.xlsx: {e}"
+            f"Error cargando personal: {e}"
         )
         return
 
-    # =========================================
-    # PARAMETRIZADOR DESCANSOS
-    # =========================================
+    # -----------------------------------
+    # Descansos
+    # -----------------------------------
 
     st.subheader(
-        "📅 Parametrizador de Descansos"
+        "📅 Parametrizador de descansos"
     )
 
     c1, c2 = st.columns(2)
 
     d_a = c1.selectbox(
-        "Descanso Grupo A",
+        "Grupo A",
         dias_semana,
         index=0
     )
 
     d_b = c2.selectbox(
-        "Descanso Grupo B",
+        "Grupo B",
         dias_semana,
         index=1
     )
 
     d_c = c1.selectbox(
-        "Descanso Grupo C",
+        "Grupo C",
         dias_semana,
         index=2
     )
 
     d_d = c2.selectbox(
-        "Descanso Grupo D",
+        "Grupo D",
         dias_semana,
         index=3
     )
 
     d_e = c1.selectbox(
-        "Descanso Grupo E",
+        "Grupo E",
         dias_semana,
         index=4
     )
 
-    # =========================================
-    # HORARIOS
-    # =========================================
+    # -----------------------------------
+    # Horarios
+    # -----------------------------------
 
     st.subheader("⏰ Horarios")
 
-    h1, h2, h3 = st.columns(3)
+    h1,h2,h3 = st.columns(3)
 
     with h1:
         st.markdown("### T1")
-
-        inicio_t1 = st.time_input(
+        st.time_input(
             "Inicio T1",
             datetime.strptime(
                 "06:00",
@@ -607,18 +588,9 @@ def pantalla_abordaje():
             ).time()
         )
 
-        fin_t1 = st.time_input(
-            "Fin T1",
-            datetime.strptime(
-                "14:00",
-                "%H:%M"
-            ).time()
-        )
-
     with h2:
         st.markdown("### T2")
-
-        inicio_t2 = st.time_input(
+        st.time_input(
             "Inicio T2",
             datetime.strptime(
                 "14:00",
@@ -626,18 +598,9 @@ def pantalla_abordaje():
             ).time()
         )
 
-        fin_t2 = st.time_input(
-            "Fin T2",
-            datetime.strptime(
-                "22:00",
-                "%H:%M"
-            ).time()
-        )
-
     with h3:
         st.markdown("### TR")
-
-        inicio_tr = st.time_input(
+        st.time_input(
             "Inicio TR",
             datetime.strptime(
                 "10:00",
@@ -645,13 +608,41 @@ def pantalla_abordaje():
             ).time()
         )
 
-        fin_tr = st.time_input(
-            "Fin TR",
-            datetime.strptime(
-                "18:00",
-                "%H:%M"
-            ).time()
+    # -----------------------------------
+    # Fechas
+    # -----------------------------------
+
+    st.subheader("📆 Periodo")
+
+    c1,c2 = st.columns(2)
+
+    c1.date_input(
+        "Inicio",
+        datetime.now()
+    )
+
+    c2.date_input(
+        "Fin",
+        datetime.now()
+        + timedelta(days=14)
+    )
+
+    # -----------------------------------
+    # Botón
+    # -----------------------------------
+
+    if st.button(
+        "🚀 Generar Malla Abordaje"
+    ):
+
+        st.success(
+            "✅ Submódulo Abordaje funcionando correctamente."
         )
+
+        st.info(
+            "Siguiente paso: lógica automática T1/T2/TR."
+        )
+
 # hasta aqui va abordaje
 
     
