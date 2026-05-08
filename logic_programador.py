@@ -312,14 +312,14 @@ def pantalla_abordaje():
             # ==============================
 
            # Buscar grupo en descanso
-            grupos_descanso = [
-                g for g, d in descansos.items()
-                    if d == dia_semana
+grupos_descanso = [
+    g for g, d in descansos.items()
+    if d == dia_semana
 ]
 
 # Validación
-        if not grupos_descanso:
-            st.error(
+if not grupos_descanso:
+    st.error(
         f"No hay grupo configurado para descansar el día {dias_semana[dia_semana]}"
     )
     return
@@ -332,6 +332,11 @@ if len(grupos_descanso) > 1:
     return
 
 grupo_descanso = grupos_descanso[0]
+
+grupos_activos = [
+    g for g in GRUPOS_AB
+    if g != grupo_descanso
+]
 
             grupos_activos = [
                 g for g in GRUPOS_AB
