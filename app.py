@@ -176,14 +176,13 @@ else:
             st.session_state.empresa = None
             st.rerun()
 
-    if menu == "🏠 Inicio":
-        modulo_inicio()
-    elif menu == "📅 Programación":
-        # Ejecuta la función principal de logic_programador.py
-        pantalla_programador() 
-    elif menu == "📋 Reporte Detallado":
-        modulo_detallado()
-    elif menu == "👥 Personal":
-        modulo_personal()
-       elif menu == "🧩 Grupos":
+ if menu == "🏠 Inicio":
+    modulo_inicio()
+elif menu == "📅 Programación":
+    pantalla_programador()
+elif menu == "📋 Reporte Detallado":
+    modulo_detallado()
+elif menu == "👥 Personal":
+    modulo_personal()
+elif menu == "🧩 Grupos":
     pantalla_asignacion_grupos()
