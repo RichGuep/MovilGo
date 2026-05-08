@@ -167,18 +167,31 @@ elif st.session_state.empresa is None:
             st.rerun()
 
 else:
+
     with st.sidebar:
         st.image(LOGO_CABLE, width=150)
         st.divider()
-        menu = st.radio("NAVEGACIÓN", ["🏠 Inicio", "📅 Programación", "📋 Reporte Detallado", "👥 Personal"])
+
+        menu = st.radio(
+            "NAVEGACIÓN",
+            [
+                "🏠 Inicio",
+                "📅 Programación",
+                "📋 Reporte Detallado",
+                "👥 Personal",
+                "🧩 Grupos"
+            ]
+        )
+
         st.divider()
+
         if st.button("🚪 Salir del Sistema"):
             st.session_state.empresa = None
             st.rerun()
 
- # ============================
-    # ROUTER LIMPIO (IMPORTANTE)
-    # ============================
+    # =====================================================
+    # ROUTER LIMPIO (CORREGIDO)
+    # =====================================================
 
     if menu == "🏠 Inicio":
         modulo_inicio()
