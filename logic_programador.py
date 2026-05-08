@@ -500,7 +500,7 @@ def pantalla_programador():
 
 def pantalla_asignacion_grupos():
 
-if st.button("🚀 Asignar grupos automáticamente"):
+    if st.button("🚀 Asignar grupos automáticamente"):
 
     df = df.copy()
 
