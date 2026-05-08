@@ -185,3 +185,5 @@ else:
         modulo_detallado()
     elif menu == "👥 Personal":
         modulo_personal()
+       elif menu == "🧩 Grupos":
+    pantalla_asignacion_grupos()
