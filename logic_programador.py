@@ -116,19 +116,27 @@ def pantalla_abordaje():
     # CREAR GRUPOS AUTOMÁTICOS
     # ============================================
 
-    personal_grupos = {}
+   # elegir grupo para relevo
+if grupo_descanso:
+    grupo_tr = grupo_descanso
+else:
+    grupo_tr = grupos_activos[-1]
 
-    nombres = list(df_ab["Nombre"])
+personas = personal_grupos[grupo_tr]
 
-    for i, grupo in enumerate(GRUPOS_AB):
+persona_tr = min(
+    personas,
+    key=lambda x: conteo_tr[x]
+)
 
-        inicio = i * 5
-        fin = inicio + 5
+conteo_tr[persona_tr] += 1
 
-        personal_grupos[grupo] = nombres[
-            inicio:fin
-        ]
-
+resultados.append({
+    "Fecha": fecha_dt,
+    "Grupo": grupo_tr,
+    "Turno": "TR",
+    "Persona TR": persona_tr
+})
     # ============================================
     # PARAMETRIZADOR DESCANSOS
     # ============================================
