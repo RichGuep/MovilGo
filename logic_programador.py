@@ -518,7 +518,7 @@ def pantalla_asignacion_grupos():
     # GRUPOS
     # ==========================
 
-    grupos_tecnicos = ["T1", "T2", "T3", "T4"]
+    grupos_tecnicos = ["G1", "G2", "G3", "G4"]
     grupos_abordaje = ["A", "B", "C", "D", "E"]
 
     # ==========================
