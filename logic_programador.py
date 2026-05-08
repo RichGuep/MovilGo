@@ -481,17 +481,23 @@ def pantalla_programador():
     repo = conectar_github()
 
     if not repo:
-        st.error("Sin conexión GitHub")
+        st.error("❌ Sin conexión GitHub")
         return
 
-    contents = repo.get_contents("empleados.xlsx")
-    df = pd.read_excel(io.BytesIO(contents.decoded_content))
+    try:
+        contents = repo.get_contents("empleados.xlsx")
+        df = pd.read_excel(io.BytesIO(contents.decoded_content))
+    except Exception as e:
+        st.error(f"Error cargando empleados: {e}")
+        return
 
-    st.subheader("📋 Personal sin asignación de grupos")
+    st.subheader("📋 Personal actual")
 
-    st.dataframe(df)
+    st.dataframe(df, use_container_width=True)
 
     st.divider()
+
+    st.subheader("⚙️ Parámetros de asignación")
 
     grupos = st.multiselect(
         "Grupos disponibles",
@@ -506,37 +512,49 @@ def pantalla_programador():
 
     if st.button("🚀 Asignar grupos automáticamente"):
 
-        from logic.grouping.asignador_grupos import asignar_grupos
+        df = df.copy()
 
-        df_asignado = asignar_grupos(df, grupos, modo)
+        if "Grupo" not in df.columns:
+            df["Grupo"] = None
 
-        st.session_state["df_asignado"] = df_asignado
+        nombres = df["Nombre"].tolist()
 
-        st.success("Grupos asignados correctamente")
+        random.shuffle(nombres)
 
-    if "df_asignado" in st.session_state:
+        asignacion = {}
+
+        for i, nombre in enumerate(nombres):
+            asignacion[nombre] = grupos[i % len(grupos)]
+
+        df["Grupo"] = df["Nombre"].map(asignacion)
+
+        st.session_state["df_grupos"] = df
+
+        st.success("✅ Grupos asignados correctamente")
+
+    if "df_grupos" in st.session_state:
 
         st.subheader("📊 Resultado")
 
-        st.dataframe(st.session_state["df_asignado"])
+        st.dataframe(st.session_state["df_grupos"], use_container_width=True)
 
         if st.button("💾 Guardar en GitHub"):
 
             output = io.BytesIO()
 
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                st.session_state["df_asignado"].to_excel(writer, index=False)
+                st.session_state["df_grupos"].to_excel(writer, index=False)
 
             contents = repo.get_contents("empleados.xlsx")
 
             repo.update_file(
                 "empleados.xlsx",
-                "Asignación de grupos automática",
+                "Asignación de grupos MovilGo",
                 output.getvalue(),
                 contents.sha
             )
 
-            st.success("Guardado en GitHub")
+            st.success("✅ Guardado en GitHub")
 
     if modulo == "👷 Técnicos":
         pantalla_tecnicos()
