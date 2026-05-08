@@ -2,10 +2,8 @@ import streamlit as st
 import io
 import random
 import pandas as pd
-from datetime import datetime, timedelta
-
 from github import Github
-import streamlit as st
+
 
 # =====================================
 # CONEXIÓN GITHUB
@@ -15,30 +13,24 @@ def conectar_github():
 
     try:
         if "GITHUB_TOKEN" not in st.secrets:
-            st.error(
-                "❌ Token GITHUB_TOKEN no configurado"
-            )
+            st.error("❌ Token GITHUB_TOKEN no configurado")
             return None
 
-        g = Github(
-            st.secrets["GITHUB_TOKEN"]
-        )
-
-        repo = g.get_repo(
-            "RichGuep/movilgo"
-        )
+        g = Github(st.secrets["GITHUB_TOKEN"])
+        repo = g.get_repo("RichGuep/movilgo")
 
         return repo
 
     except Exception as e:
-        st.error(
-            f"Error GitHub: {e}"
-        )
+        st.error(f"Error GitHub: {e}")
         return None
 
-def guardar_empleados(repo, df):
 
-    import io
+# =====================================
+# GUARDAR EMPLEADOS EN GITHUB
+# =====================================
+
+def guardar_empleados(repo, df):
 
     output = io.BytesIO()
 
@@ -60,51 +52,34 @@ def guardar_empleados(repo, df):
     except Exception:
         repo.create_file(
             "empleados.xlsx",
-            "Creación archivo empleados MovilGo",
-            contenido
-        )
-
-    if st.button("💾 Guardar en GitHub"):
-
-    repo = conectar_github()
-
-    if not repo:
-        st.error("❌ Sin conexión")
-        return
-
-    df_final = st.session_state["df_grupos"]
-
-    import io
-
-    output = io.BytesIO()
-
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_final.to_excel(writer, index=False)
-
-    contenido = output.getvalue()
-
-    try:
-        file = repo.get_contents("empleados.xlsx")
-
-        repo.update_file(
-            "empleados.xlsx",
-            "Actualización de grupos MovilGo",
-            contenido,
-            file.sha
-        )
-
-        st.success("✅ Guardado en GitHub correctamente")
-
-    except Exception as e:
-
-        repo.create_file(
-            "empleados.xlsx",
             "Creación empleados MovilGo",
             contenido
         )
 
-        st.success("✅ Archivo creado en GitHub")
 
+# =====================================
+# BOTÓN (VA DENTRO DE TU PANTALLA)
+# =====================================
+
+def boton_guardar_grupos():
+
+    if st.button("💾 Guardar en GitHub"):
+
+        repo = conectar_github()
+
+        if not repo:
+            st.error("❌ Sin conexión con GitHub")
+            return
+
+        if "df_grupos" not in st.session_state:
+            st.error("❌ No hay datos para guardar")
+            return
+
+        df_final = st.session_state["df_grupos"]
+
+        guardar_empleados(repo, df_final)
+
+        st.success("✅ Grupos guardados correctamente en GitHub")
 # inicio pantallas
 
 def pantalla_tecnicos():
