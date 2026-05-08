@@ -30,24 +30,42 @@ def conectar_github():
 # GUARDAR EMPLEADOS EN GITHUB
 # =====================================
 
-def modulo_personal():
+def guardar_empleados(repo, df):
 
-    st.header("👥 Gestión de Plantilla y Asignación de Grupos")
+    # 🔥 FORZAR columna Grupo SIEMPRE
+    if "Grupo" not in df.columns:
+        df["Grupo"] = ""
 
-    df_emp = cargar_excel("empleados.xlsx")
+    output = io.BytesIO()
 
-    if df_emp.empty:
-        st.warning("⚠️ No hay personal registrado.")
-        df_emp = pd.DataFrame(columns=["Nombre", "Cargo", "Cedula", "Grupo"])
+    # 🔥 IMPORTANTE: index=False evita basura en Excel
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
 
-    st.info("💡 Aquí puedes editar personal y asignar grupos automáticamente según tipo de cargo.")
+    contenido = output.getvalue()
 
-    df_edit = st.data_editor(
-        df_emp,
-        use_container_width=True,
-        num_rows="dynamic",
-        key="editor_plantilla"
-    )
+    try:
+        # 🔥 SI EXISTE → BORRAR Y RECREAR (más estable que update_file)
+        try:
+            file = repo.get_contents("empleados.xlsx")
+            repo.delete_file(
+                "empleados.xlsx",
+                "Reemplazo empleados (MovilGo)",
+                file.sha
+            )
+        except:
+            pass
+
+        repo.create_file(
+            "empleados.xlsx",
+            "Actualización completa empleados (MovilGo)",
+            contenido
+        )
+
+        st.success("✅ empleados.xlsx actualizado correctamente en GitHub")
+
+    except Exception as e:
+        st.error(f"❌ Error guardando en GitHub: {e}")
 
     # =====================================================
     # CONFIGURACIÓN DE GRUPOS
