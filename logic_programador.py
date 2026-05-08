@@ -265,6 +265,10 @@ def pantalla_abordaje():
         key="ab_ff"
     )
 
+     fecha_ini = f1.date_input(...)
+    fecha_fin = f2.date_input(...)
+
+
 if st.button("🚀 Generar Malla Inteligente", use_container_width=True):
 
     resultados = []
