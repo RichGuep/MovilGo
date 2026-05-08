@@ -68,7 +68,7 @@ def pantalla_abordaje():
     ]
 
     # ============================================
-    # CARGAR PERSONAL DESDE empleados.xlsx
+    # CARGAR PERSONAL
     # ============================================
 
     repo = conectar_github()
@@ -85,7 +85,6 @@ def pantalla_abordaje():
 
         df_emp.columns = df_emp.columns.str.strip()
 
-        # Filtrar personal de abordaje por Cargo
         df_ab = df_emp[
             df_emp["Cargo"]
             .astype(str)
@@ -116,29 +115,19 @@ def pantalla_abordaje():
     # CREAR GRUPOS AUTOMÁTICOS
     # ============================================
 
-   # elegir grupo para relevo
-if grupo_descanso:
-    grupo_tr = grupo_descanso
-else:
-    grupo_tr = grupos_activos[-1]
+    personal_grupos = {}
 
-personas = personal_grupos[grupo_tr]
+    nombres = list(df_ab["Nombre"])
 
-persona_tr = min(
-    personas,
-    key=lambda x: conteo_tr[x]
-)
+    for i, grupo in enumerate(GRUPOS_AB):
 
-conteo_tr[persona_tr] += 1
+        inicio = i * 5
+        fin = inicio + 5
 
-resultados.append({
-    "Fecha": fecha_dt,
-    "Grupo": grupo_tr,
-    "Turno": "TR",
-    "Persona TR": persona_tr
-})
+        personal_grupos[grupo] = nombres[inicio:fin]
+
     # ============================================
-    # PARAMETRIZADOR DESCANSOS
+    # DESCANSOS
     # ============================================
 
     st.subheader(
@@ -157,28 +146,28 @@ resultados.append({
     d_b = c2.selectbox(
         "Grupo B",
         dias_semana,
-        index=1,
+        index=3,
         key="ab_b"
     )
 
     d_c = c1.selectbox(
         "Grupo C",
         dias_semana,
-        index=2,
+        index=4,
         key="ab_c"
     )
 
     d_d = c2.selectbox(
         "Grupo D",
         dias_semana,
-        index=3,
+        index=5,
         key="ab_d"
     )
 
     d_e = c1.selectbox(
         "Grupo E",
         dias_semana,
-        index=4,
+        index=6,
         key="ab_e"
     )
 
@@ -199,10 +188,8 @@ resultados.append({
     h1, h2, h3 = st.columns(3)
 
     with h1:
-
         st.markdown("### T1")
-
-        inicio_t1 = st.time_input(
+        st.time_input(
             "Inicio T1",
             datetime.strptime(
                 "06:00",
@@ -210,8 +197,7 @@ resultados.append({
             ).time(),
             key="t1i"
         )
-
-        fin_t1 = st.time_input(
+        st.time_input(
             "Fin T1",
             datetime.strptime(
                 "14:00",
@@ -221,10 +207,8 @@ resultados.append({
         )
 
     with h2:
-
         st.markdown("### T2")
-
-        inicio_t2 = st.time_input(
+        st.time_input(
             "Inicio T2",
             datetime.strptime(
                 "14:00",
@@ -232,8 +216,7 @@ resultados.append({
             ).time(),
             key="t2i"
         )
-
-        fin_t2 = st.time_input(
+        st.time_input(
             "Fin T2",
             datetime.strptime(
                 "22:00",
@@ -243,10 +226,8 @@ resultados.append({
         )
 
     with h3:
-
         st.markdown("### TR")
-
-        inicio_tr = st.time_input(
+        st.time_input(
             "Inicio TR",
             datetime.strptime(
                 "10:00",
@@ -254,8 +235,7 @@ resultados.append({
             ).time(),
             key="tri"
         )
-
-        fin_tr = st.time_input(
+        st.time_input(
             "Fin TR",
             datetime.strptime(
                 "18:00",
@@ -265,7 +245,7 @@ resultados.append({
         )
 
     # ============================================
-    # PERIODO
+    # FECHAS
     # ============================================
 
     st.subheader("📆 Periodo")
@@ -280,15 +260,18 @@ resultados.append({
 
     fecha_fin = f2.date_input(
         "Fin",
-        datetime.now() + timedelta(days=14),
+        datetime.now()
+        + timedelta(days=14),
         key="ab_ff"
     )
 
     # ============================================
-    # BOTÓN GENERAR
+    # GENERAR
     # ============================================
 
-    if st.button("🚀 Generar Malla Abordaje"):
+    if st.button(
+        "🚀 Generar Malla Abordaje"
+    ):
 
         resultados = []
 
@@ -307,51 +290,60 @@ resultados.append({
 
         for fecha in fechas:
 
-            fecha_dt = pd.to_datetime(fecha)
+            fecha_dt = pd.to_datetime(
+                fecha
+            )
 
-            dia_semana = fecha_dt.weekday()
+            dia_semana = (
+                fecha_dt.weekday()
+            )
 
-            semana = fecha_dt.isocalendar()[1]
+            semana = (
+                fecha_dt.isocalendar()[1]
+            )
 
-            # ==============================
-            # identificar grupo descanso
-            # ==============================
+            # descanso del día
+            grupos_descanso = [
+                g
+                for g, d in descansos.items()
+                if d == dia_semana
+            ]
 
-          grupos_descanso = [
-    g for g, d in descansos.items()
-    if d == dia_semana
-]
+            grupo_descanso = (
+                grupos_descanso[0]
+                if grupos_descanso
+                else None
+            )
 
-# puede haber o no descanso ese día
-grupo_descanso = (
-    grupos_descanso[0]
-    if grupos_descanso
-    else None
-)
-
-# si nadie descansa → todos activos
-if grupo_descanso:
-    grupos_activos = [
-        g for g in GRUPOS_AB
-        if g != grupo_descanso
-    ]
-else:
-    grupos_activos = GRUPOS_AB.copy()
-            # ==============================
-            # rotación semanal
-            # ==============================
-
-            if semana % 2 == 0:
-                grupos_t1 = grupos_activos[:2]
-                grupos_t2 = grupos_activos[2:]
+            # grupos activos
+            if grupo_descanso:
+                grupos_activos = [
+                    g
+                    for g in GRUPOS_AB
+                    if g != grupo_descanso
+                ]
             else:
-                grupos_t2 = grupos_activos[:2]
-                grupos_t1 = grupos_activos[2:]
+                grupos_activos = (
+                    GRUPOS_AB.copy()
+                )
 
-            # ==============================
-            # asignar T1
-            # ==============================
+            # rotación semanal
+            if semana % 2 == 0:
+                grupos_t1 = (
+                    grupos_activos[:2]
+                )
+                grupos_t2 = (
+                    grupos_activos[2:4]
+                )
+            else:
+                grupos_t2 = (
+                    grupos_activos[:2]
+                )
+                grupos_t1 = (
+                    grupos_activos[2:4]
+                )
 
+            # guardar T1
             for g in grupos_t1:
                 resultados.append({
                     "Fecha": fecha_dt,
@@ -359,10 +351,7 @@ else:
                     "Turno": "T1"
                 })
 
-            # ==============================
-            # asignar T2
-            # ==============================
-
+            # guardar T2
             for g in grupos_t2:
                 resultados.append({
                     "Fecha": fecha_dt,
@@ -370,38 +359,54 @@ else:
                     "Turno": "T2"
                 })
 
-            # ==============================
-            # asignar relevo TR
-            # ==============================
+            # grupo relevo
+            if grupo_descanso:
+                grupo_tr = (
+                    grupo_descanso
+                )
+            else:
+                grupo_tr = (
+                    grupos_activos[-1]
+                )
 
-            personas = personal_grupos[grupo_descanso]
+            personas = (
+                personal_grupos[
+                    grupo_tr
+                ]
+            )
 
             persona_tr = min(
                 personas,
-                key=lambda x: conteo_tr[x]
+                key=lambda x:
+                conteo_tr[x]
             )
 
-            conteo_tr[persona_tr] += 1
+            conteo_tr[
+                persona_tr
+            ] += 1
 
             resultados.append({
                 "Fecha": fecha_dt,
-                "Grupo": grupo_descanso,
+                "Grupo": grupo_tr,
                 "Turno": "TR",
-                "Persona TR": persona_tr
+                "Persona TR":
+                    persona_tr
             })
 
         df_malla = pd.DataFrame(
             resultados
         )
 
-        st.session_state["malla_abordaje"] = df_malla
+        st.session_state[
+            "malla_abordaje"
+        ] = df_malla
 
         st.success(
             "✅ Malla abordaje generada correctamente"
         )
 
     # ============================================
-    # VISUALIZAR
+    # MOSTRAR
     # ============================================
 
     if "malla_abordaje" in st.session_state:
@@ -441,8 +446,6 @@ else:
             tr_df,
             use_container_width=True
         )
-
-
 
 
 
