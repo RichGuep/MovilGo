@@ -485,6 +485,7 @@ def pantalla_programador():
     st.title(
         "📅 Programador Maestro MovilGo"
     )
+    PERSONAL = cargar_personal()
 
     dias_semana = [
 
