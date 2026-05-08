@@ -233,13 +233,146 @@ def pantalla_abordaje():
     # =========================================
     # BOTÓN
     # =========================================
+if st.button(
+    "🚀 Generar Malla Abordaje"
+):
 
-    if st.button(
-        "🚀 Generar Malla Abordaje"
-    ):
-        st.success(
-            "✅ Módulo de abordaje funcionando correctamente."
+    # =====================================
+    # CREAR 5 GRUPOS DE 5 PERSONAS
+    # =====================================
+
+    personal = df_ab["Nombre"].tolist()
+
+    grupos = {
+        "Grupo A": personal[0:5],
+        "Grupo B": personal[5:10],
+        "Grupo C": personal[10:15],
+        "Grupo D": personal[15:20],
+        "Grupo E": personal[20:25]
+    }
+
+    descansos = {
+        "Grupo A": dias_semana.index(d_a),
+        "Grupo B": dias_semana.index(d_b),
+        "Grupo C": dias_semana.index(d_c),
+        "Grupo D": dias_semana.index(d_d),
+        "Grupo E": dias_semana.index(d_e)
+    }
+
+    resultados = []
+
+    fecha_actual = f1.date_input(
+        "tmp_inicio",
+        datetime.now(),
+        key="hidden1"
+    )
+
+    fecha_final = f2.date_input(
+        "tmp_fin",
+        datetime.now() + timedelta(days=14),
+        key="hidden2"
+    )
+
+    fechas = [
+        fecha_actual + timedelta(days=x)
+        for x in range(
+            (fecha_final - fecha_actual).days + 1
         )
+    ]
+
+    tr_contador = {
+        persona: 0
+        for persona in personal
+    }
+
+    for fecha in fechas:
+
+        dia = fecha.weekday()
+
+        semana = fecha.isocalendar()[1]
+
+        grupo_descanso = None
+
+        for g, d in descansos.items():
+            if d == dia:
+                grupo_descanso = g
+                break
+
+        grupos_activos = [
+            g for g in grupos
+            if g != grupo_descanso
+        ]
+
+        # rotación semanal
+        if semana % 2 == 0:
+            grupos_t1 = grupos_activos[:2]
+            grupos_t2 = grupos_activos[2:]
+        else:
+            grupos_t2 = grupos_activos[:2]
+            grupos_t1 = grupos_activos[2:]
+
+        # asignar grupos T1
+        for g in grupos_t1:
+            for persona in grupos[g]:
+                resultados.append({
+                    "Fecha": fecha,
+                    "Persona": persona,
+                    "Grupo": g,
+                    "Turno": "T1"
+                })
+
+        # asignar grupos T2
+        for g in grupos_t2:
+            for persona in grupos[g]:
+                resultados.append({
+                    "Fecha": fecha,
+                    "Persona": persona,
+                    "Grupo": g,
+                    "Turno": "T2"
+                })
+
+        # grupo descanso
+        for persona in grupos[grupo_descanso]:
+            resultados.append({
+                "Fecha": fecha,
+                "Persona": persona,
+                "Grupo": grupo_descanso,
+                "Turno": "DESC"
+            })
+
+        # elegir relevo TR
+        persona_tr = min(
+            tr_contador,
+            key=tr_contador.get
+        )
+
+        tr_contador[persona_tr] += 1
+
+        resultados.append({
+            "Fecha": fecha,
+            "Persona": persona_tr,
+            "Grupo": "RELEVO",
+            "Turno": "TR"
+        })
+
+    df_malla = pd.DataFrame(
+        resultados
+    )
+
+    st.session_state[
+        "malla_abordaje"
+    ] = df_malla
+
+    st.success(
+        "✅ Malla generada correctamente"
+    )
+
+
+
+
+
+
+
 def pantalla_programador():
     modulo = st.radio(
         "Selecciona módulo",
