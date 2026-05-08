@@ -311,11 +311,27 @@ def pantalla_abordaje():
             # identificar grupo descanso
             # ==============================
 
-            grupo_descanso = None
+           # Buscar grupo en descanso
+grupos_descanso = [
+    g for g, d in descansos.items()
+    if d == dia_semana
+]
 
-            for g, d in descansos.items():
-                if d == dia_semana:
-                    grupo_descanso = g
+# Validación
+if not grupos_descanso:
+    st.error(
+        f"No hay grupo configurado para descansar el día {dias_semana[dia_semana]}"
+    )
+    return
+
+if len(grupos_descanso) > 1:
+    st.error(
+        f"Hay varios grupos descansando el mismo día ({dias_semana[dia_semana]}). "
+        "Cada grupo debe tener un día diferente."
+    )
+    return
+
+grupo_descanso = grupos_descanso[0]
 
             grupos_activos = [
                 g for g in GRUPOS_AB
