@@ -312,6 +312,8 @@ def pantalla_abordaje():
             # ==============================
 
            # Buscar grupo en descanso
+
+# Buscar grupo en descanso
 grupos_descanso = [
     g for g, d in descansos.items()
     if d == dia_semana
@@ -337,11 +339,6 @@ grupos_activos = [
     g for g in GRUPOS_AB
     if g != grupo_descanso
 ]
-
-            grupos_activos = [
-                g for g in GRUPOS_AB
-                if g != grupo_descanso
-            ]
 
             # ==============================
             # rotación semanal
