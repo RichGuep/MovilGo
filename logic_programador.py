@@ -162,7 +162,7 @@ def pantalla_asignacion_grupos():
 
         abordaje = df[
             df["Cargo"].astype(str).str.contains(
-                "Abordaje",
+                "Auxiliar de Abordaje y Atención al Público ",
                 case=False,
                 na=False
             )
