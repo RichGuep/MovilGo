@@ -116,13 +116,28 @@ def pantalla_programador_tecnicos():
             dia = dias[fecha.weekday()]
             semana = fecha.isocalendar().week
 
-            # Rotación de turnos
+            # Rotación fija garantizando siempre T1, T2 y T3
+            # Grupo 4 hace apoyo; si algún grupo entra en descanso,
+            # el grupo de apoyo cubre ese turno para no dejar huecos
             base = {
                 grupos[0]: "T1",
                 grupos[1]: "T2",
                 grupos[2]: "T3",
                 grupos[3]: "T1_APOYO" if semana % 2 == 0 else "T2_APOYO"
             }
+
+            # detectar quién descansa hoy
+            grupo_descanso = None
+            for gx in grupos:
+                if descansos[gx] == dia:
+                    grupo_descanso = gx
+                    break
+
+            # garantizar cobertura: apoyo reemplaza al grupo que descansa
+            if grupo_descanso:
+                turno_faltante = base[grupo_descanso]
+                if "APOYO" in base[grupos[3]]:
+                    base[grupos[3]] = turno_faltante
 
             for g in grupos:
                 turno = base[g]
@@ -131,7 +146,11 @@ def pantalla_programador_tecnicos():
                 if descansos[g] == dia:
                     turno = "DESCANSO_LEY"
 
-                # compensado inmediato si no descansó
+                # compensado SOLO si perdió su descanso de ley
+                # si hoy es su día parametrizado, siempre priorizar DESCANSO_LEY
+                if descansos[g] == dia:
+                    turno = "DESCANSO_LEY"
+                    deuda_comp[g] = False
                 elif deuda_comp[g] and fecha.weekday() < 5:
                     turno = "COMPENSADO"
                     deuda_comp[g] = False
@@ -141,8 +160,9 @@ def pantalla_programador_tecnicos():
                 if anterior == "T3" and turno in ["T1", "T2", "T1_APOYO", "T2_APOYO"]:
                     st.warning(f"⚠️ Salto ilegal detectado: {g} pasó de T3 a {turno} ({fecha.date()})")
 
-                # si no descansó en semana
-                if dia == "Domingo" and descansos[g] != dia and turno != "DESCANSO_LEY":
+                # marcar compensado SOLO si llegó su día de descanso y no pudo descansar
+                # porque debía cubrir T1/T2/T3
+                if descansos[g] == dia and turno != "DESCANSO_LEY":
                     deuda_comp[g] = True
 
                 historial[g] = turno
