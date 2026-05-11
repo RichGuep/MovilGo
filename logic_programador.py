@@ -1,15 +1,5 @@
-# logic_programador_v13_05.py
-# VERSIÓN COMPLETA - MovilGo
-# Incluye:
-# - Técnicos
-# - Programador Técnicos
-# - Abordaje
-# - Asignación de grupos
-# - Rotación automática de descansos
-# - Auditoría de turnos
-# - Colores en malla
-# - Malla detallada por persona
-# - Editor manual básico
+# logic_programador.py
+# VERSIÓN 13:05 COMPLETA
 
 import streamlit as st
 import pandas as pd
@@ -19,236 +9,239 @@ from datetime import datetime, timedelta
 from github import Github
 
 # =========================================================
-# CONEXIÓN GITHUB
+# CONFIGURACIÓN
+# =========================================================
+TURNOS = ["T1", "T2", "T3", "T1 APOYO", "T2 APOYO", "DESCANSO", "COMPENSADO"]
+HORARIOS = {
+    "T1": "05:30-12:50",
+    "T2": "13:30-20:50",
+    "T3": "21:30-04:50",
+    "T1 APOYO": "05:30-12:50",
+    "T2 APOYO": "13:30-20:50",
+}
+GRUPOS_TEC = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+# =========================================================
+# GITHUB
 # =========================================================
 def conectar_github():
     try:
         if "GITHUB_TOKEN" not in st.secrets:
-            st.error("❌ Token GITHUB_TOKEN no configurado")
+            st.error("❌ Falta GITHUB_TOKEN")
             return None
         return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
     except Exception as e:
-        st.error(f"Error GitHub: {e}")
+        st.error(f"GitHub error: {e}")
         return None
 
-# =========================================================
-# GUARDAR EMPLEADOS
-# =========================================================
-def guardar_empleados(repo, df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
-    contenido = output.getvalue()
-    try:
-        file = repo.get_contents("empleados.xlsx")
-        repo.update_file("empleados.xlsx", "Actualización empleados", contenido, file.sha)
-    except:
-        repo.create_file("empleados.xlsx", "Creación empleados", contenido)
 
-# =========================================================
-# PANTALLA TÉCNICOS
-# =========================================================
-def pantalla_tecnicos():
-    st.title("👷 Control Técnicos")
+def cargar_excel(nombre):
+    repo = conectar_github()
+    if not repo:
+        return pd.DataFrame()
+    try:
+        c = repo.get_contents(nombre)
+        df = pd.read_excel(io.BytesIO(c.decoded_content))
+        df.columns = df.columns.str.strip()
+        return df
+    except:
+        return pd.DataFrame()
+
+
+def guardar_excel(df, nombre):
     repo = conectar_github()
     if not repo:
         return
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    data = output.getvalue()
     try:
-        contents = repo.get_contents("empleados.xlsx")
-        df = pd.read_excel(io.BytesIO(contents.decoded_content))
-    except Exception as e:
-        st.error(f"Error cargando empleados.xlsx: {e}")
+        c = repo.get_contents(nombre)
+        repo.update_file(nombre, "update", data, c.sha)
+    except:
+        repo.create_file(nombre, "create", data)
+
+# =========================================================
+# ASIGNACIÓN DE GRUPOS
+# =========================================================
+def asignar_grupos():
+    st.header("🧩 Asignación automática de grupos")
+    df = cargar_excel("empleados.xlsx")
+    if df.empty:
+        st.warning("No hay empleados")
         return
 
-    df.columns = df.columns.str.strip()
     if "Grupo" not in df.columns:
         df["Grupo"] = ""
 
-    df_tecnicos = df[df["Cargo"].astype(str).str.contains("Master|Tecnico A|Tecnico B", case=False, na=False)].copy()
+    st.dataframe(df, use_container_width=True)
 
-    st.subheader("⏰ Parametrizador de Turnos")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.time_input("T1 Inicio", datetime.strptime("05:30", "%H:%M").time())
-        st.time_input("T1 Fin", datetime.strptime("12:50", "%H:%M").time())
-    with c2:
-        st.time_input("T2 Inicio", datetime.strptime("13:30", "%H:%M").time())
-        st.time_input("T2 Fin", datetime.strptime("20:50", "%H:%M").time())
-    with c3:
-        st.time_input("T3 Inicio", datetime.strptime("21:30", "%H:%M").time())
-        st.time_input("T3 Fin", datetime.strptime("04:50", "%H:%M").time())
+    if st.button("🚀 Asignar grupos automáticamente"):
+        asignacion = {}
 
-    st.subheader("📋 Personal Técnico")
-    df_edit = st.data_editor(df_tecnicos, use_container_width=True, num_rows="dynamic")
-    if st.button("💾 Guardar técnicos"):
-        guardar_empleados(repo, df_edit)
-        st.success("✅ Técnicos guardados")
+        masters = df[df["Cargo"] == "Master"].sample(frac=1)
+        tec_a = df[df["Cargo"] == "Tecnico A"].sample(frac=1)
+        tec_b = df[df["Cargo"] == "Tecnico B"].sample(frac=1)
+        abordaje = df[df["Cargo"].astype(str).str.contains("Auxiliar de Abordaje y Atención al Público", na=False)].sample(frac=1)
+
+        if len(masters) < 8 or len(tec_a) < 28 or len(tec_b) < 12:
+            st.error("❌ No cumple cantidades mínimas técnicos")
+            return
+
+        idx = 0
+        for g in GRUPOS_TEC:
+            for _ in range(2):
+                asignacion[masters.iloc[idx]["Nombre"]] = g
+                idx += 1
+
+        idx = 0
+        for g in GRUPOS_TEC:
+            for _ in range(7):
+                asignacion[tec_a.iloc[idx]["Nombre"]] = g
+                idx += 1
+
+        idx = 0
+        for g in GRUPOS_TEC:
+            for _ in range(3):
+                asignacion[tec_b.iloc[idx]["Nombre"]] = g
+                idx += 1
+
+        grupos_ab = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
+        if len(abordaje) >= 25:
+            idx = 0
+            for g in grupos_ab:
+                for _ in range(5):
+                    asignacion[abordaje.iloc[idx]["Nombre"]] = g
+                    idx += 1
+
+        df["Grupo"] = df["Nombre"].map(lambda x: asignacion.get(x, ""))
+        guardar_excel(df, "empleados.xlsx")
+        st.success("✅ Grupos asignados")
+        st.dataframe(df, use_container_width=True)
 
 # =========================================================
 # PROGRAMADOR TÉCNICOS
 # =========================================================
-def pantalla_programador_tecnicos():
-    st.title("📅 Programador Técnicos")
-
-    grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-
-    st.subheader("⚙️ Parametrización Descansos")
-    descansos = {}
-    cols = st.columns(2)
-    for i, g in enumerate(grupos):
-        descansos[g] = cols[i % 2].selectbox(f"Descanso {g}", dias, index=i)
-
-    st.subheader("🔄 Rotación automática")
-    tipo_rotacion = st.radio("Frecuencia", ["Quincenal", "Mensual"], horizontal=True)
+def generar_malla_tecnicos():
+    st.header("📅 Programador Técnicos")
 
     c1, c2 = st.columns(2)
     fecha_ini = c1.date_input("Inicio", datetime.now())
     fecha_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
-    if st.button("🚀 Generar Malla Técnicos"):
+    st.subheader("Descanso parametrizado")
+    descansos = {}
+    cols = st.columns(4)
+    for i, g in enumerate(GRUPOS_TEC):
+        descansos[g] = cols[i].selectbox(g, DIAS, index=i)
+
+    if st.button("🚀 Generar malla"):
         fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
-        resultados = []
-        historial = {g: None for g in grupos}
-        deuda_comp = {g: False for g in grupos}
+        filas = []
+
+        secuencia = {"Grupo 1": 0, "Grupo 2": 1, "Grupo 3": 2, "Grupo 4": 0}
+        ultimo_turno = {g: None for g in GRUPOS_TEC}
+        debe_compensado = {g: False for g in GRUPOS_TEC}
 
         for fecha in fechas:
-            dia = dias[fecha.weekday()]
-            semana = fecha.isocalendar().week
+            dia = DIAS[fecha.weekday()]
 
-                        # ROTACIÓN SEMANAL REAL:
-            # cada grupo cambia cada semana: T1 → T2 → T3 → APOYO → repetir
-            rot = (semana - 1) % 4
-            mapa_base = ["T1", "T2", "T3", "APOYO"]
-            base = {}
-            for idx, g in enumerate(grupos):
-                turno_base = mapa_base[(idx + rot) % 4]
-                if turno_base == "APOYO":
-                    turno_base = "T1_APOYO" if semana % 2 == 0 else "T2_APOYO"
-                base[g] = turno_base
+            for g in GRUPOS_TEC:
+                turno = None
 
-            # REGLA ESPECIAL:
-            # si un grupo estuvo en T3 la semana pasada,
-            # debe pasar primero por DESCANSO antes de ir a T1
-            for g in grupos:
-                anterior = historial[g]
-                if anterior == "T3" and base[g] in ["T1", "T2", "T1_APOYO", "T2_APOYO"]:
-                    base[g] = "DESCANSO_LEY"
-
-            # detectar quién descansa hoy
-            grupo_descanso = None
-            for gx in grupos:
-                if descansos[gx] == dia:
-                    grupo_descanso = gx
-                    break
-
-            # garantizar cobertura: apoyo reemplaza al grupo que descansa
-            if grupo_descanso:
-                turno_faltante = base[grupo_descanso]
-                if "APOYO" in base[grupos[3]]:
-                    base[grupos[3]] = turno_faltante
-
-            for g in grupos:
-                turno = base[g]
-
-                # descanso ley
                 if descansos[g] == dia:
-                    turno = "DESCANSO_LEY"
-
-                # compensado SOLO si perdió su descanso de ley
-                # si hoy es su día parametrizado, siempre priorizar DESCANSO_LEY
-                if descansos[g] == dia:
-                    turno = "DESCANSO_LEY"
-                    deuda_comp[g] = False
-                elif deuda_comp[g] and fecha.weekday() < 5:
+                    turno = "DESCANSO"
+                    secuencia[g] = (secuencia[g] + 1) % 3
+                elif debe_compensado[g]:
                     turno = "COMPENSADO"
-                    deuda_comp[g] = False
+                    debe_compensado[g] = False
+                else:
+                    base = ["T1", "T2", "T3"][secuencia[g]]
+                    turno = base
 
-                                # auditoría salto ilegal T3 -> T1/T2
-                anterior = historial[g]
-                if anterior == "T3" and turno in ["T1", "T2", "T1_APOYO", "T2_APOYO"]:
-                    st.error(f"🚨 Salto ilegal detectado: {g} pasó de T3 a {turno} ({fecha.date()})")
+                    # impedir salto T3 -> T1 sin descanso
+                    if ultimo_turno[g] == "T3" and turno == "T1":
+                        turno = "DESCANSO"
+                        secuencia[g] = (secuencia[g] + 1) % 3
 
-                # marcar compensado SOLO si perdió descanso parametrizado
-                # porque debía cubrir T1/T2/T3
-                if descansos[g] == dia and turno != "DESCANSO_LEY":
-                    deuda_comp[g] = True
+                ultimo_turno[g] = turno
 
-                historial[g] = turno
-
-                resultados.append({
-                    "Fecha": fecha.strftime("%d/%m/%Y"),
+                filas.append({
+                    "Fecha": fecha.strftime("%Y-%m-%d"),
                     "Día": dia,
                     "Grupo": g,
                     "Turno": turno
                 })
 
-        df = pd.DataFrame(resultados)
-        # ordenar correctamente por fecha real
-        df["Fecha_Orden"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y")
-        df = df.sort_values(["Fecha_Orden", "Grupo"]).reset_index(drop=True)
+        df = pd.DataFrame(filas)
         st.session_state["malla_tecnicos"] = df
+        guardar_excel(df, "malla_historica.xlsx")
         st.success("✅ Malla generada")
 
     if "malla_tecnicos" in st.session_state:
         df = st.session_state["malla_tecnicos"]
 
-        st.subheader("🎨 Malla de Turnos")
-        # ordenar columnas por fecha real antes de pivotear
-        fechas_ordenadas = (
-            df[["Fecha", "Día", "Fecha_Orden"]]
-            .drop_duplicates()
-            .sort_values("Fecha_Orden")
+        st.subheader("📋 Malla visual")
+        pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
+        st.dataframe(pivot, use_container_width=True)
+
+        st.subheader("✏️ Editor manual")
+        edit = st.data_editor(
+            df,
+            column_config={
+                "Turno": st.column_config.SelectboxColumn(
+                    "Turno",
+                    options=TURNOS
+                )
+            },
+            use_container_width=True
         )
-        matriz = df.pivot_table(index="Grupo", columns=["Fecha", "Día"], values="Turno", aggfunc="first")
-        matriz = matriz.reindex(columns=pd.MultiIndex.from_frame(fechas_ordenadas[["Fecha", "Día"]]))
 
-        def color_turnos(val):
-            colores = {
-                "T1": "background-color:#d9edf7",
-                "T2": "background-color:#dff0d8",
-                "T3": "background-color:#f2dede",
-                "T1_APOYO": "background-color:#fcf8e3",
-                "T2_APOYO": "background-color:#fcf8e3",
-                "DESCANSO_LEY": "background-color:#d0e9c6",
-                "COMPENSADO": "background-color:#bce8f1"
-            }
-            return colores.get(val, "")
+        if st.button("💾 Guardar cambios de malla"):
+            st.session_state["malla_tecnicos"] = edit
+            guardar_excel(edit, "malla_historica.xlsx")
+            st.success("Cambios guardados")
 
-        st.dataframe(matriz.style.map(color_turnos), use_container_width=True)
-
-        st.subheader("👤 Malla detallada por persona")
-        st.dataframe(df, use_container_width=True)
+        st.subheader("📊 Auditoría")
+        c1, c2, c3 = st.columns(3)
+        c1.write("**Balance turnos**")
+        c1.dataframe(df.groupby(["Grupo", "Turno"]).size())
+        c2.write("**Descansos**")
+        c2.dataframe(df[df["Turno"].isin(["DESCANSO", "COMPENSADO"])]
+                      .groupby("Grupo").size())
+        c3.write("**Alertas saltos**")
+        alertas = []
+        for g in GRUPOS_TEC:
+            gdf = df[df["Grupo"] == g]
+            prev = None
+            for _, r in gdf.iterrows():
+                if prev == "T3" and r["Turno"] in ["T1", "T2"]:
+                    alertas.append([g, r["Fecha"], "Salto inválido"])
+                prev = r["Turno"]
+        st.dataframe(pd.DataFrame(alertas, columns=["Grupo", "Fecha", "Alerta"]))
 
 # =========================================================
 # ABORDAJE
 # =========================================================
 def pantalla_abordaje():
-    st.title("🚌 Personal Abordaje")
-    st.info("Módulo operativo de abordaje activo.")
-
-# =========================================================
-# ASIGNACIÓN DE GRUPOS
-# =========================================================
-def pantalla_asignacion_grupos():
-    st.title("🧩 Asignación automática de grupos")
-    st.write("Mantiene: 2 Master + 7 Técnico A + 3 Técnico B por grupo; abordaje 5x5.")
+    st.header("🚌 Personal Abordaje")
+    st.info("Módulo activo. Puedes extender aquí la lógica de abordaje ya funcional.")
 
 # =========================================================
 # MENÚ PRINCIPAL
 # =========================================================
 def pantalla_programador():
-    modulo = st.radio(
+    mod = st.radio(
         "Selecciona módulo",
-        ["👷 Técnicos", "📅 Programador Técnicos", "🚌 Personal Abordaje", "🧩 Grupos"],
+        ["📅 Programador Técnicos", "🧩 Grupos", "🚌 Personal Abordaje"],
         horizontal=True
     )
 
-    if modulo == "👷 Técnicos":
-        pantalla_tecnicos()
-    elif modulo == "📅 Programador Técnicos":
-        pantalla_programador_tecnicos()
-    elif modulo == "🚌 Personal Abordaje":
+    if mod == "📅 Programador Técnicos":
+        generar_malla_tecnicos()
+    elif mod == "🧩 Grupos":
+        asignar_grupos()
+    else:
         pantalla_abordaje()
-    elif modulo == "🧩 Grupos":
-        pantalla_asignacion_grupos()
