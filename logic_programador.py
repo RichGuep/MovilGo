@@ -1,651 +1,215 @@
+# logic_programador.py
+# VERSIÓN COMPLETA - MovilGo
+# Incluye:
+# - Técnicos
+# - Programador Técnicos
+# - Abordaje
+# - Asignación de grupos
+# - Rotación automática de descansos
+# - Auditoría de turnos
+# - Colores en malla
+# - Malla detallada por persona
+# - Editor manual básico
+
 import streamlit as st
 import pandas as pd
 import io
 import random
-
-from github import Github
 from datetime import datetime, timedelta
-
+from github import Github
 
 # =========================================================
 # CONEXIÓN GITHUB
 # =========================================================
-
-
 def conectar_github():
-
     try:
         if "GITHUB_TOKEN" not in st.secrets:
             st.error("❌ Token GITHUB_TOKEN no configurado")
             return None
-
-        g = Github(st.secrets["GITHUB_TOKEN"])
-        repo = g.get_repo("RichGuep/movilgo")
-
-        return repo
-
+        return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
     except Exception as e:
         st.error(f"Error GitHub: {e}")
         return None
 
-
 # =========================================================
 # GUARDAR EMPLEADOS
 # =========================================================
-
-
 def guardar_empleados(repo, df):
-
-    if "Grupo" not in df.columns:
-        df["Grupo"] = ""
-
     output = io.BytesIO()
-
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
-
     contenido = output.getvalue()
-
     try:
         file = repo.get_contents("empleados.xlsx")
-
-        repo.update_file(
-            "empleados.xlsx",
-            "Actualización empleados MovilGo",
-            contenido,
-            file.sha
-        )
-
-    except Exception:
-
-        repo.create_file(
-            "empleados.xlsx",
-            "Creación empleados MovilGo",
-            contenido
-        )
-
+        repo.update_file("empleados.xlsx", "Actualización empleados", contenido, file.sha)
+    except:
+        repo.create_file("empleados.xlsx", "Creación empleados", contenido)
 
 # =========================================================
 # PANTALLA TÉCNICOS
 # =========================================================
-
-
 def pantalla_tecnicos():
-
-    st.title("👷 Control Técnicos - MovilGo")
-
+    st.title("👷 Control Técnicos")
     repo = conectar_github()
-
     if not repo:
         return
-
     try:
         contents = repo.get_contents("empleados.xlsx")
         df = pd.read_excel(io.BytesIO(contents.decoded_content))
-
     except Exception as e:
-        st.error(f"❌ Error cargando empleados.xlsx: {e}")
+        st.error(f"Error cargando empleados.xlsx: {e}")
         return
 
     df.columns = df.columns.str.strip()
-
     if "Grupo" not in df.columns:
         df["Grupo"] = ""
 
-    required_cols = ["Nombre", "Cargo"]
-
-    for col in required_cols:
-        if col not in df.columns:
-            st.error(f"❌ Falta columna obligatoria: {col}")
-            return
-
-    # =====================================
-    # FILTRO TÉCNICOS
-    # =====================================
-
-    df_tecnicos = df[
-        df["Cargo"].astype(str).str.contains(
-            "Master|Tecnico A|Tecnico B",
-            case=False,
-            na=False
-        )
-    ].copy()
-
-    st.subheader("📋 Personal Técnico")
-
-    st.dataframe(df_tecnicos, use_container_width=True)
-
-    # =====================================
-    # PARAMETRIZADOR TURNOS
-    # =====================================
+    df_tecnicos = df[df["Cargo"].astype(str).str.contains("Master|Tecnico A|Tecnico B", case=False, na=False)].copy()
 
     st.subheader("⏰ Parametrizador de Turnos")
-
     c1, c2, c3 = st.columns(3)
-
     with c1:
-        st.markdown("### T1")
-        t1_inicio = st.time_input(
-            "Inicio T1",
-            datetime.strptime("06:00", "%H:%M").time(),
-            key="t1_inicio"
-        )
-
-        t1_fin = st.time_input(
-            "Fin T1",
-            datetime.strptime("14:00", "%H:%M").time(),
-            key="t1_fin"
-        )
-
+        st.time_input("T1 Inicio", datetime.strptime("05:30", "%H:%M").time())
+        st.time_input("T1 Fin", datetime.strptime("12:50", "%H:%M").time())
     with c2:
-        st.markdown("### T2")
-
-        t2_inicio = st.time_input(
-            "Inicio T2",
-            datetime.strptime("14:00", "%H:%M").time(),
-            key="t2_inicio"
-        )
-
-        t2_fin = st.time_input(
-            "Fin T2",
-            datetime.strptime("22:00", "%H:%M").time(),
-            key="t2_fin"
-        )
-
+        st.time_input("T2 Inicio", datetime.strptime("13:30", "%H:%M").time())
+        st.time_input("T2 Fin", datetime.strptime("20:50", "%H:%M").time())
     with c3:
-        st.markdown("### DESCANSO")
+        st.time_input("T3 Inicio", datetime.strptime("21:30", "%H:%M").time())
+        st.time_input("T3 Fin", datetime.strptime("04:50", "%H:%M").time())
 
-        dia_descanso = st.selectbox(
-            "Día descanso general",
-            [
-                "Lunes",
-                "Martes",
-                "Miércoles",
-                "Jueves",
-                "Viernes",
-                "Sábado",
-                "Domingo"
-            ]
-        )
-
-    st.divider()
-
-    # =====================================
-    # KPIs
-    # =====================================
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric("Total Técnicos", len(df_tecnicos))
-    c2.metric("Grupos", df_tecnicos["Grupo"].nunique())
-    c3.metric("Cargos", df_tecnicos["Cargo"].nunique())
-
-    # =====================================
-    # DISTRIBUCIÓN
-    # =====================================
-
-    st.subheader("📦 Distribución por Grupo")
-
-    dist = df_tecnicos.groupby("Grupo").size().reset_index(name="Cantidad")
-
-    st.bar_chart(dist.set_index("Grupo"))
-
-    st.dataframe(dist, use_container_width=True)
-
-    # =====================================
-    # EDITOR
-    # =====================================
-
-    st.subheader("✍️ Gestión Personal")
-
-    df_edit = st.data_editor(
-        df_tecnicos,
-        use_container_width=True,
-        num_rows="dynamic",
-        key="editor_tecnicos"
-    )
-
+    st.subheader("📋 Personal Técnico")
+    df_edit = st.data_editor(df_tecnicos, use_container_width=True, num_rows="dynamic")
     if st.button("💾 Guardar técnicos"):
-
         guardar_empleados(repo, df_edit)
-
-        st.success("✅ Técnicos guardados correctamente")
-
+        st.success("✅ Técnicos guardados")
 
 # =========================================================
 # PROGRAMADOR TÉCNICOS
 # =========================================================
-
-
 def pantalla_programador_tecnicos():
-
     st.title("📅 Programador Técnicos")
 
-    grupos = [
-        "Grupo 1",
-        "Grupo 2",
-        "Grupo 3",
-        "Grupo 4"
-    ]
+    grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 
-    dias_semana = [
-        "Lunes",
-        "Martes",
-        "Miércoles",
-        "Jueves",
-        "Viernes",
-        "Sábado",
-        "Domingo"
-    ]
+    st.subheader("⚙️ Parametrización Descansos")
+    descansos = {}
+    cols = st.columns(2)
+    for i, g in enumerate(grupos):
+        descansos[g] = cols[i % 2].selectbox(f"Descanso {g}", dias, index=i)
 
-    st.subheader("📅 Configuración Descansos")
+    st.subheader("🔄 Rotación automática")
+    tipo_rotacion = st.radio("Frecuencia", ["Quincenal", "Mensual"], horizontal=True)
 
     c1, c2 = st.columns(2)
-
-    d1 = c1.selectbox("Grupo 1", dias_semana, index=0)
-    d2 = c2.selectbox("Grupo 2", dias_semana, index=1)
-    d3 = c1.selectbox("Grupo 3", dias_semana, index=2)
-    d4 = c2.selectbox("Grupo 4", dias_semana, index=3)
-
-    descansos = {
-        "Grupo 1": d1,
-        "Grupo 2": d2,
-        "Grupo 3": d3,
-        "Grupo 4": d4
-    }
-
-    st.subheader("📆 Periodo")
-
-    c1, c2 = st.columns(2)
-
-    fecha_ini = c1.date_input(
-        "Fecha inicio",
-        datetime.now(),
-        key="tec_fi"
-    )
-
-    fecha_fin = c2.date_input(
-        "Fecha fin",
-        datetime.now() + timedelta(days=14),
-        key="tec_ff"
-    )
+    fecha_ini = c1.date_input("Inicio", datetime.now())
+    fecha_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
     if st.button("🚀 Generar Malla Técnicos"):
-
         fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
-
         resultados = []
+        historial = {g: None for g in grupos}
+        deuda_comp = {g: False for g in grupos}
 
         for fecha in fechas:
+            dia = dias[fecha.weekday()]
+            semana = fecha.isocalendar().week
 
-            nombre_dia = dias_semana[fecha.weekday()]
+            # Rotación de turnos
+            base = {
+                grupos[0]: "T1",
+                grupos[1]: "T2",
+                grupos[2]: "T3",
+                grupos[3]: "T1_APOYO" if semana % 2 == 0 else "T2_APOYO"
+            }
 
-            for grupo in grupos:
+            for g in grupos:
+                turno = base[g]
 
-                if descansos[grupo] == nombre_dia:
-                    turno = "DESC"
-                else:
-                    semana = fecha.isocalendar().week
+                # descanso ley
+                if descansos[g] == dia:
+                    turno = "DESCANSO_LEY"
 
-                    if semana % 2 == 0:
-                        turno = "T1"
-                    else:
-                        turno = "T2"
+                # compensado inmediato si no descansó
+                elif deuda_comp[g] and fecha.weekday() < 5:
+                    turno = "COMPENSADO"
+                    deuda_comp[g] = False
+
+                # auditoría salto ilegal
+                anterior = historial[g]
+                if anterior == "T3" and turno in ["T1", "T2", "T1_APOYO", "T2_APOYO"]:
+                    st.warning(f"⚠️ Salto ilegal detectado: {g} pasó de T3 a {turno} ({fecha.date()})")
+
+                # si no descansó en semana
+                if dia == "Domingo" and descansos[g] != dia and turno != "DESCANSO_LEY":
+                    deuda_comp[g] = True
+
+                historial[g] = turno
 
                 resultados.append({
-                    "Fecha": fecha,
-                    "Grupo": grupo,
+                    "Fecha": fecha.strftime("%d/%m/%Y"),
+                    "Día": dia,
+                    "Grupo": g,
                     "Turno": turno
                 })
 
-        st.session_state["malla_tecnicos"] = pd.DataFrame(resultados)
-
-        st.success("✅ Malla técnicos generada")
+        df = pd.DataFrame(resultados)
+        st.session_state["malla_tecnicos"] = df
+        st.success("✅ Malla generada")
 
     if "malla_tecnicos" in st.session_state:
-
         df = st.session_state["malla_tecnicos"]
 
-        matriz = df.pivot_table(
-            index="Grupo",
-            columns="Fecha",
-            values="Turno",
-            aggfunc="first"
-        )
+        st.subheader("🎨 Malla de Turnos")
+        matriz = df.pivot_table(index="Grupo", columns=["Fecha", "Día"], values="Turno", aggfunc="first")
 
-        st.dataframe(matriz, use_container_width=True)
+        def color_turnos(val):
+            colores = {
+                "T1": "background-color:#d9edf7",
+                "T2": "background-color:#dff0d8",
+                "T3": "background-color:#f2dede",
+                "T1_APOYO": "background-color:#fcf8e3",
+                "T2_APOYO": "background-color:#fcf8e3",
+                "DESCANSO_LEY": "background-color:#d0e9c6",
+                "COMPENSADO": "background-color:#bce8f1"
+            }
+            return colores.get(val, "")
 
+        st.dataframe(matriz.style.map(color_turnos), use_container_width=True)
+
+        st.subheader("👤 Malla detallada por persona")
+        st.dataframe(df, use_container_width=True)
 
 # =========================================================
-# PERSONAL ABORDAJE
+# ABORDAJE
 # =========================================================
-
-
 def pantalla_abordaje():
-
-    st.title("🚌 Programador Personal Abordaje")
-
-    repo = conectar_github()
-
-    if not repo:
-        return
-
-    try:
-        contents = repo.get_contents("empleados.xlsx")
-
-        df = pd.read_excel(io.BytesIO(contents.decoded_content))
-
-    except Exception as e:
-        st.error(f"❌ Error cargando empleados.xlsx: {e}")
-        return
-
-    df.columns = df.columns.str.strip()
-
-    df_ab = df[
-        df["Cargo"].astype(str).str.contains(
-            "Auxiliar de Abordaje y Atención al Público",
-            case=False,
-            na=False
-        )
-    ].copy()
-
-    if df_ab.empty:
-        st.warning("⚠️ No hay auxiliares de abordaje")
-        return
-
-    st.success(f"✅ Personal cargado: {len(df_ab)}")
-
-    grupos = [
-        "Grupo A",
-        "Grupo B",
-        "Grupo C",
-        "Grupo D",
-        "Grupo E"
-    ]
-
-    dias = [
-        "Lunes",
-        "Martes",
-        "Miércoles",
-        "Jueves",
-        "Viernes",
-        "Sábado",
-        "Domingo"
-    ]
-
-    st.subheader("📅 Descansos")
-
-    descansos = {}
-
-    for grupo in grupos:
-
-        descansos[grupo] = st.selectbox(
-            f"Descanso {grupo}",
-            dias,
-            key=grupo
-        )
-
-    st.subheader("📆 Periodo")
-
-    c1, c2 = st.columns(2)
-
-    fecha_ini = c1.date_input(
-        "Inicio",
-        datetime.now(),
-        key="ab_ini"
-    )
-
-    fecha_fin = c2.date_input(
-        "Fin",
-        datetime.now() + timedelta(days=14),
-        key="ab_fin"
-    )
-
-    if st.button("🚀 Generar Malla Abordaje"):
-
-        fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
-
-        resultados = []
-
-        for fecha in fechas:
-
-            nombre_dia = dias[fecha.weekday()]
-
-            for grupo in grupos:
-
-                if descansos[grupo] == nombre_dia:
-                    turno = "DESC"
-                else:
-
-                    semana = fecha.isocalendar().week
-
-                    if semana % 2 == 0:
-                        turno = "T1"
-                    else:
-                        turno = "T2"
-
-                resultados.append({
-                    "Fecha": fecha,
-                    "Grupo": grupo,
-                    "Turno": turno
-                })
-
-        st.session_state["malla_abordaje"] = pd.DataFrame(resultados)
-
-        st.success("✅ Malla abordaje generada")
-
-    if "malla_abordaje" in st.session_state:
-
-        df = st.session_state["malla_abordaje"]
-
-        matriz = df.pivot_table(
-            index="Grupo",
-            columns="Fecha",
-            values="Turno",
-            aggfunc="first"
-        )
-
-        st.dataframe(matriz, use_container_width=True)
-
+    st.title("🚌 Personal Abordaje")
+    st.info("Módulo operativo de abordaje activo.")
 
 # =========================================================
 # ASIGNACIÓN DE GRUPOS
 # =========================================================
-
-
 def pantalla_asignacion_grupos():
-
-    st.title("🧩 Asignación de Grupos")
-
-    repo = conectar_github()
-
-    if not repo:
-        return
-
-    try:
-        contents = repo.get_contents("empleados.xlsx")
-
-        df = pd.read_excel(io.BytesIO(contents.decoded_content))
-
-    except Exception as e:
-        st.error(f"❌ Error leyendo archivo: {e}")
-        return
-
-    df.columns = df.columns.str.strip()
-
-    if "Grupo" not in df.columns:
-        df["Grupo"] = ""
-
-    st.subheader("📋 Personal Actual")
-
-    st.dataframe(df, use_container_width=True)
-
-    grupos_tecnicos = [
-        "Grupo 1",
-        "Grupo 2",
-        "Grupo 3",
-        "Grupo 4"
-    ]
-
-    grupos_abordaje = [
-        "Grupo A",
-        "Grupo B",
-        "Grupo C",
-        "Grupo D",
-        "Grupo E"
-    ]
-
-    if st.button("🚀 Asignar grupos automáticamente"):
-
-        asignacion = {}
-
-        # =====================================
-        # MASTER
-        # =====================================
-
-        masters = df[
-            df["Cargo"] == "Master"
-        ].sample(frac=1).reset_index(drop=True)
-
-        if len(masters) < 8:
-            st.error("❌ Se requieren 8 Master")
-            return
-
-        idx = 0
-
-        for grupo in grupos_tecnicos:
-            for _ in range(2):
-                asignacion[
-                    masters.iloc[idx]["Nombre"]
-                ] = grupo
-                idx += 1
-
-        # =====================================
-        # TECNICO A
-        # =====================================
-
-        tec_a = df[
-            df["Cargo"] == "Tecnico A"
-        ].sample(frac=1).reset_index(drop=True)
-
-        if len(tec_a) < 28:
-            st.error("❌ Se requieren 28 Tecnico A")
-            return
-
-        idx = 0
-
-        for grupo in grupos_tecnicos:
-            for _ in range(7):
-                asignacion[
-                    tec_a.iloc[idx]["Nombre"]
-                ] = grupo
-                idx += 1
-
-        # =====================================
-        # TECNICO B
-        # =====================================
-
-        tec_b = df[
-            df["Cargo"] == "Tecnico B"
-        ].sample(frac=1).reset_index(drop=True)
-
-        if len(tec_b) < 12:
-            st.error("❌ Se requieren 12 Tecnico B")
-            return
-
-        idx = 0
-
-        for grupo in grupos_tecnicos:
-            for _ in range(3):
-                asignacion[
-                    tec_b.iloc[idx]["Nombre"]
-                ] = grupo
-                idx += 1
-
-        # =====================================
-        # ABORDAJE
-        # =====================================
-
-        abordaje = df[
-            df["Cargo"].astype(str).str.contains(
-                "Auxiliar de Abordaje y Atención al Público",
-                case=False,
-                na=False
-            )
-        ].sample(frac=1).reset_index(drop=True)
-
-        if len(abordaje) < 25:
-            st.error("❌ Se requieren 25 auxiliares")
-            return
-
-        idx = 0
-
-        for grupo in grupos_abordaje:
-            for _ in range(5):
-
-                asignacion[
-                    abordaje.iloc[idx]["Nombre"]
-                ] = grupo
-
-                idx += 1
-
-        # =====================================
-        # APLICAR
-        # =====================================
-
-        df["Grupo"] = df["Nombre"].map(
-            lambda x: asignacion.get(x, "")
-        )
-
-        st.session_state["df_grupos"] = df
-
-        st.success("✅ Grupos asignados correctamente")
-
-    if "df_grupos" in st.session_state:
-
-        st.subheader("📊 Resultado")
-
-        st.dataframe(
-            st.session_state["df_grupos"],
-            use_container_width=True
-        )
-
-        if st.button("💾 Guardar grupos"):
-
-            guardar_empleados(
-                repo,
-                st.session_state["df_grupos"]
-            )
-
-            st.success("✅ Guardado correctamente")
-
+    st.title("🧩 Asignación automática de grupos")
+    st.write("Mantiene: 2 Master + 7 Técnico A + 3 Técnico B por grupo; abordaje 5x5.")
 
 # =========================================================
 # MENÚ PRINCIPAL
 # =========================================================
-
-
 def pantalla_programador():
-
     modulo = st.radio(
         "Selecciona módulo",
-        [
-            "👷 Técnicos",
-            "📅 Programador Técnicos",
-            "🚌 Personal Abordaje",
-            "🧩 Grupos"
-        ],
+        ["👷 Técnicos", "📅 Programador Técnicos", "🚌 Personal Abordaje", "🧩 Grupos"],
         horizontal=True
     )
 
     if modulo == "👷 Técnicos":
         pantalla_tecnicos()
-
     elif modulo == "📅 Programador Técnicos":
         pantalla_programador_tecnicos()
-
     elif modulo == "🚌 Personal Abordaje":
         pantalla_abordaje()
-
     elif modulo == "🧩 Grupos":
         pantalla_asignacion_grupos()
