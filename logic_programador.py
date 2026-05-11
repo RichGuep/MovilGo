@@ -60,19 +60,18 @@ def guardar_empleados(repo, df):
         )
 
 
+# =====================================================
+# CONFIGURACIÓN DE GRUPOS
+# =====================================================
 
-    # =====================================================
-    # CONFIGURACIÓN DE GRUPOS
-    # =====================================================
+grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
-    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
+# =====================================================
+# BOTÓN ASIGNACIÓN
+# =====================================================
 
-    # =====================================================
-    # BOTÓN ASIGNACIÓN
-    # =====================================================
-
-    if st.button("🚀 Asignar grupos automáticamente"):
+if st.button("🚀 Asignar grupos automáticamente"):
 
         df = df_edit.copy()
 
