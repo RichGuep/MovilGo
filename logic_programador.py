@@ -141,58 +141,63 @@ def generar_malla_tecnicos():
         fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
         filas = []
 
-        secuencia = {"Grupo 1": 0, "Grupo 2": 1, "Grupo 3": 2, "Grupo 4": 0}
+        # bloque de rotación: mínimo 4 días por turno antes de cambiar
+        bloque_actual = {"Grupo 1": "T1", "Grupo 2": "T2", "Grupo 3": "T3", "Grupo 4": "T1"}
+        dias_en_bloque = {g: 0 for g in GRUPOS_TEC}
+        orden_rotacion = {"T1": "T2", "T2": "T3", "T3": "T1"}
         ultimo_turno = {g: None for g in GRUPOS_TEC}
-        debe_compensado = {g: False for g in GRUPOS_TEC}
+        conteo_turnos = {g: {'T1': 0, 'T2': 0, 'T3': 0} for g in GRUPOS_TEC}
 
         for fecha in fechas:
             dia = DIAS[fecha.weekday()]
-
-            # 1. determinar grupos con descanso de ley hoy
-            descansan_hoy = [g for g in GRUPOS_TEC if descansos[g] == dia]
-            activos = [g for g in GRUPOS_TEC if g not in descansan_hoy]
             asignados = {}
 
-            # 2. asignar descansos primero
+            # 1. descanso parametrizado
+            descansan_hoy = [g for g in GRUPOS_TEC if descansos[g] == dia]
+            activos = [g for g in GRUPOS_TEC if g not in descansan_hoy]
             for g in descansan_hoy:
                 asignados[g] = "DESCANSO"
                 ultimo_turno[g] = "DESCANSO"
-                secuencia[g] = (secuencia[g] + 1) % 3
+                # si ya cumplió mínimo 4 días, rota al siguiente turno al descansar
+                if dias_en_bloque[g] >= 4:
+                    bloque_actual[g] = orden_rotacion[bloque_actual[g]]
+                    dias_en_bloque[g] = 0
 
-            # 3. garantizar cobertura T1/T2/T3 obligatoria para activos
-            turnos_base = ["T1", "T2", "T3"]
-            for turno_obj in turnos_base:
+            # 2. garantizar T1/T2/T3 usando bloques y balance
+            for turno_obj in ["T1", "T2", "T3"]:
                 candidatos = []
                 for g in activos:
                     if g in asignados:
                         continue
-                    base = turnos_base[secuencia[g]]
-                    # evitar salto inválido T3 -> T1/T2
-                    if ultimo_turno[g] == "T3" and turno_obj in ["T1", "T2"]:
+                    # evitar salto T3 -> T1 sin descanso
+                    if ultimo_turno[g] == "T3" and turno_obj == "T1":
                         continue
-                    # prioridad si coincide con su secuencia
-                    prioridad = 0 if base == turno_obj else 1
-                    candidatos.append((prioridad, g))
+                    prioridad_bloque = 0 if bloque_actual[g] == turno_obj else 1
+                    balance = conteo_turnos[g][turno_obj]
+                    candidatos.append((prioridad_bloque, balance, g))
 
-                if candidatos:
-                    candidatos.sort()
-                    g_sel = candidatos[0][1]
-                    asignados[g_sel] = turno_obj
-                    ultimo_turno[g_sel] = turno_obj
+                # relajar si no hay candidatos para asegurar cobertura
+                if not candidatos:
+                    for g in activos:
+                        if g not in asignados:
+                            candidatos.append((1, conteo_turnos[g][turno_obj], g))
 
-            # 4. grupo sobrante va a apoyo; si viene de T3, mantener T3 antes que apoyo
+                candidatos.sort()
+                g_sel = candidatos[0][2]
+                asignados[g_sel] = turno_obj
+                ultimo_turno[g_sel] = turno_obj
+                conteo_turnos[g_sel][turno_obj] += 1
+                dias_en_bloque[g_sel] += 1
+
+            # 3. grupo sobrante a apoyo (nunca T3 fijo)
             for g in activos:
-                if g in asignados:
-                    continue
-                if ultimo_turno[g] == "T3":
-                    asignados[g] = "T3"
-                    ultimo_turno[g] = "T3"
-                else:
-                    base = turnos_base[secuencia[g]]
-                    asignados[g] = "T1 APOYO" if base == "T1" else "T2 APOYO"
-                    ultimo_turno[g] = asignados[g]
+                if g not in asignados:
+                    apoyo = "T1 APOYO" if conteo_turnos[g]["T1"] <= conteo_turnos[g]["T2"] else "T2 APOYO"
+                    asignados[g] = apoyo
+                    ultimo_turno[g] = apoyo
+                    dias_en_bloque[g] += 1
 
-            # 5. compensado solo si no descansó en su día la semana anterior (placeholder para futura expansión)
+            # 4. guardar filas
             for g in GRUPOS_TEC:
                 filas.append({
                     "Fecha": fecha.strftime("%Y-%m-%d"),
@@ -200,12 +205,6 @@ def generar_malla_tecnicos():
                     "Grupo": g,
                     "Turno": asignados[g]
                 })
-
-            # 6. rotación semanal: solo cambiar secuencia al cerrar domingo para evitar grupos pegados pero permitir 2 semanas si hace falta
-            if dia == "Domingo":
-                for g in GRUPOS_TEC:
-                    if ultimo_turno[g] != "T3" or descansos[g] == dia:
-                        secuencia[g] = (secuencia[g] + 1) % 3
 
         df = pd.DataFrame(filas)
         st.session_state["malla_tecnicos"] = df
