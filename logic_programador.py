@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA COMPLETO: PARAMETRIZADOR + DESCANSO DE LEY + COMPENSADO REAL + MALLA VISIBLE
+# SISTEMA COMPLETO FINAL: PLANIFICADOR OPERATIVO COLOMBIA
 
 import streamlit as st
 import pandas as pd
@@ -28,8 +28,7 @@ def conectar_github():
             st.error("❌ Falta GITHUB_TOKEN")
             return None
         return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
-    except Exception as e:
-        st.error(f"GitHub error: {e}")
+    except:
         return None
 
 
@@ -84,11 +83,9 @@ def parametrizador():
         df = df.sample(frac=1).reset_index(drop=True)
 
         asignacion = {}
-        i = 0
 
-        for nombre in df["Nombre"]:
+        for i, nombre in enumerate(df["Nombre"]):
             asignacion[nombre] = GRUPOS[i % len(GRUPOS)]
-            i += 1
 
         df["Grupo"] = df["Nombre"].map(asignacion)
 
@@ -113,15 +110,15 @@ def abordaje():
     st.dataframe(df)
 
 # =========================================================
-# 📅 PROGRAMADOR
+# 📅 PROGRAMADOR PRINCIPAL
 # =========================================================
 def generar_malla():
 
-    st.header("📅 Programador Técnico PRO")
+    st.header("📅 Malla Operativa PRO")
 
     c1,c2 = st.columns(2)
     inicio = c1.date_input("Inicio", datetime.now())
-    fin = c2.date_input("Fin", datetime.now() + timedelta(days=28))
+    fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
     # =========================================================
     # DESCANSO DE LEY
@@ -137,7 +134,7 @@ def generar_malla():
     if "base_descanso" not in st.session_state:
         st.session_state["base_descanso"] = descanso.copy()
 
-    if st.button("🔁 Rotar descanso"):
+    if st.button("🔁 Rotar descanso mensual"):
         base = st.session_state["base_descanso"]
 
         nuevo = {}
@@ -177,7 +174,7 @@ def generar_malla():
             activos = []
 
             # =================================================
-            # RESET SEMANA
+            # RESET SEMANA → COMPENSADO
             # =================================================
             if semana != semana_actual:
                 semana_actual = semana
@@ -208,7 +205,7 @@ def generar_malla():
                 candidatos = [(carga[g], conteo[g][turno], g) for g in activos]
 
                 if not candidatos:
-                    candidatos = [(0,0,g) for g in activos]
+                    continue
 
                 candidatos.sort()
 
@@ -218,11 +215,10 @@ def generar_malla():
                 carga[sel] += 1
                 conteo[sel][turno] += 1
 
-                if sel in activos:
-                    activos.remove(sel)
+                activos.remove(sel)
 
             # =================================================
-            # COMPENSADO
+            # COMPENSADO / APOYO
             # =================================================
             for g in activos:
 
@@ -238,9 +234,9 @@ def generar_malla():
             for g in GRUPOS:
 
                 filas.append({
-                    "Fecha": fecha.strftime("%Y-%m-%d"),
-                    "Día": dia,
+                    "Fecha": fecha,
                     "Grupo": g,
+                    "Día": dia,
                     "Turno": asignados.get(g,"T1 APOYO"),
                     "Festivo": "SI" if festivo else "NO"
                 })
@@ -250,18 +246,53 @@ def generar_malla():
         st.session_state["malla"] = df
         guardar_excel(df, "malla_historica.xlsx")
 
-        st.success("Malla generada")
+        st.success("Malla generada correctamente")
 
     # =========================================================
-    # 👁️ MALLA SIEMPRE VISIBLE (FIX CLAVE)
+    # 📊 MALLA HORIZONTAL (VISUAL OPERATIVA)
     # =========================================================
     if "malla" in st.session_state:
 
-        st.subheader("📊 Malla de turnos")
+        st.subheader("📊 Malla horizontal por grupo")
 
         df = st.session_state["malla"]
 
-        st.dataframe(df, use_container_width=True)
+        pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
+
+        dias_map = df.drop_duplicates("Fecha")[["Fecha"]].copy()
+        dias_map["Dia"] = dias_map["Fecha"].dt.day_name()
+
+        nuevas = {}
+
+        for f in pivot.columns:
+            d = dias_map[dias_map["Fecha"]==f]["Dia"].values[0]
+            nuevas[f] = f.strftime("%d-%m\n"+d)
+
+        pivot.rename(columns=nuevas, inplace=True)
+
+        def color(v):
+
+            if v == "DESCANSO":
+                return "background:#FFADAD;font-weight:bold"
+
+            if v == "COMPENSADO":
+                return "background:#FFD6A5"
+
+            if v == "T1":
+                return "background:#CAFFBF"
+
+            if v == "T2":
+                return "background:#9BF6FF"
+
+            if v == "T3":
+                return "background:#BDB2FF"
+
+            return ""
+
+        st.dataframe(
+            pivot.style.map(color),
+            use_container_width=True
+        )
 
         # =====================================================
         # DASHBOARD
@@ -271,10 +302,8 @@ def generar_malla():
         c1,c2,c3 = st.columns(3)
 
         c1.metric("Operativos", len(df[df["Turno"].isin(["T1","T2","T3"])]))
-        c2.metric("Descansos", len(df[df["Turno"]=="DESCANSO"]))
-        c3.metric("Compensados", len(df[df["Turno"]=="COMPENSADO"]))
-
-        st.bar_chart(df.groupby(["Grupo","Turno"]).size().unstack(fill_value=0))
+        c2.metric("Descanso", len(df[df["Turno"]=="DESCANSO"]))
+        c3.metric("Compensado", len(df[df["Turno"]=="COMPENSADO"]))
 
 # =========================================================
 # MENÚ
