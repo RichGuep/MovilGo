@@ -7,7 +7,7 @@ from github import Github
 
 # --- IMPORTACIÓN DEL MOTOR DE LÓGICA ---
 try:
-   from logic_programador import pantalla_programador
+    from logic_programador import pantalla_programador
 except ImportError:
     st.error("⚠️ No se encontró 'logic_programador.py'. Asegúrate de que ambos archivos estén en la misma carpeta.")
 
@@ -167,43 +167,21 @@ elif st.session_state.empresa is None:
             st.rerun()
 
 else:
-
     with st.sidebar:
         st.image(LOGO_CABLE, width=150)
         st.divider()
-
-        menu = st.radio(
-            "NAVEGACIÓN",
-            [
-                "🏠 Inicio",
-                "📅 Programación",
-                "📋 Reporte Detallado",
-                "👥 Personal",
-                "🧩 Grupos"
-            ]
-        )
-
+        menu = st.radio("NAVEGACIÓN", ["🏠 Inicio", "📅 Programación", "📋 Reporte Detallado", "👥 Personal"])
         st.divider()
-
         if st.button("🚪 Salir del Sistema"):
             st.session_state.empresa = None
             st.rerun()
 
-    # =====================================================
-    # ROUTER LIMPIO (CORREGIDO)
-    # =====================================================
-
     if menu == "🏠 Inicio":
         modulo_inicio()
-
     elif menu == "📅 Programación":
-        pantalla_programador()
-
+        # Ejecuta la función principal de logic_programador.py
+        pantalla_programador() 
     elif menu == "📋 Reporte Detallado":
         modulo_detallado()
-
     elif menu == "👥 Personal":
         modulo_personal()
-
-    elif menu == "🧩 Grupos":
-        pantalla_asignacion_grupos()
