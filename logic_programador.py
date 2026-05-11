@@ -654,13 +654,7 @@ def pantalla_programador():
     elif modulo == "🚍 Personal Abordaje":
         pantalla_abordaje()
 
-    # =========================
-    # GRUPOS
-    # =========================
-    elif modulo == "🧩 Grupos":
-        pantalla_asignacion_grupos()
-
-# =====================================
+   # =====================================
 # SUBMÓDULO: ASIGNACIÓN DE GRUPOS
 # =====================================
 
@@ -674,86 +668,136 @@ def pantalla_asignacion_grupos():
         st.error("❌ Sin conexión GitHub")
         return
 
-    contents = repo.get_contents("empleados.xlsx")
-    df = pd.read_excel(io.BytesIO(contents.decoded_content))
+    # =====================================
+    # CARGAR empleados.xlsx
+    # =====================================
+
+    try:
+        contents = repo.get_contents("empleados.xlsx")
+        df = pd.read_excel(io.BytesIO(contents.decoded_content))
+
+    except Exception as e:
+        st.error(f"❌ Error cargando empleados.xlsx: {e}")
+        return
+
+    # limpiar nombres columnas
+    df.columns = df.columns.str.strip()
+
+    # =====================================
+    # ASEGURAR COLUMNA GRUPO
+    # =====================================
+
+    if "Grupo" not in df.columns:
+        df["Grupo"] = ""
 
     st.subheader("📋 Personal actual")
     st.dataframe(df, use_container_width=True)
 
-    # ==========================
-    # GRUPOS
-    # ==========================
+    # =====================================
+    # DEFINIR GRUPOS
+    # =====================================
 
-    grupos_tecnicos = ["G1", "G2", "G3", "G4"]
-    grupos_abordaje = ["A", "B", "C", "D", "E"]
+    grupos_tecnicos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+    grupos_abordaje = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
-    # ==========================
-    # BOTÓN
-    # ==========================
+    # =====================================
+    # BOTÓN ASIGNAR
+    # =====================================
 
     if st.button("🚀 Asignar grupos automáticamente"):
 
-        df = df.copy()
-        df["Grupo"] = None
-
-        # separar por tipo
-        tecnicos_a = df[df["Cargo"].str.contains("Tecnico A", na=False)].sample(frac=1).reset_index(drop=True)
-        tecnicos_b = df[df["Cargo"].str.contains("Tecnico B", na=False)].sample(frac=1).reset_index(drop=True)
-        masters = df[df["Cargo"].str.contains("Master", na=False)].sample(frac=1).reset_index(drop=True)
-
-        abordaje = df[df["Cargo"].str.contains("Abordaje", na=False)].sample(frac=1).reset_index(drop=True)
+        df_nuevo = df.copy()
 
         asignacion = {}
 
-        # ==========================
-        # TECNICOS (4 GRUPOS)
-        # ==========================
+        # ---------------------------------
+        # TÉCNICOS
+        # ---------------------------------
 
-        grupos_tecnicos_data = {g: [] for g in grupos_tecnicos}
+        tecnicos = df_nuevo[
+            df_nuevo["Cargo"].astype(str).str.contains(
+                "Master|Tecnico A|Tecnico B",
+                case=False,
+                na=False
+            )
+        ].sample(frac=1).reset_index(drop=True)
 
-        # 7 Técnico A por grupo
-        idx = 0
-        for _, row in tecnicos_a.iterrows():
-            grupo = grupos_tecnicos[idx % 4]
-            grupos_tecnicos_data[grupo].append((row["Nombre"], "Tecnico A"))
-            idx += 1
+        for i, row in tecnicos.iterrows():
+            grupo = grupos_tecnicos[i % len(grupos_tecnicos)]
+            asignacion[row["Nombre"]] = grupo
 
-        # 3 Técnico B por grupo
-        idx = 0
-        for _, row in tecnicos_b.iterrows():
-            grupo = grupos_tecnicos[idx % 4]
-            grupos_tecnicos_data[grupo].append((row["Nombre"], "Tecnico B"))
-            idx += 1
+        # ---------------------------------
+        # ABORDAJE
+        # ---------------------------------
 
-        # 2 Master por grupo
-        idx = 0
-        for _, row in masters.iterrows():
-            grupo = grupos_tecnicos[idx % 4]
-            grupos_tecnicos_data[grupo].append((row["Nombre"], "Master"))
-            idx += 1
+        abordaje = df_nuevo[
+            df_nuevo["Cargo"].astype(str).str.contains(
+                "Abordaje",
+                case=False,
+                na=False
+            )
+        ].sample(frac=1).reset_index(drop=True)
 
-        # guardar asignación técnicos
-        for grupo, lista in grupos_tecnicos_data.items():
-            for nombre, _ in lista:
-                asignacion[nombre] = grupo
+        for i, row in abordaje.iterrows():
+            grupo = grupos_abordaje[i % len(grupos_abordaje)]
+            asignacion[row["Nombre"]] = grupo
 
-        # ==========================
-        # ABORDAJE (5 GRUPOS)
-        # ==========================
+        # ---------------------------------
+        # ACTUALIZAR COLUMNA
+        # ---------------------------------
 
-        for i, row in enumerate(abordaje.itertuples()):
-            asignacion[row.Nombre] = grupos_abordaje[i % 5]
+        df_nuevo["Grupo"] = df_nuevo["Nombre"].map(
+            lambda x: asignacion.get(x, "")
+        )
 
-        # ==========================
-        # MAPEO FINAL
-        # ==========================
+        st.session_state["df_grupos"] = df_nuevo
 
-        df["Grupo"] = df["Nombre"].map(asignacion)
+        st.success("✅ Grupos asignados correctamente")
 
-        st.session_state["df_grupos"] = df
+    # =====================================
+    # MOSTRAR RESULTADO
+    # =====================================
 
-        st.success("✅ Grupos asignados correctamente (Técnicos + Abordaje)")
+    if "df_grupos" in st.session_state:
 
+        st.subheader("📊 Resultado")
+
+        st.dataframe(
+            st.session_state["df_grupos"],
+            use_container_width=True
+        )
+
+        # =====================================
+        # GUARDAR EN GITHUB
+        # =====================================
+
+        if st.button("💾 Guardar grupos en GitHub"):
+
+            try:
+                output = io.BytesIO()
+
+                with pd.ExcelWriter(
+                    output,
+                    engine="openpyxl"
+                ) as writer:
+                    st.session_state["df_grupos"].to_excel(
+                        writer,
+                        index=False
+                    )
+
+                repo.update_file(
+                    "empleados.xlsx",
+                    "Actualización grupos automática",
+                    output.getvalue(),
+                    contents.sha
+                )
+
+                st.success(
+                    "✅ empleados.xlsx actualizado correctamente"
+                )
+
+            except Exception as e:
+                st.error(f"❌ Error guardando: {e}")
     # ==========================
     # RESULTADO
     # ==========================
