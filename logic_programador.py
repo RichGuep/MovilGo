@@ -32,41 +32,32 @@ def conectar_github():
 
 def guardar_empleados(repo, df):
 
-    # 🔥 FORZAR columna Grupo SIEMPRE
     if "Grupo" not in df.columns:
         df["Grupo"] = ""
 
     output = io.BytesIO()
 
-    # 🔥 IMPORTANTE: index=False evita basura en Excel
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
 
     contenido = output.getvalue()
 
     try:
-        # 🔥 SI EXISTE → BORRAR Y RECREAR (más estable que update_file)
-        try:
-            file = repo.get_contents("empleados.xlsx")
-            repo.delete_file(
-                "empleados.xlsx",
-                "Reemplazo empleados (MovilGo)",
-                file.sha
-            )
-        except:
-            pass
+        file = repo.get_contents("empleados.xlsx")
 
-        repo.create_file(
+        repo.update_file(
             "empleados.xlsx",
-            "Actualización completa empleados (MovilGo)",
-            contenido
+            "Actualización empleados MovilGo",
+            contenido,
+            file.sha
         )
 
-        st.success("✅ empleados.xlsx actualizado correctamente en GitHub")
-
-    except Exception as e:
-        st.error(f"❌ Error guardando en GitHub: {e}")
-
+    except Exception:
+        repo.create_file(
+            "empleados.xlsx",
+            "Creación empleados MovilGo",
+            contenido
+        )
     # =====================================================
     # CONFIGURACIÓN DE GRUPOS
     # =====================================================
@@ -238,13 +229,16 @@ def pantalla_tecnicos():
     df.columns = df.columns.str.strip()
 
     # validar columnas mínimas
-    required_cols = ["Nombre", "Grupo", "Cargo"]
+    if "Grupo" not in df.columns:
+    df["Grupo"] = ""
 
-    for col in required_cols:
-        if col not in df.columns:
-            st.error(f"❌ Falta columna obligatoria: {col}")
-            st.write("Columnas disponibles:", list(df.columns))
-            return
+required_cols = ["Nombre", "Cargo"]
+
+for col in required_cols:
+    if col not in df.columns:
+        st.error(f"❌ Falta columna obligatoria: {col}")
+        st.write("Columnas disponibles:", list(df.columns))
+        return
 
     # =====================================================
     # FILTRO OPERATIVO POR CARGO (CLAVE DE TU SISTEMA)
