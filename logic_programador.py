@@ -185,7 +185,23 @@ def generar_malla_tecnicos():
 
         st.subheader("📋 Malla visual")
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
-        st.dataframe(pivot, use_container_width=True)
+
+        def colorear_turnos(val):
+            colores = {
+                "T1": "background-color: #D8F3DC; color: #1B4332; font-weight:bold;",
+                "T2": "background-color: #DCEBFF; color: #1D3557; font-weight:bold;",
+                "T3": "background-color: #EADCF8; color: #5A189A; font-weight:bold;",
+                "T1 APOYO": "background-color: #FFF3BF; color: #7F5539; font-weight:bold;",
+                "T2 APOYO": "background-color: #FFE8CC; color: #9C6644; font-weight:bold;",
+                "DESCANSO": "background-color: #FFD6D6; color: #9D0208; font-weight:bold;",
+                "COMPENSADO": "background-color: #FFF0F3; color: #C9184A; font-weight:bold;"
+            }
+            return colores.get(val, "")
+
+        st.dataframe(
+            pivot.style.map(colorear_turnos),
+            use_container_width=True
+        )
 
         st.subheader("✏️ Editor manual")
         edit = st.data_editor(
@@ -204,23 +220,40 @@ def generar_malla_tecnicos():
             guardar_excel(edit, "malla_historica.xlsx")
             st.success("Cambios guardados")
 
-        st.subheader("📊 Auditoría")
-        c1, c2, c3 = st.columns(3)
-        c1.write("**Balance turnos**")
-        c1.dataframe(df.groupby(["Grupo", "Turno"]).size())
-        c2.write("**Descansos**")
-        c2.dataframe(df[df["Turno"].isin(["DESCANSO", "COMPENSADO"])]
-                      .groupby("Grupo").size())
-        c3.write("**Alertas saltos**")
+        st.subheader("📊 Dashboard de Auditoría")
+
+        total_turnos = len(df[df["Turno"].isin(["T1", "T2", "T3"])])
+        total_descansos = len(df[df["Turno"] == "DESCANSO"])
+        total_comp = len(df[df["Turno"] == "COMPENSADO"])
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Turnos operativos", total_turnos)
+        m2.metric("Descansos ley", total_descansos)
+        m3.metric("Compensados", total_comp)
+
+        st.markdown("### 📈 Balance de turnos por grupo")
+        balance = df[df["Turno"].isin(["T1", "T2", "T3"])].groupby(["Grupo", "Turno"]).size().unstack(fill_value=0)
+        st.bar_chart(balance)
+
+        st.markdown("### 😴 Auditoría de descansos")
+        descansos_df = df[df["Turno"].isin(["DESCANSO", "COMPENSADO"])].groupby(["Grupo", "Turno"]).size().unstack(fill_value=0)
+        st.dataframe(descansos_df, use_container_width=True)
+
+        st.markdown("### 🚨 Alertas de saltos inválidos")
         alertas = []
         for g in GRUPOS_TEC:
             gdf = df[df["Grupo"] == g]
             prev = None
             for _, r in gdf.iterrows():
                 if prev == "T3" and r["Turno"] in ["T1", "T2"]:
-                    alertas.append([g, r["Fecha"], "Salto inválido"])
+                    alertas.append([g, r["Fecha"], "Salto inválido T3 → día"])
                 prev = r["Turno"]
-        st.dataframe(pd.DataFrame(alertas, columns=["Grupo", "Fecha", "Alerta"]))
+
+        if alertas:
+            st.error(f"⚠️ {len(alertas)} alertas detectadas")
+            st.dataframe(pd.DataFrame(alertas, columns=["Grupo", "Fecha", "Alerta"]))
+        else:
+            st.success("✅ Sin saltos inválidos detectados")
 
 # =========================================================
 # ABORDAJE
