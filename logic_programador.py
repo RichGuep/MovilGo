@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA COMPLETO: TURNOS + ABORDAJE + AUDITORÍA + DESCANSO CORRECTO
+# SISTEMA COMPLETO ESTABLE + MALLA + AUDITORÍA + COBERTURA + ABORDAJE
 
 import streamlit as st
 import pandas as pd
@@ -76,12 +76,11 @@ def asignar_grupos():
     st.dataframe(df)
 
     if st.button("Asignar grupos"):
-        df["Grupo"] = df["Grupo"].fillna("")
         guardar_excel(df, "empleados.xlsx")
         st.success("OK")
 
 # =========================================================
-# ABORDAJE (RESTAURADO)
+# ABORDAJE
 # =========================================================
 def pantalla_abordaje():
     st.header("🚌 Personal Abordaje")
@@ -98,6 +97,7 @@ def pantalla_abordaje():
 # PROGRAMADOR TÉCNICOS
 # =========================================================
 def generar_malla_tecnicos():
+
     st.header("📅 Programador Técnicos")
 
     c1, c2 = st.columns(2)
@@ -105,7 +105,7 @@ def generar_malla_tecnicos():
     fecha_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
     # =========================================================
-    # DESCANSO PARAMETRIZADO
+    # DESCANSOS
     # =========================================================
     st.subheader("Descanso parametrizado")
 
@@ -123,8 +123,8 @@ def generar_malla_tecnicos():
     # =========================================================
     if st.button("🔁 Rotar descansos mensualmente"):
         base = st.session_state["descansos_base"]
-        nuevos = {}
 
+        nuevos = {}
         for g in GRUPOS_TEC:
             idx = DIAS.index(base[g])
             nuevos[g] = DIAS[(idx + 1) % 7]
@@ -133,7 +133,7 @@ def generar_malla_tecnicos():
         st.success("Rotación aplicada")
 
     # =========================================================
-    # CONTROL SEMANAL DE DESCANSO (CLAVE)
+    # CONTROL SEMANAL DESCANSO
     # =========================================================
     descanso_semana = {g: 0 for g in GRUPOS_TEC}
 
@@ -146,13 +146,13 @@ def generar_malla_tecnicos():
         filas = []
 
         bloque = {g: "T1" for g in GRUPOS_TEC}
-        dias_bloque = {g: 0 for g in GRUPOS_TEC}
-        ultimo = {g: None for g in GRUPOS_TEC}
         conteo = {g: {"T1":0,"T2":0,"T3":0} for g in GRUPOS_TEC}
+        ultimo = {g: None for g in GRUPOS_TEC}
+        dias_bloque = {g: 0 for g in GRUPOS_TEC}
 
         descansos = st.session_state["descansos_base"].copy()
-        offset = fecha_ini.month - 1
 
+        offset = fecha_ini.month - 1
         for g in GRUPOS_TEC:
             idx = DIAS.index(descansos[g])
             descansos[g] = DIAS[(idx + offset) % 7]
@@ -161,23 +161,22 @@ def generar_malla_tecnicos():
         # LOOP PRINCIPAL
         # =====================================================
         for fecha in fechas:
+
             dia = DIAS[fecha.weekday()]
             asignados = {}
 
-            # RESET SEMANAL
+            # RESET SEMANA
             if fecha.weekday() == 0:
                 descanso_semana = {g: 0 for g in GRUPOS_TEC}
 
             activos = []
 
             # =================================================
-            # DESCANSO CORRECTO (1 POR SEMANA)
+            # DESCANSO (1 POR SEMANA REAL)
             # =================================================
             for g in GRUPOS_TEC:
 
-                es_dia = (descansos[g] == dia)
-
-                if es_dia and descanso_semana[g] < 1:
+                if descansos[g] == dia and descanso_semana[g] < 1:
                     asignados[g] = "DESCANSO"
                     descanso_semana[g] += 1
                 else:
@@ -186,11 +185,12 @@ def generar_malla_tecnicos():
             # =================================================
             # TURNOS PRINCIPALES
             # =================================================
-            for turno in ["T1","T2","T3"]:
+            for turno in ["T1", "T2", "T3"]:
 
                 candidatos = []
 
                 for g in activos:
+
                     if ultimo[g] == "T3" and turno == "T1":
                         continue
 
@@ -212,15 +212,20 @@ def generar_malla_tecnicos():
                 activos.remove(sel)
 
             # =================================================
-            # COMPENSADOS (SOLO SI NO DESCANSÓ)
+            # COMPENSADOS CORREGIDOS
             # =================================================
             for g in activos:
-                asignados[g] = "COMPENSADO"
+
+                if descansos[g] != dia:
+                    asignados[g] = "T1 APOYO" if conteo[g]["T1"] <= conteo[g]["T2"] else "T2 APOYO"
+                else:
+                    asignados[g] = "COMPENSADO"
 
             # =================================================
-            # GUARDADO
+            # GUARDAR
             # =================================================
             for g in GRUPOS_TEC:
+
                 filas.append({
                     "Fecha": fecha.strftime("%Y-%m-%d"),
                     "Día": dia,
@@ -229,18 +234,31 @@ def generar_malla_tecnicos():
                 })
 
         df = pd.DataFrame(filas)
+
         st.session_state["malla_tecnicos"] = df
         guardar_excel(df, "malla_historica.xlsx")
 
         st.success("Malla generada")
 
         # =====================================================
-        # 📊 MALLA POR GRUPO (LO QUE TE FALTABA)
+        # 📊 MALLA CON DÍA + COLORES
         # =====================================================
-        st.subheader("📊 Malla de turnos por grupo")
+        st.subheader("📊 Malla de turnos")
+
+        df["Día"] = pd.to_datetime(df["Fecha"]).dt.day_name()
 
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
-        st.dataframe(pivot, use_container_width=True)
+
+        def color(val):
+            return {
+                "T1":"background:#D8F3DC;color:#1B4332;font-weight:bold",
+                "T2":"background:#DCEBFF;color:#1D3557;font-weight:bold",
+                "T3":"background:#EADCF8;color:#5A189A;font-weight:bold",
+                "DESCANSO":"background:#FFD6D6;color:#9D0208;font-weight:bold",
+                "COMPENSADO":"background:#FFF3BF;color:#7F5539;font-weight:bold"
+            }.get(val,"")
+
+        st.dataframe(pivot.style.map(color), use_container_width=True)
 
         # =====================================================
         # 📊 DASHBOARD
@@ -248,6 +266,7 @@ def generar_malla_tecnicos():
         st.subheader("📊 Dashboard")
 
         c1,c2,c3 = st.columns(3)
+
         c1.metric("Operativos", len(df[df["Turno"].isin(["T1","T2","T3"])]))
         c2.metric("Descansos", len(df[df["Turno"]=="DESCANSO"]))
         c3.metric("Compensados", len(df[df["Turno"]=="COMPENSADO"]))
@@ -255,19 +274,47 @@ def generar_malla_tecnicos():
         st.bar_chart(df.groupby(["Grupo","Turno"]).size().unstack(fill_value=0))
 
         # =====================================================
-        # 🚨 AUDITORÍA SALTOS
+        # 🛡️ COBERTURA
+        # =====================================================
+        st.subheader("🛡️ Cobertura diaria T1/T2/T3")
+
+        cobertura = []
+
+        for f in df["Fecha"].unique():
+
+            d = df[df["Fecha"]==f]
+            ts = set(d["Turno"])
+
+            cobertura.append({
+                "Fecha": f,
+                "T1": "T1" in ts,
+                "T2": "T2" in ts,
+                "T3": "T3" in ts,
+                "Completo": all(x in ts for x in ["T1","T2","T3"])
+            })
+
+        cov = pd.DataFrame(cobertura)
+
+        st.metric("Días completos", cov["Completo"].sum())
+        st.metric("Días incompletos", len(cov[cov["Completo"]==False]))
+
+        # =====================================================
+        # 🚨 AUDITORÍA
         # =====================================================
         st.subheader("🚨 Auditoría de saltos")
 
         alertas = []
 
         for g in GRUPOS_TEC:
+
             gdf = df[df["Grupo"]==g]
             prev = None
 
             for _,r in gdf.iterrows():
+
                 if prev=="T3" and r["Turno"] in ["T1","T2"]:
                     alertas.append([g,r["Fecha"],"Salto inválido"])
+
                 prev = r["Turno"]
 
         if alertas:
@@ -280,7 +327,10 @@ def generar_malla_tecnicos():
 # MENÚ
 # =========================================================
 def pantalla_programador():
-    mod = st.radio("Módulo", ["Programador Técnicos","Grupos","Abordaje"], horizontal=True)
+
+    mod = st.radio("Módulo",
+                   ["Programador Técnicos","Grupos","Abordaje"],
+                   horizontal=True)
 
     if mod == "Programador Técnicos":
         generar_malla_tecnicos()
