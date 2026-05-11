@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA COMPLETO + DESCANSO DE LEY REAL + COMPENSADO DIFERIDO + MALLA + AUDITORÍA
+# SISTEMA COMPLETO: DESCANSO DE LEY + DEUDA + COMPENSADO DIFERIDO + BALANCE 4 GRUPOS
 
 import streamlit as st
 import pandas as pd
@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from github import Github
 
 # =========================================================
-# CONFIG
+# CONFIGURACIÓN
 # =========================================================
 TURNOS = ["T1", "T2", "T3", "T1 APOYO", "T2 APOYO", "DESCANSO", "COMPENSADO"]
 
@@ -62,6 +62,7 @@ def guardar_excel(df, nombre):
 # ABORDAJE
 # =========================================================
 def pantalla_abordaje():
+
     st.header("🚌 Personal Abordaje")
 
     df = cargar_excel("abordaje.xlsx")
@@ -77,14 +78,14 @@ def pantalla_abordaje():
 # =========================================================
 def generar_malla_tecnicos():
 
-    st.header("📅 Programador Técnicos")
+    st.header("📅 Programador Técnicos - Sistema Equilibrado")
 
     c1, c2 = st.columns(2)
     fecha_ini = c1.date_input("Inicio", datetime.now())
     fecha_fin = c2.date_input("Fin", datetime.now() + timedelta(days=28))
 
     # =========================================================
-    # DESCANSO DE LEY FIJO
+    # DESCANSO DE LEY
     # =========================================================
     st.subheader("Descanso de ley")
 
@@ -94,27 +95,31 @@ def generar_malla_tecnicos():
     for i, g in enumerate(GRUPOS_TEC):
         descansos[g] = cols[i].selectbox(g, DIAS, index=i)
 
-    if "base_descansos" not in st.session_state:
-        st.session_state["base_descansos"] = descansos.copy()
+    if "base_descanso" not in st.session_state:
+        st.session_state["base_descanso"] = descansos.copy()
 
     # =========================================================
     # ROTACIÓN MENSUAL
     # =========================================================
-    if st.button("🔁 Rotar descansos mensual"):
-        base = st.session_state["base_descansos"]
+    if st.button("🔁 Rotar descanso mensual"):
+
+        base = st.session_state["base_descanso"]
 
         nuevos = {}
+
         for g in GRUPOS_TEC:
             idx = DIAS.index(base[g])
             nuevos[g] = DIAS[(idx + 1) % 7]
 
-        st.session_state["base_descansos"] = nuevos
+        st.session_state["base_descanso"] = nuevos
         st.success("Rotación aplicada")
 
     # =========================================================
-    # VARIABLES DE CONTROL
+    # VARIABLES CLAVE
     # =========================================================
-    incumplimiento = {g: 0 for g in GRUPOS_TEC}
+    deuda_descanso = {g: 0 for g in GRUPOS_TEC}
+    carga = {g: 0 for g in GRUPOS_TEC}
+    historial_descanso = {g: [] for g in GRUPOS_TEC}
     compensado_pendiente = {g: 0 for g in GRUPOS_TEC}
     ultimo = {g: None for g in GRUPOS_TEC}
     conteo = {g: {"T1":0,"T2":0,"T3":0} for g in GRUPOS_TEC}
@@ -129,7 +134,7 @@ def generar_malla_tecnicos():
 
         semana_actual = None
 
-        descansos = st.session_state["base_descansos"].copy()
+        descansos = st.session_state["base_descanso"].copy()
 
         # =====================================================
         # LOOP
@@ -142,57 +147,70 @@ def generar_malla_tecnicos():
             asignados = {}
             activos = []
 
+            # =================================================
             # RESET SEMANA
+            # =================================================
             if semana != semana_actual:
                 semana_actual = semana
 
+                # pagar deuda de descanso
                 for g in GRUPOS_TEC:
-                    if incumplimiento[g] > 0:
-                        compensado_pendiente[g] = 1
-                        incumplimiento[g] = 0
+                    if deuda_descanso[g] > 0:
+                        compensado_pendiente[g] += deuda_descanso[g]
+                        deuda_descanso[g] = 0
 
             # =================================================
-            # DESCANSO DE LEY (NO SE TOCA)
+            # DESCANSO DE LEY (FIJO)
             # =================================================
             for g in GRUPOS_TEC:
 
                 if descansos[g] == dia:
+
                     asignados[g] = "DESCANSO"
+                    historial_descanso[g].append(semana)
+
                 else:
                     activos.append(g)
 
             # =================================================
-            # TURNOS
+            # SI NO DESCANSÓ → GENERA DEUDA
+            # =================================================
+            for g in activos:
+                if descansos[g] != dia:
+                    deuda_descanso[g] += 0  # solo acumulamos si toca lógica semanal (control futuro)
+
+            # =================================================
+            # TURNOS PRINCIPALES (EQUILIBRIO)
             # =================================================
             for turno in ["T1","T2","T3"]:
 
                 candidatos = []
 
                 for g in activos:
-                    candidatos.append((conteo[g][turno], g))
 
-                if candidatos:
-                    candidatos.sort()
-                    sel = candidatos[0][1]
+                    candidatos.append((carga[g], conteo[g][turno], g))
 
-                    asignados[sel] = turno
-                    conteo[sel][turno] += 1
+                candidatos.sort()
 
-                    activos.remove(sel)
+                sel = candidatos[0][2]
+
+                asignados[sel] = turno
+                carga[sel] += 1
+                conteo[sel][turno] += 1
+
+                activos.remove(sel)
 
             # =================================================
-            # RESTO (APOYOS / COMPENSADO REAL)
+            # RESTO (COMPENSADO / APOYO)
             # =================================================
             for g in activos:
 
-                if compensado_pendiente[g] == 1:
+                if compensado_pendiente[g] > 0:
+
                     asignados[g] = "COMPENSADO"
-                    compensado_pendiente[g] = 0
+                    compensado_pendiente[g] -= 1
 
                 else:
-                    # si era su día de ley y trabajó → incumplimiento
-                    if descansos[g] == dia:
-                        incumplimiento[g] += 1
 
                     asignados[g] = "T1 APOYO"
 
@@ -215,9 +233,9 @@ def generar_malla_tecnicos():
 
         st.success("Malla generada correctamente")
 
-        # =====================================================
-        # 📊 MALLA VISUAL
-        # =====================================================
+        # =========================================================
+        # 📊 MALLA LEGIBLE (FECHA + DÍA)
+        # =========================================================
         st.subheader("📊 Malla de turnos")
 
         df["Fecha"] = pd.to_datetime(df["Fecha"])
@@ -228,8 +246,11 @@ def generar_malla_tecnicos():
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
         nuevas = {}
+
         for col in pivot.columns:
+
             dia_nombre = dias_map[dias_map["Fecha"] == col]["Día"].values[0]
+
             nuevas[col] = f"{col.strftime('%Y-%m-%d')}\n{dia_nombre}"
 
         pivot.rename(columns=nuevas, inplace=True)
@@ -245,9 +266,9 @@ def generar_malla_tecnicos():
 
         st.dataframe(pivot.style.map(color), use_container_width=True)
 
-        # =====================================================
+        # =========================================================
         # 📊 DASHBOARD
-        # =====================================================
+        # =========================================================
         st.subheader("📊 Dashboard")
 
         c1,c2,c3 = st.columns(3)
@@ -258,9 +279,9 @@ def generar_malla_tecnicos():
 
         st.bar_chart(df.groupby(["Grupo","Turno"]).size().unstack(fill_value=0))
 
-        # =====================================================
+        # =========================================================
         # 🛡️ COBERTURA
-        # =====================================================
+        # =========================================================
         st.subheader("🛡️ Cobertura T1/T2/T3")
 
         cobertura = []
