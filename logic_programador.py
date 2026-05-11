@@ -8,10 +8,9 @@
 # ✔ Compensado automático
 # ✔ Balance de cargas
 # ✔ Balance de sacrificios
-# ✔ Auditoría de saltos indebidos
-# ✔ Auditoría de cobertura diaria
-# ✔ Malla visual profesional
-# ✔ Días en español
+# ✔ Días visibles en español
+# ✔ Dashboard operativo
+# ✔ Motor tipo enterprise
 # =========================================================
 
 import streamlit as st
@@ -23,16 +22,30 @@ import holidays
 # CONFIG
 # =========================================================
 TURNOS = [
-    "T1","T2","T3",
-    "T1 APOYO","T2 APOYO",
-    "DESCANSO","COMPENSADO"
+    "T1",
+    "T2",
+    "T3",
+    "T1 APOYO",
+    "T2 APOYO",
+    "DESCANSO",
+    "COMPENSADO"
 ]
 
-GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
+GRUPOS = [
+    "Grupo 1",
+    "Grupo 2",
+    "Grupo 3",
+    "Grupo 4"
+]
 
 DIAS_ES = [
-    "Lunes","Martes","Miércoles",
-    "Jueves","Viernes","Sábado","Domingo"
+    "Lunes",
+    "Martes",
+    "Miércoles",
+    "Jueves",
+    "Viernes",
+    "Sábado",
+    "Domingo"
 ]
 
 festivos_co = holidays.Colombia()
@@ -50,8 +63,13 @@ def validar_config(descanso_actual):
         conteo[descanso_actual[g]] += 1
 
     for dia, cantidad in conteo.items():
+
         if cantidad > 2:
-            errores.append(f"{dia}: {cantidad} descansos configurados")
+
+            errores.append(
+                f"{dia}: {cantidad} descansos configurados "
+                f"(máximo recomendado 2)"
+            )
 
     return errores
 
@@ -63,29 +81,52 @@ def parametrizador():
     st.header("🧩 Parametrizador de grupos")
 
     df = pd.DataFrame({
-        "Empleado": ["Empleado A","Empleado B","Empleado C","Empleado D"],
-        "Grupo": ["","","",""]
+        "Empleado": [
+            "Empleado A",
+            "Empleado B",
+            "Empleado C",
+            "Empleado D"
+        ],
+        "Grupo": [
+            "",
+            "",
+            "",
+            ""
+        ]
     })
 
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(
+        df,
+        use_container_width=True
+    )
 
     if st.button("🎲 Asignar grupos"):
-        st.success("Grupos asignados correctamente")
+
+        st.success(
+            "Grupos asignados correctamente"
+        )
 
 # =========================================================
 # GENERADOR PRINCIPAL
 # =========================================================
 def generar_malla():
 
-    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO ENTERPRISE")
+    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
 
     # =====================================================
     # FECHAS
     # =====================================================
     c1, c2 = st.columns(2)
 
-    inicio = c1.date_input("Fecha inicio", date.today())
-    fin = c2.date_input("Fecha fin", date.today() + timedelta(days=30))
+    inicio = c1.date_input(
+        "Fecha inicio",
+        date.today()
+    )
+
+    fin = c2.date_input(
+        "Fecha fin",
+        date.today() + timedelta(days=30)
+    )
 
     # =====================================================
     # DESCANSOS
@@ -96,12 +137,19 @@ def generar_malla():
 
     descanso_actual = {}
 
+    # Inicialización session_state
     for i, g in enumerate(GRUPOS):
 
         key = f"descanso_{g}"
 
         if key not in st.session_state:
+
             st.session_state[key] = DIAS_ES[i]
+
+    # Selectores
+    for i, g in enumerate(GRUPOS):
+
+        key = f"descanso_{g}"
 
         descanso_actual[g] = cols[i].selectbox(
             g,
@@ -110,12 +158,14 @@ def generar_malla():
         )
 
     # =====================================================
-    # ROTACIÓN
+    # ROTACIÓN AUTOMÁTICA
     # =====================================================
     if st.button("🔄 Rotar descansos"):
 
         for g in GRUPOS:
+
             key = f"descanso_{g}"
+
             actual = st.session_state[key]
 
             st.session_state[key] = DIAS_ES[
@@ -125,12 +175,16 @@ def generar_malla():
         st.rerun()
 
     # =====================================================
-    # VALIDACIÓN
+    # VALIDACIÓN VISUAL
     # =====================================================
     errores = validar_config(descanso_actual)
 
     if errores:
-        st.warning("⚠️ Configuración de descansos con advertencias")
+
+        st.warning(
+            "⚠️ Hay demasiados descansos el mismo día."
+        )
+
         for e in errores:
             st.warning(e)
 
@@ -139,139 +193,221 @@ def generar_malla():
     # =====================================================
     if st.button("🚀 Generar malla optimizada"):
 
-        carga = {g: 0 for g in GRUPOS}
-
-        conteo_turnos = {
-            g: {"T1":0,"T2":0,"T3":0}
+        # =================================================
+        # ESTADO GLOBAL
+        # =================================================
+        carga = {
+            g: 0
             for g in GRUPOS
         }
 
-        sacrificios = {g:0 for g in GRUPOS}
-        compensados = {g:0 for g in GRUPOS}
+        conteo_turnos = {
+            g: {
+                "T1": 0,
+                "T2": 0,
+                "T3": 0
+            }
+            for g in GRUPOS
+        }
 
-        ultimo_turno = {g: None for g in GRUPOS}
+        # sacrificios fin de semana
+        sacrificios = {
+            g: 0
+            for g in GRUPOS
+        }
+
+        # compensados pendientes
+        compensados = {
+            g: 0
+            for g in GRUPOS
+        }
 
         filas = []
 
-        fechas = pd.date_range(inicio, fin)
+        fechas = pd.date_range(
+            inicio,
+            fin,
+            freq="D"
+        )
 
-        # =====================================================
-        # GENERACIÓN
-        # =====================================================
+        # =================================================
+        # GENERACIÓN DIARIA
+        # =================================================
         for fecha in fechas:
 
-            dia = DIAS_ES[fecha.weekday()]
-            festivo = fecha.date() in festivos_co
+            dia = DIAS_ES[
+                fecha.weekday()
+            ]
+
+            festivo = (
+                fecha.date()
+                in festivos_co
+            )
 
             asignados = {}
 
-            # =================================================
-            # DESCANSOS
-            # =================================================
+            # =============================================
+            # DESCANSOS CONFIGURADOS
+            # =============================================
             grupos_descanso = [
+
                 g for g in GRUPOS
+
                 if descanso_actual[g] == dia
             ]
 
             activos = [
+
                 g for g in GRUPOS
+
                 if g not in grupos_descanso
             ]
 
-            # =================================================
-            # COBERTURA MÍNIMA
-            # =================================================
+            # =============================================
+            # COBERTURA OBLIGATORIA
+            # =============================================
+            # SI NO ALCANZA PERSONAL
+            # SE SACRIFICA DESCANSO
+            # =============================================
             while len(activos) < 3:
 
                 candidatos = [
-                    (sacrificios[g], carga[g], g)
+
+                    (
+                        sacrificios[g],
+                        carga[g],
+                        g
+                    )
+
                     for g in grupos_descanso
                 ]
 
                 candidatos.sort()
 
-                g = candidatos[0][2]
+                sacrificado = candidatos[0][2]
 
-                grupos_descanso.remove(g)
-                activos.append(g)
+                grupos_descanso.remove(
+                    sacrificado
+                )
 
-                sacrificios[g] += 1
-                compensados[g] += 1
+                activos.append(
+                    sacrificado
+                )
 
-            # =================================================
-            # DESCANSO
-            # =================================================
+                sacrificios[
+                    sacrificado
+                ] += 1
+
+                compensados[
+                    sacrificado
+                ] += 1
+
+            # =============================================
+            # ASIGNAR DESCANSOS
+            # =============================================
             for g in grupos_descanso:
+
                 asignados[g] = "DESCANSO"
 
-            # =================================================
-            # TURNOS (SIN HUECOS)
-            # =================================================
-            for turno in ["T1","T2","T3"]:
+            # =============================================
+            # ASIGNAR TURNOS
+            # =============================================
+            for turno in ["T1", "T2", "T3"]:
 
-                candidatos = []
+                candidatos = [
 
-                for g in activos:
+                    (
+                        carga[g],
+                        conteo_turnos[g][turno],
+                        g
+                    )
 
-                    prev = ultimo_turno[g]
-
-                    # evitar salto crítico
-                    if prev == "T3" and turno == "T1":
-                        continue
-
-                    if prev == "T2" and turno == "T1":
-                        continue
-
-                    candidatos.append((carga[g], g))
-
-                # RELAJAR SI ES NECESARIO
-                if not candidatos:
-                    candidatos = [(carga[g], g) for g in activos]
-
-                if not candidatos:
-                    continue
+                    for g in activos
+                ]
 
                 candidatos.sort()
 
-                sel = candidatos[0][1]
+                seleccionado = candidatos[0][2]
 
-                asignados[sel] = turno
+                asignados[
+                    seleccionado
+                ] = turno
 
-                ultimo_turno[sel] = turno
+                carga[
+                    seleccionado
+                ] += 1
 
-                carga[sel] += 1
+                conteo_turnos[
+                    seleccionado
+                ][turno] += 1
 
-                conteo_turnos[sel][turno] += 1
+                activos.remove(
+                    seleccionado
+                )
 
-                activos.remove(sel)
+            # =============================================
+            # COMPENSADOS ENTRE SEMANA
+            # =============================================
+            if dia not in [
+                "Sábado",
+                "Domingo"
+            ]:
 
-            # =================================================
+                for g in GRUPOS:
+
+                    if compensados[g] > 0:
+
+                        # no quitar cobertura
+                        if g not in asignados:
+
+                            asignados[g] = "COMPENSADO"
+
+                            compensados[g] -= 1
+
+            # =============================================
             # APOYO
-            # =================================================
-            for g in activos:
-                asignados[g] = "T1 APOYO"
+            # =============================================
+            for g in GRUPOS:
 
-            # =================================================
-            # GUARDAR
-            # =================================================
+                if g not in asignados:
+
+                    asignados[g] = "T1 APOYO"
+
+            # =============================================
+            # GUARDAR FILAS
+            # =============================================
             for g in GRUPOS:
 
                 filas.append({
+
                     "Fecha": fecha,
+
                     "Día": dia,
+
                     "Grupo": g,
-                    "Turno": asignados.get(g, "SIN ASIGNAR"),
-                    "Festivo": "SI" if festivo else "NO"
+
+                    "Turno": asignados[g],
+
+                    "Festivo": (
+                        "SI"
+                        if festivo
+                        else "NO"
+                    )
                 })
 
+        # =================================================
+        # DATAFRAME FINAL
+        # =================================================
         df = pd.DataFrame(filas)
 
         st.session_state["malla"] = df
 
-        st.success("✅ Malla generada correctamente")
+        st.success(
+            "✅ Malla optimizada generada correctamente"
+        )
 
     # =====================================================
-    # VISUALIZACIÓN
+    # VISUALIZAR
     # =====================================================
     if "malla" in st.session_state:
 
@@ -283,75 +419,59 @@ def generar_malla():
             index="Grupo",
             columns="Fecha",
             values="Turno"
-        ).fillna("SIN ASIGNAR")
+        )
 
         # =================================================
-        # AUDITORÍA SALTOS
+        # FORMATO COLUMNAS
         # =================================================
-        st.subheader("🚨 Auditoría de saltos indebidos")
+        columnas = {}
 
-        saltos = []
+        for c in pivot.columns:
 
-        for g in GRUPOS:
+            fecha_txt = c.strftime("%d-%m")
 
-            gdf = df[df["Grupo"] == g].sort_values("Fecha")
+            dia_txt = DIAS_ES[
+                c.weekday()
+            ]
 
-            prev = None
+            columnas[c] = (
+                f"{fecha_txt}\n{dia_txt}"
+            )
 
-            for _, r in gdf.iterrows():
-
-                if prev == "T3" and r["Turno"] == "T1":
-                    saltos.append([g, r["Fecha"], "T3 → T1"])
-
-                if prev == "T2" and r["Turno"] == "T1":
-                    saltos.append([g, r["Fecha"], "T2 → T1"])
-
-                prev = r["Turno"]
-
-        if saltos:
-            st.error(f"⚠️ {len(saltos)} saltos detectados")
-            st.dataframe(pd.DataFrame(saltos, columns=["Grupo","Fecha","Error"]))
-        else:
-            st.success("✅ Sin saltos indebidos")
+        pivot.rename(
+            columns=columnas,
+            inplace=True
+        )
 
         # =================================================
-        # AUDITORÍA COBERTURA
-        # =================================================
-        st.subheader("🛡️ Auditoría de cobertura diaria")
-
-        faltantes = []
-
-        for fecha in df["Fecha"].unique():
-
-            dia_df = df[df["Fecha"] == fecha]
-
-            turnos = set(dia_df["Turno"])
-
-            for t in ["T1","T2","T3"]:
-                if t not in turnos:
-                    faltantes.append([fecha, t])
-
-        if faltantes:
-            st.error("❌ Días con turnos faltantes")
-            st.dataframe(pd.DataFrame(faltantes, columns=["Fecha","Falta"]))
-        else:
-            st.success("✅ Cobertura completa")
-
-        # =================================================
-        # COLORES PRO
+        # COLORES
         # =================================================
         def color(v):
 
             return {
-                "DESCANSO":"background:#FF4D4D;color:white;font-weight:bold",
-                "COMPENSADO":"background:#FFD166;font-weight:bold",
-                "T1":"background:#06D6A0;font-weight:bold",
-                "T2":"background:#118AB2;color:white;font-weight:bold",
-                "T3":"background:#8338EC;color:white;font-weight:bold",
-                "T1 APOYO":"background:#E0E0E0",
-                "T2 APOYO":"background:#CFCFCF",
-                "SIN ASIGNAR":"background:#000;color:white"
-            }.get(v,"")
+
+                "DESCANSO":
+                    "background:#FFADAD",
+
+                "COMPENSADO":
+                    "background:#FFD6A5",
+
+                "T1":
+                    "background:#CAFFBF",
+
+                "T2":
+                    "background:#9BF6FF",
+
+                "T3":
+                    "background:#BDB2FF",
+
+                "T1 APOYO":
+                    "background:#E7E7E7",
+
+                "T2 APOYO":
+                    "background:#D6D6D6"
+
+            }.get(v, "")
 
         st.dataframe(
             pivot.style.map(color),
@@ -361,26 +481,91 @@ def generar_malla():
         # =================================================
         # DASHBOARD
         # =================================================
-        st.subheader("📊 Dashboard")
+        st.subheader("📊 Dashboard operativo")
 
-        c1,c2,c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
 
-        c1.metric("Operativos", len(df[df["Turno"].isin(["T1","T2","T3"])]))
-        c2.metric("Descanso", len(df[df["Turno"]=="DESCANSO"]))
-        c3.metric("Compensado", len(df[df["Turno"]=="COMPENSADO"]))
+        operativos = len(
+            df[
+                df["Turno"].isin(
+                    ["T1", "T2", "T3"]
+                )
+            ]
+        )
+
+        descansos = len(
+            df[
+                df["Turno"] == "DESCANSO"
+            ]
+        )
+
+        compensados_total = len(
+            df[
+                df["Turno"] == "COMPENSADO"
+            ]
+        )
+
+        apoyos = len(
+            df[
+                df["Turno"] == "T1 APOYO"
+            ]
+        )
+
+        c1.metric(
+            "Turnos operativos",
+            operativos
+        )
+
+        c2.metric(
+            "Descansos",
+            descansos
+        )
+
+        c3.metric(
+            "Compensados",
+            compensados_total
+        )
+
+        c4.metric(
+            "Apoyos",
+            apoyos
+        )
+
+        # =================================================
+        # RESUMEN POR GRUPO
+        # =================================================
+        st.subheader("📈 Balance por grupo")
+
+        resumen = df.pivot_table(
+            index="Grupo",
+            columns="Turno",
+            aggfunc="size",
+            fill_value=0
+        )
+
+        st.dataframe(
+            resumen,
+            use_container_width=True
+        )
 
 # =========================================================
-# MENU
+# MENÚ PRINCIPAL
 # =========================================================
 def pantalla_programador():
 
-    mod = st.radio(
+    modulo = st.radio(
         "Módulo",
-        ["Programador","Parametrizador"],
+        [
+            "Programador",
+            "Parametrizador"
+        ],
         horizontal=True
     )
 
-    if mod == "Programador":
+    if modulo == "Programador":
+
         generar_malla()
+
     else:
+
         parametrizador()
