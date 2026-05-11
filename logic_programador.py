@@ -235,7 +235,7 @@ def pantalla_tecnicos():
     if "Grupo" not in df.columns:
         df["Grupo"] = ""
 
-required_cols = ["Nombre", "Cargo"]
+    required_cols = ["Nombre", "Cargo"]
 
 for col in required_cols:
     if col not in df.columns:
