@@ -482,6 +482,17 @@ def pantalla_programador():
         "📅 Programador Maestro MovilGo"
     )
 
+    PERSONAL = cargar_personal()
+
+    submodulo = st.radio(
+        "Seleccione módulo",
+        [
+            "👷 Programación Técnicos",
+            "🚍 Personal Abordaje"
+        ],
+        horizontal=True
+    )
+
     dias_semana = [
 
         "Lunes",
