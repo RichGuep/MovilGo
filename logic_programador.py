@@ -233,7 +233,7 @@ def pantalla_tecnicos():
 
     # validar columnas mínimas
     if "Grupo" not in df.columns:
-    df["Grupo"] = ""
+        df["Grupo"] = ""
 
 required_cols = ["Nombre", "Cargo"]
 
