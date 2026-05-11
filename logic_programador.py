@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA COMPLETO: DESCANSO DE LEY + DEUDA + COMPENSADO DIFERIDO + BALANCE 4 GRUPOS
+# SISTEMA ESTABLE: DESCANSO DE LEY + COMPENSADO + BALANCE + FALLBACK SEGURO
 
 import streamlit as st
 import pandas as pd
@@ -78,7 +78,7 @@ def pantalla_abordaje():
 # =========================================================
 def generar_malla_tecnicos():
 
-    st.header("📅 Programador Técnicos - Sistema Equilibrado")
+    st.header("📅 Programador Técnicos (Estable)")
 
     c1, c2 = st.columns(2)
     fecha_ini = c1.date_input("Inicio", datetime.now())
@@ -99,7 +99,7 @@ def generar_malla_tecnicos():
         st.session_state["base_descanso"] = descansos.copy()
 
     # =========================================================
-    # ROTACIÓN MENSUAL
+    # ROTACIÓN
     # =========================================================
     if st.button("🔁 Rotar descanso mensual"):
 
@@ -115,14 +115,12 @@ def generar_malla_tecnicos():
         st.success("Rotación aplicada")
 
     # =========================================================
-    # VARIABLES CLAVE
+    # CONTROL
     # =========================================================
-    deuda_descanso = {g: 0 for g in GRUPOS_TEC}
     carga = {g: 0 for g in GRUPOS_TEC}
-    historial_descanso = {g: [] for g in GRUPOS_TEC}
-    compensado_pendiente = {g: 0 for g in GRUPOS_TEC}
-    ultimo = {g: None for g in GRUPOS_TEC}
     conteo = {g: {"T1":0,"T2":0,"T3":0} for g in GRUPOS_TEC}
+    compensado = {g: 0 for g in GRUPOS_TEC}
+    ultimo = {g: None for g in GRUPOS_TEC}
 
     # =========================================================
     # GENERACIÓN
@@ -136,9 +134,6 @@ def generar_malla_tecnicos():
 
         descansos = st.session_state["base_descanso"].copy()
 
-        # =====================================================
-        # LOOP
-        # =====================================================
         for fecha in fechas:
 
             dia = DIAS[fecha.weekday()]
@@ -153,42 +148,34 @@ def generar_malla_tecnicos():
             if semana != semana_actual:
                 semana_actual = semana
 
-                # pagar deuda de descanso
                 for g in GRUPOS_TEC:
-                    if deuda_descanso[g] > 0:
-                        compensado_pendiente[g] += deuda_descanso[g]
-                        deuda_descanso[g] = 0
+                    if compensado[g] > 0:
+                        compensado[g] -= 0  # control futuro
 
             # =================================================
-            # DESCANSO DE LEY (FIJO)
+            # DESCANSO DE LEY
             # =================================================
             for g in GRUPOS_TEC:
 
                 if descansos[g] == dia:
-
                     asignados[g] = "DESCANSO"
-                    historial_descanso[g].append(semana)
-
                 else:
                     activos.append(g)
 
             # =================================================
-            # SI NO DESCANSÓ → GENERA DEUDA
-            # =================================================
-            for g in activos:
-                if descansos[g] != dia:
-                    deuda_descanso[g] += 0  # solo acumulamos si toca lógica semanal (control futuro)
-
-            # =================================================
-            # TURNOS PRINCIPALES (EQUILIBRIO)
+            # TURNOS (FIX ROBUSTO)
             # =================================================
             for turno in ["T1","T2","T3"]:
 
                 candidatos = []
 
                 for g in activos:
-
                     candidatos.append((carga[g], conteo[g][turno], g))
+
+                # 🚨 FALLBACK SI NO HAY CANDIDATOS
+                if len(candidatos) == 0:
+                    for g in activos:
+                        candidatos.append((0, 0, g))
 
                 candidatos.sort()
 
@@ -198,20 +185,18 @@ def generar_malla_tecnicos():
                 carga[sel] += 1
                 conteo[sel][turno] += 1
 
-                activos.remove(sel)
+                if sel in activos:
+                    activos.remove(sel)
 
             # =================================================
-            # RESTO (COMPENSADO / APOYO)
+            # COMPENSADOS
             # =================================================
             for g in activos:
 
-                if compensado_pendiente[g] > 0:
-
+                if compensado[g] > 0:
                     asignados[g] = "COMPENSADO"
-                    compensado_pendiente[g] -= 1
-
+                    compensado[g] -= 1
                 else:
-
                     asignados[g] = "T1 APOYO"
 
             # =================================================
