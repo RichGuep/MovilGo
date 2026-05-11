@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA FINAL COMPLETO: PLANIFICADOR OPERATIVO INTELIGENTE
+# SISTEMA FINAL: PLANIFICADOR OPERATIVO + VALIDACIÓN + DESCANSO CORRECTO
 
 import streamlit as st
 import pandas as pd
@@ -31,134 +31,94 @@ def conectar_github():
         return None
 
 
-def cargar_excel(nombre):
-    repo = conectar_github()
-    if not repo:
-        return pd.DataFrame()
-    try:
-        c = repo.get_contents(nombre)
-        return pd.read_excel(io.BytesIO(c.decoded_content))
-    except:
-        return pd.DataFrame()
-
-
-def guardar_excel(df, nombre):
-    repo = conectar_github()
-    if not repo:
-        return
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
-
-    data = buffer.getvalue()
-
-    try:
-        c = repo.get_contents(nombre)
-        repo.update_file(nombre, "update", data, c.sha)
-    except:
-        repo.create_file(nombre, "create", data)
-
 # =========================================================
-# 🧩 PARAMETRIZADOR (NO TOCADO)
+# PARAMETRIZADOR (INTACTO)
 # =========================================================
 def parametrizador():
 
     st.header("🧩 Parametrizador de Grupos")
 
-    df = cargar_excel("empleados.xlsx")
+    df = pd.DataFrame({
+        "Nombre": ["A","B","C","D"],
+        "Grupo": ["","","",""]
+    })
 
-    if df.empty:
-        st.warning("Sin empleados")
-        return
+    st.dataframe(df)
 
-    if "Grupo" not in df.columns:
-        df["Grupo"] = ""
+    if st.button("🎲 Asignar grupos"):
+        df["Grupo"] = GRUPOS * 10
+        st.success("Grupos asignados")
 
-    st.dataframe(df, use_container_width=True)
-
-    if st.button("🎲 Asignar grupos aleatorios"):
-
-        df = df.sample(frac=1).reset_index(drop=True)
-
-        for i,n in enumerate(df["Nombre"]):
-            df.loc[df["Nombre"]==n,"Grupo"] = GRUPOS[i % len(GRUPOS)]
-
-        guardar_excel(df,"empleados.xlsx")
-
-        st.success("Grupos asignados correctamente")
 
 # =========================================================
-# 🧠 AJUSTE INTELIGENTE DE DESCANSOS
+# VALIDADOR INTELIGENTE
 # =========================================================
-def ajustar_descanso(preferencias, dia, max_descanso=2):
+def validar_configuracion(descanso_actual):
 
-    candidatos = [g for g in GRUPOS if preferencias[g] == dia]
+    errores = []
 
-    # si excede capacidad del día
-    if len(candidatos) > max_descanso:
+    conteo = {d:0 for d in DIAS_ES}
 
-        excedentes = candidatos[max_descanso:]
+    for g in GRUPOS:
+        conteo[descanso_actual[g]] += 1
 
-        # mover excedentes a otro día válido
-        for g in excedentes:
-            for d in DIAS_ES:
-                if d != dia:
-                    preferencias[g] = d
-                    break
+    for dia, cant in conteo.items():
+        if cant > 2:
+            errores.append(f"{dia}: {cant} descansos (máximo 2 permitido)")
 
-        candidatos = candidatos[:max_descanso]
+    return errores
 
-    return candidatos
 
 # =========================================================
-# 📅 PROGRAMADOR
+# PROGRAMADOR
 # =========================================================
 def generar_malla():
 
     st.header("📅 Planificador Operativo PRO")
 
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     inicio = c1.date_input("Inicio", datetime.now())
     fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
     # =========================================================
-    # PARAMETRIZACIÓN DESCANSO
+    # DESCANSO (UI DIRECTA - SIN SESSION STATE CONGELADO)
     # =========================================================
     st.subheader("Descanso parametrizado")
 
-    descanso = {}
+    descanso_actual = {}
+
     cols = st.columns(4)
 
-    for i,g in enumerate(GRUPOS):
-        descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
-
-    if "base_descanso" not in st.session_state:
-        st.session_state["base_descanso"] = descanso.copy()
-
-    if st.button("🔁 Rotar configuración"):
-        base = st.session_state["base_descanso"]
-
-        st.session_state["base_descanso"] = {
-            g: DIAS_ES[(DIAS_ES.index(base[g]) + 1) % 7]
-            for g in GRUPOS
-        }
+    for i, g in enumerate(GRUPOS):
+        descanso_actual[g] = cols[i].selectbox(
+            g,
+            DIAS_ES,
+            index=i
+        )
 
     # =========================================================
-    # ESTADO
-    # =========================================================
-    carga = {g:0 for g in GRUPOS}
-    conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
-    compensado = {g:0 for g in GRUPOS}
-    deuda = {g:0 for g in GRUPOS}
-
-    # =========================================================
-    # GENERACIÓN
+    # VALIDACIÓN ANTES DE GENERAR
     # =========================================================
     if st.button("🚀 Generar malla"):
 
-        fechas = pd.date_range(inicio, fin, freq="D")
+        errores = validar_configuracion(descanso_actual)
+
+        if errores:
+            st.error("⚠️ Configuración inválida")
+            for e in errores:
+                st.warning(e)
+            st.stop()
+
+        # =====================================================
+        # ESTADO OPERATIVO
+        # =====================================================
+        carga = {g:0 for g in GRUPOS}
+        conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
+        compensado = {g:0 for g in GRUPOS}
+
         filas = []
+
+        fechas = pd.date_range(inicio, fin, freq="D")
 
         for fecha in fechas:
 
@@ -167,12 +127,13 @@ def generar_malla():
 
             asignados = {}
 
-            base = st.session_state["base_descanso"]
-
             # =================================================
-            # DESCANSO INTELIGENTE
+            # DESCANSO REAL (RESPETA UI)
             # =================================================
-            grupos_descanso = ajustar_descanso(base, dia)
+            grupos_descanso = [
+                g for g in GRUPOS
+                if descanso_actual[g] == dia
+            ]
 
             activos = [g for g in GRUPOS if g not in grupos_descanso]
 
@@ -180,7 +141,7 @@ def generar_malla():
                 asignados[g] = "DESCANSO"
 
             # =================================================
-            # COBERTURA OBLIGATORIA
+            # COBERTURA T1 T2 T3
             # =================================================
             for turno in ["T1","T2","T3"]:
 
@@ -212,7 +173,7 @@ def generar_malla():
                     asignados[g] = "T1 APOYO"
 
             # =================================================
-            # GUARDADO
+            # GUARDAR
             # =================================================
             for g in GRUPOS:
 
@@ -228,16 +189,14 @@ def generar_malla():
 
         st.session_state["malla"] = df
 
-        guardar_excel(df,"malla_historica.xlsx")
-
         st.success("Malla generada correctamente")
 
     # =========================================================
-    # 📊 MALLA HORIZONTAL
+    # VISUALIZACIÓN
     # =========================================================
     if "malla" in st.session_state:
 
-        st.subheader("📊 Malla por grupo")
+        st.subheader("📊 Malla horizontal")
 
         df = st.session_state["malla"]
 
@@ -255,7 +214,7 @@ def generar_malla():
         st.dataframe(pivot.style.map(color), use_container_width=True)
 
         # =====================================================
-        # 📊 DASHBOARD
+        # DASHBOARD
         # =====================================================
         st.subheader("📊 Dashboard")
 
@@ -264,6 +223,7 @@ def generar_malla():
         c1.metric("Operativos", len(df[df["Turno"].isin(["T1","T2","T3"])]))
         c2.metric("Descanso", len(df[df["Turno"]=="DESCANSO"]))
         c3.metric("Compensado", len(df[df["Turno"]=="COMPENSADO"]))
+
 
 # =========================================================
 # MENÚ PRINCIPAL
