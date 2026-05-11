@@ -116,15 +116,24 @@ def pantalla_programador_tecnicos():
             dia = dias[fecha.weekday()]
             semana = fecha.isocalendar().week
 
-            # Rotación fija garantizando siempre T1, T2 y T3
-            # Grupo 4 hace apoyo; si algún grupo entra en descanso,
-            # el grupo de apoyo cubre ese turno para no dejar huecos
-            base = {
-                grupos[0]: "T1",
-                grupos[1]: "T2",
-                grupos[2]: "T3",
-                grupos[3]: "T1_APOYO" if semana % 2 == 0 else "T2_APOYO"
-            }
+                        # ROTACIÓN SEMANAL REAL:
+            # cada grupo cambia cada semana: T1 → T2 → T3 → APOYO → repetir
+            rot = (semana - 1) % 4
+            mapa_base = ["T1", "T2", "T3", "APOYO"]
+            base = {}
+            for idx, g in enumerate(grupos):
+                turno_base = mapa_base[(idx + rot) % 4]
+                if turno_base == "APOYO":
+                    turno_base = "T1_APOYO" if semana % 2 == 0 else "T2_APOYO"
+                base[g] = turno_base
+
+            # REGLA ESPECIAL:
+            # si un grupo estuvo en T3 la semana pasada,
+            # debe pasar primero por DESCANSO antes de ir a T1
+            for g in grupos:
+                anterior = historial[g]
+                if anterior == "T3" and base[g] in ["T1", "T2", "T1_APOYO", "T2_APOYO"]:
+                    base[g] = "DESCANSO_LEY"
 
             # detectar quién descansa hoy
             grupo_descanso = None
@@ -155,12 +164,12 @@ def pantalla_programador_tecnicos():
                     turno = "COMPENSADO"
                     deuda_comp[g] = False
 
-                # auditoría salto ilegal
+                                # auditoría salto ilegal T3 -> T1/T2
                 anterior = historial[g]
                 if anterior == "T3" and turno in ["T1", "T2", "T1_APOYO", "T2_APOYO"]:
-                    st.warning(f"⚠️ Salto ilegal detectado: {g} pasó de T3 a {turno} ({fecha.date()})")
+                    st.error(f"🚨 Salto ilegal detectado: {g} pasó de T3 a {turno} ({fecha.date()})")
 
-                # marcar compensado SOLO si llegó su día de descanso y no pudo descansar
+                # marcar compensado SOLO si perdió descanso parametrizado
                 # porque debía cubrir T1/T2/T3
                 if descansos[g] == dia and turno != "DESCANSO_LEY":
                     deuda_comp[g] = True
