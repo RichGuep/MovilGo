@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA COMPLETO FINAL: PLANIFICADOR OPERATIVO COLOMBIA
+# SISTEMA FINAL CORREGIDO: ESPAÑOL + DESCANSO DE LEY REAL
 
 import streamlit as st
 import pandas as pd
@@ -25,7 +25,6 @@ festivos_co = holidays.Colombia()
 def conectar_github():
     try:
         if "GITHUB_TOKEN" not in st.secrets:
-            st.error("❌ Falta GITHUB_TOKEN")
             return None
         return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
     except:
@@ -61,56 +60,36 @@ def guardar_excel(df, nombre):
         repo.create_file(nombre, "create", data)
 
 # =========================================================
-# 🧩 PARAMETRIZADOR
+# PARAMETRIZADOR
 # =========================================================
 def parametrizador():
 
-    st.header("🧩 Parametrizador de Grupos")
+    st.header("🧩 Parametrizador")
 
     df = cargar_excel("empleados.xlsx")
-
-    if df.empty:
-        st.warning("No hay empleados")
-        return
-
-    if "Grupo" not in df.columns:
-        df["Grupo"] = ""
-
-    st.dataframe(df, use_container_width=True)
-
-    if st.button("🎲 Asignar grupos aleatorios"):
-
-        df = df.sample(frac=1).reset_index(drop=True)
-
-        asignacion = {}
-
-        for i, nombre in enumerate(df["Nombre"]):
-            asignacion[nombre] = GRUPOS[i % len(GRUPOS)]
-
-        df["Grupo"] = df["Nombre"].map(asignacion)
-
-        guardar_excel(df, "empleados.xlsx")
-
-        st.success("Grupos asignados")
-        st.dataframe(df, use_container_width=True)
-
-# =========================================================
-# 🚌 ABORDAJE
-# =========================================================
-def abordaje():
-
-    st.header("🚌 Abordaje")
-
-    df = cargar_excel("abordaje.xlsx")
 
     if df.empty:
         st.warning("Sin datos")
         return
 
+    if "Grupo" not in df.columns:
+        df["Grupo"] = ""
+
     st.dataframe(df)
 
+    if st.button("Asignar grupos"):
+
+        df = df.sample(frac=1).reset_index(drop=True)
+
+        for i,n in enumerate(df["Nombre"]):
+            df.loc[df["Nombre"]==n,"Grupo"] = GRUPOS[i % len(GRUPOS)]
+
+        guardar_excel(df, "empleados.xlsx")
+
+        st.success("Grupos asignados")
+
 # =========================================================
-# 📅 PROGRAMADOR PRINCIPAL
+# PROGRAMADOR
 # =========================================================
 def generar_malla():
 
@@ -121,7 +100,7 @@ def generar_malla():
     fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
     # =========================================================
-    # DESCANSO DE LEY
+    # DESCANSO DE LEY (FIJO)
     # =========================================================
     st.subheader("Descanso de ley")
 
@@ -134,16 +113,13 @@ def generar_malla():
     if "base_descanso" not in st.session_state:
         st.session_state["base_descanso"] = descanso.copy()
 
-    if st.button("🔁 Rotar descanso mensual"):
+    if st.button("Rotar"):
         base = st.session_state["base_descanso"]
 
-        nuevo = {}
-        for g in GRUPOS:
-            idx = DIAS_ES.index(base[g])
-            nuevo[g] = DIAS_ES[(idx+1)%7]
-
-        st.session_state["base_descanso"] = nuevo
-        st.success("Rotación aplicada")
+        st.session_state["base_descanso"] = {
+            g: DIAS_ES[(DIAS_ES.index(base[g]) + 1) % 7]
+            for g in GRUPOS
+        }
 
     # =========================================================
     # ESTADO
@@ -156,7 +132,7 @@ def generar_malla():
     # =========================================================
     # GENERACIÓN
     # =========================================================
-    if st.button("🚀 Generar malla"):
+    if st.button("Generar malla"):
 
         fechas = pd.date_range(inicio, fin, freq="D")
         filas = []
@@ -173,9 +149,7 @@ def generar_malla():
             asignados = {}
             activos = []
 
-            # =================================================
-            # RESET SEMANA → COMPENSADO
-            # =================================================
+            # RESET SEMANA
             if semana != semana_actual:
                 semana_actual = semana
 
@@ -185,7 +159,7 @@ def generar_malla():
                         deuda[g] = 0
 
             # =================================================
-            # DESCANSO DE LEY
+            # DESCANSO DE LEY (NO SE TOCA)
             # =================================================
             for g in GRUPOS:
 
@@ -212,13 +186,14 @@ def generar_malla():
                 sel = candidatos[0][2]
 
                 asignados[sel] = turno
+
                 carga[sel] += 1
                 conteo[sel][turno] += 1
 
                 activos.remove(sel)
 
             # =================================================
-            # COMPENSADO / APOYO
+            # COMPENSADO
             # =================================================
             for g in activos:
 
@@ -229,14 +204,14 @@ def generar_malla():
                     asignados[g] = "T1 APOYO"
 
             # =================================================
-            # GUARDAR
+            # GUARDADO
             # =================================================
             for g in GRUPOS:
 
                 filas.append({
                     "Fecha": fecha,
                     "Grupo": g,
-                    "Día": dia,
+                    "Día": dia,   # 👈 ESPAÑOL REAL FIJO
                     "Turno": asignados.get(g,"T1 APOYO"),
                     "Festivo": "SI" if festivo else "NO"
                 })
@@ -244,55 +219,43 @@ def generar_malla():
         df = pd.DataFrame(filas)
 
         st.session_state["malla"] = df
+
         guardar_excel(df, "malla_historica.xlsx")
 
-        st.success("Malla generada correctamente")
+        st.success("Malla generada")
 
     # =========================================================
-    # 📊 MALLA HORIZONTAL (VISUAL OPERATIVA)
+    # MALLA HORIZONTAL
     # =========================================================
     if "malla" in st.session_state:
 
-        st.subheader("📊 Malla horizontal por grupo")
+        st.subheader("📊 Malla horizontal")
 
         df = st.session_state["malla"]
 
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
-        dias_map = df.drop_duplicates("Fecha")[["Fecha"]].copy()
-        dias_map["Dia"] = dias_map["Fecha"].dt.day_name()
+        # ✔ DÍAS EN ESPAÑOL (FIX REAL)
+        dias_por_fecha = df.drop_duplicates("Fecha")[["Fecha","Día"]]
 
-        nuevas = {}
+        columnas = {}
 
         for f in pivot.columns:
-            d = dias_map[dias_map["Fecha"]==f]["Dia"].values[0]
-            nuevas[f] = f.strftime("%d-%m\n"+d)
+            dia = dias_por_fecha[dias_por_fecha["Fecha"]==f]["Día"].values[0]
+            columnas[f] = f.strftime("%d-%m") + "\n" + dia
 
-        pivot.rename(columns=nuevas, inplace=True)
+        pivot.rename(columns=columnas, inplace=True)
 
         def color(v):
+            return {
+                "DESCANSO":"background:#FFADAD",
+                "COMPENSADO":"background:#FFD6A5",
+                "T1":"background:#CAFFBF",
+                "T2":"background:#9BF6FF",
+                "T3":"background:#BDB2FF"
+            }.get(v,"")
 
-            if v == "DESCANSO":
-                return "background:#FFADAD;font-weight:bold"
-
-            if v == "COMPENSADO":
-                return "background:#FFD6A5"
-
-            if v == "T1":
-                return "background:#CAFFBF"
-
-            if v == "T2":
-                return "background:#9BF6FF"
-
-            if v == "T3":
-                return "background:#BDB2FF"
-
-            return ""
-
-        st.dataframe(
-            pivot.style.map(color),
-            use_container_width=True
-        )
+        st.dataframe(pivot.style.map(color), use_container_width=True)
 
         # =====================================================
         # DASHBOARD
@@ -306,21 +269,18 @@ def generar_malla():
         c3.metric("Compensado", len(df[df["Turno"]=="COMPENSADO"]))
 
 # =========================================================
-# MENÚ
+# MENU
 # =========================================================
 def pantalla_programador():
 
     mod = st.radio(
         "Módulo",
-        ["Programador","Parametrizador","Abordaje"],
+        ["Programador","Parametrizador"],
         horizontal=True
     )
 
     if mod == "Programador":
         generar_malla()
 
-    elif mod == "Parametrizador":
-        parametrizador()
-
     else:
-        abordaje()
+        parametrizador()
