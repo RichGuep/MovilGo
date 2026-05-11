@@ -1,11 +1,9 @@
 # logic_programador.py
-# SISTEMA FINAL: PLANIFICADOR OPERATIVO + VALIDACIÓN + DESCANSO CORRECTO
+# OPTIMIZADOR INTELIGENTE PRO - VERSION ESTABLE FINAL
 
 import streamlit as st
 import pandas as pd
-import io
 from datetime import datetime, timedelta
-from github import Github
 import holidays
 
 # =========================================================
@@ -20,40 +18,9 @@ DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 festivos_co = holidays.Colombia()
 
 # =========================================================
-# GITHUB
+# VALIDACIÓN DE CONFIGURACIÓN
 # =========================================================
-def conectar_github():
-    try:
-        if "GITHUB_TOKEN" not in st.secrets:
-            return None
-        return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
-    except:
-        return None
-
-
-# =========================================================
-# PARAMETRIZADOR (INTACTO)
-# =========================================================
-def parametrizador():
-
-    st.header("🧩 Parametrizador de Grupos")
-
-    df = pd.DataFrame({
-        "Nombre": ["A","B","C","D"],
-        "Grupo": ["","","",""]
-    })
-
-    st.dataframe(df)
-
-    if st.button("🎲 Asignar grupos"):
-        df["Grupo"] = GRUPOS * 10
-        st.success("Grupos asignados")
-
-
-# =========================================================
-# VALIDADOR INTELIGENTE
-# =========================================================
-def validar_configuracion(descanso_actual):
+def validar_config(descanso_actual):
 
     errores = []
 
@@ -64,47 +31,88 @@ def validar_configuracion(descanso_actual):
 
     for dia, cant in conteo.items():
         if cant > 2:
-            errores.append(f"{dia}: {cant} descansos (máximo 2 permitido)")
+            errores.append(f"{dia}: {cant} descansos (máximo permitido 2)")
 
     return errores
 
+# =========================================================
+# OPTIMIZADOR DE DESCANSO (AJUSTE SUAVE)
+# =========================================================
+def optimizar_descanso(descanso_actual, dia):
+
+    grupos = [g for g in GRUPOS if descanso_actual[g] == dia]
+
+    # si hay demasiados descansando ese día
+    if len(grupos) > 2:
+
+        excedentes = grupos[2:]
+
+        for g in excedentes:
+            for d in DIAS_ES:
+                if d != dia:
+                    descanso_actual[g] = d
+                    break
+
+        grupos = grupos[:2]
+
+    return grupos
 
 # =========================================================
-# PROGRAMADOR
+# PARAMETRIZADOR (CORREGIDO)
+# =========================================================
+def parametrizador():
+
+    st.header("🧩 Parametrizador de Grupos")
+
+    df = pd.DataFrame({
+        "Nombre": ["Empleado A","Empleado B","Empleado C","Empleado D"],
+        "Grupo": ["","","",""]
+    })
+
+    st.dataframe(df)
+
+    if st.button("🎲 Asignar grupos"):
+
+        df["Grupo"] = GRUPOS * 10
+
+        st.success("Grupos asignados correctamente")
+
+# =========================================================
+# PROGRAMADOR PRINCIPAL
 # =========================================================
 def generar_malla():
 
-    st.header("📅 Planificador Operativo PRO")
+    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
 
     c1, c2 = st.columns(2)
-    inicio = c1.date_input("Inicio", datetime.now())
-    fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
+    inicio = c1.date_input("Fecha inicio", datetime.now())
+    fin = c2.date_input("Fecha fin", datetime.now() + timedelta(days=30))
 
     # =========================================================
-    # DESCANSO (UI DIRECTA - SIN SESSION STATE CONGELADO)
+    # DESCANSO DE LEY (FUENTE ÚNICA - UI)
     # =========================================================
-    st.subheader("Descanso parametrizado")
+    st.subheader("Parametrización de descanso de ley")
 
     descanso_actual = {}
 
-    cols = st.columns(4)
+    cols = st.columns(len(GRUPOS))
 
     for i, g in enumerate(GRUPOS):
         descanso_actual[g] = cols[i].selectbox(
             g,
             DIAS_ES,
-            index=i
+            key=f"desc_{g}"
         )
 
     # =========================================================
     # VALIDACIÓN ANTES DE GENERAR
     # =========================================================
-    if st.button("🚀 Generar malla"):
+    if st.button("🚀 Generar malla optimizada"):
 
-        errores = validar_configuracion(descanso_actual)
+        errores = validar_config(descanso_actual)
 
         if errores:
-            st.error("⚠️ Configuración inválida")
+            st.error("⚠️ Configuración inválida detectada")
             for e in errores:
                 st.warning(e)
             st.stop()
@@ -114,12 +122,14 @@ def generar_malla():
         # =====================================================
         carga = {g:0 for g in GRUPOS}
         conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
-        compensado = {g:0 for g in GRUPOS}
 
         filas = []
 
-        fechas = pd.date_range(inicio, fin, freq="D")
+        fechas = pd.date_range(inicio, fin)
 
+        # =====================================================
+        # GENERACIÓN
+        # =====================================================
         for fecha in fechas:
 
             dia = DIAS_ES[fecha.weekday()]
@@ -128,12 +138,9 @@ def generar_malla():
             asignados = {}
 
             # =================================================
-            # DESCANSO REAL (RESPETA UI)
+            # DESCANSO REAL (RESPETA UI + OPTIMIZA SOLO SI ES NECESARIO)
             # =================================================
-            grupos_descanso = [
-                g for g in GRUPOS
-                if descanso_actual[g] == dia
-            ]
+            grupos_descanso = optimizar_descanso(descanso_actual, dia)
 
             activos = [g for g in GRUPOS if g not in grupos_descanso]
 
@@ -141,7 +148,7 @@ def generar_malla():
                 asignados[g] = "DESCANSO"
 
             # =================================================
-            # COBERTURA T1 T2 T3
+            # COBERTURA OBLIGATORIA T1 T2 T3
             # =================================================
             for turno in ["T1","T2","T3"]:
 
@@ -162,26 +169,20 @@ def generar_malla():
                 activos.remove(sel)
 
             # =================================================
-            # APOYO / COMPENSADO
+            # APOYO / COMPLETAR
             # =================================================
             for g in activos:
-
-                if compensado[g] > 0:
-                    asignados[g] = "COMPENSADO"
-                    compensado[g] -= 1
-                else:
-                    asignados[g] = "T1 APOYO"
+                asignados[g] = "T1 APOYO"
 
             # =================================================
-            # GUARDAR
+            # GUARDADO
             # =================================================
             for g in GRUPOS:
-
                 filas.append({
                     "Fecha": fecha,
                     "Grupo": g,
                     "Día": dia,
-                    "Turno": asignados.get(g,"T1 APOYO"),
+                    "Turno": asignados.get(g, "T1 APOYO"),
                     "Festivo": "SI" if festivo else "NO"
                 })
 
@@ -192,7 +193,7 @@ def generar_malla():
         st.success("Malla generada correctamente")
 
     # =========================================================
-    # VISUALIZACIÓN
+    # VISUALIZACIÓN MALLA
     # =========================================================
     if "malla" in st.session_state:
 
@@ -220,13 +221,12 @@ def generar_malla():
 
         c1,c2,c3 = st.columns(3)
 
-        c1.metric("Operativos", len(df[df["Turno"].isin(["T1","T2","T3"])]))
-        c2.metric("Descanso", len(df[df["Turno"]=="DESCANSO"]))
-        c3.metric("Compensado", len(df[df["Turno"]=="COMPENSADO"]))
-
+        c1.metric("Turnos operativos", len(df[df["Turno"].isin(["T1","T2","T3"])]))
+        c2.metric("Descansos", len(df[df["Turno"]=="DESCANSO"]))
+        c3.metric("Compensados", len(df[df["Turno"]=="COMPENSADO"]))
 
 # =========================================================
-# MENÚ PRINCIPAL
+# MENU PRINCIPAL
 # =========================================================
 def pantalla_programador():
 
