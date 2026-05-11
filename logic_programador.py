@@ -226,13 +226,13 @@ def generar_malla():
 
             return {
                 "T1":"background:#00C853;color:black",
-                "T2":"background:#2196F3;color:white",
-                "T3":"background:#9C27B0;color:white",
-                "DESCANSO":"background:#FF5252;color:white",
-                "COMPENSADO":"background:#FFB300",
+                "T2":"background:#2196F3;color:blue",
+                "T3":"background:#9C27B0;color:red",
+                "DESCANSO":"background:#FF5252;color:orange",
+                "COMPENSADO":"background:#145A4F",
                 "T1 APOYO":"background:#E0E0E0",
                 "T2 APOYO":"background:#BDBDBD",
-                "SIN ASIGNAR":"background:#000;color:white"
+                "SIN ASIGNAR":"background:#000;color:green"
             }.get(v,"")
 
         st.dataframe(pivot.style.map(color), use_container_width=True)
