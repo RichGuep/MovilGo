@@ -93,6 +93,13 @@ def conectar_github():
 # HISTÓRICO
 # =========================================================
 
+def pantalla_programador():
+    """
+    Función principal llamada desde app.py
+    """
+
+    st.title("📅 Programador Operativo")
+
 def obtener_ultimo_estado_github(repo):
 
     try:
