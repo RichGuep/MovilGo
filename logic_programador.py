@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA COMPLETO + MALLA + CALENDARIO PRO + AUDITORÍA + DESCANSO CORRECTO
+# SISTEMA COMPLETO OPERATIVO + MALLA LEGIBLE + AUDITORÍA + DESCANSOS
 
 import streamlit as st
 import pandas as pd
@@ -94,38 +94,6 @@ def pantalla_abordaje():
     st.dataframe(df, use_container_width=True)
 
 # =========================================================
-# CALENDARIO PRO (NUEVO)
-# =========================================================
-def vista_calendario_pro(df):
-
-    st.subheader("📆 Vista calendario PRO (operativa por semanas)")
-
-    df = df.copy()
-    df["Fecha"] = pd.to_datetime(df["Fecha"])
-    df["Semana"] = df["Fecha"].dt.isocalendar().week
-    df["Día"] = df["Fecha"].dt.day_name()
-
-    calendario = df.pivot_table(
-        index=["Grupo", "Semana"],
-        columns="Fecha",
-        values="Turno",
-        aggfunc="first"
-    )
-
-    def color(val):
-        return {
-            "T1":"background:#D8F3DC;color:#1B4332;font-weight:bold",
-            "T2":"background:#DCEBFF;color:#1D3557;font-weight:bold",
-            "T3":"background:#EADCF8;color:#5A189A;font-weight:bold",
-            "DESCANSO":"background:#FFD6D6;color:#9D0208;font-weight:bold",
-            "COMPENSADO":"background:#FFF3BF;color:#7F5539;font-weight:bold",
-            "T1 APOYO":"background:#FFF7ED",
-            "T2 APOYO":"background:#FFF7ED"
-        }.get(val, "")
-
-    st.dataframe(calendario.style.map(color), use_container_width=True)
-
-# =========================================================
 # PROGRAMADOR TÉCNICOS
 # =========================================================
 def generar_malla_tecnicos():
@@ -137,7 +105,7 @@ def generar_malla_tecnicos():
     fecha_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
 
     # =========================================================
-    # DESCANSO PARAMETRIZADO
+    # DESCANSOS
     # =========================================================
     st.subheader("Descanso parametrizado")
 
@@ -165,7 +133,7 @@ def generar_malla_tecnicos():
         st.success("Rotación aplicada")
 
     # =========================================================
-    # CONTROL SEMANAL
+    # CONTROL SEMANAL DESCANSO
     # =========================================================
     descanso_semana = {g: 0 for g in GRUPOS_TEC}
 
@@ -189,13 +157,14 @@ def generar_malla_tecnicos():
             descansos[g] = DIAS[(idx + offset) % 7]
 
         # =====================================================
-        # LOOP
+        # LOOP PRINCIPAL
         # =====================================================
         for fecha in fechas:
 
             dia = DIAS[fecha.weekday()]
             asignados = {}
 
+            # RESET SEMANA
             if fecha.weekday() == 0:
                 descanso_semana = {g: 0 for g in GRUPOS_TEC}
 
@@ -213,7 +182,7 @@ def generar_malla_tecnicos():
                     activos.append(g)
 
             # =================================================
-            # TURNOS
+            # TURNOS PRINCIPALES
             # =================================================
             for turno in ["T1","T2","T3"]:
 
@@ -251,7 +220,7 @@ def generar_malla_tecnicos():
                     asignados[g] = "COMPENSADO"
 
             # =================================================
-            # GUARDAR
+            # GUARDADO
             # =================================================
             for g in GRUPOS_TEC:
 
@@ -270,11 +239,24 @@ def generar_malla_tecnicos():
         st.success("Malla generada")
 
         # =====================================================
-        # 📊 MALLA
+        # 📊 MALLA (FECHA + DÍA EN UNA SOLA CABECERA)
         # =====================================================
         st.subheader("📊 Malla de turnos")
 
+        df["Fecha"] = pd.to_datetime(df["Fecha"])
+
+        dias_map = df.drop_duplicates("Fecha")[["Fecha"]].copy()
+        dias_map["Día"] = dias_map["Fecha"].dt.day_name()
+
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
+
+        nuevas_columnas = {}
+
+        for col in pivot.columns:
+            dia = dias_map[dias_map["Fecha"] == col]["Día"].values[0]
+            nuevas_columnas[col] = f"{col.strftime('%Y-%m-%d')}\n{dia}"
+
+        pivot.rename(columns=nuevas_columnas, inplace=True)
 
         def color(v):
             return {
@@ -286,11 +268,6 @@ def generar_malla_tecnicos():
             }.get(v,"")
 
         st.dataframe(pivot.style.map(color), use_container_width=True)
-
-        # =====================================================
-        # 📆 CALENDARIO PRO
-        # =====================================================
-        vista_calendario_pro(df)
 
         # =====================================================
         # 📊 DASHBOARD
