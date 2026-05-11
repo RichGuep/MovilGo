@@ -1,7 +1,4 @@
 import streamlit as st
-# logic_programador.py
-
-```python
 import streamlit as st
 import pandas as pd
 import io
