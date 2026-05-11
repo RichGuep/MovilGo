@@ -69,7 +69,7 @@ def guardar_empleados(repo, df):
     # BOTÓN ASIGNACIÓN
     # =====================================================
 
-    if st.button("🚀 Asignar grupos automáticamente"):
+if st.button("🚀 Asignar grupos automáticamente"):
 
         df = df_edit.copy()
 
