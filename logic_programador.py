@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA COMPLETO OPERATIVO + MALLA LEGIBLE + AUDITORÍA + DESCANSOS
+# SISTEMA COMPLETO + DESCANSO DE LEY REAL + COMPENSADO DIFERIDO + MALLA + AUDITORÍA
 
 import streamlit as st
 import pandas as pd
@@ -8,14 +8,13 @@ from datetime import datetime, timedelta
 from github import Github
 
 # =========================================================
-# CONFIGURACIÓN
+# CONFIG
 # =========================================================
 TURNOS = ["T1", "T2", "T3", "T1 APOYO", "T2 APOYO", "DESCANSO", "COMPENSADO"]
 
 GRUPOS_TEC = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
-GRUPOS_AB = ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"]
 
-DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+DIAS = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
 # =========================================================
 # GITHUB
@@ -60,26 +59,6 @@ def guardar_excel(df, nombre):
         repo.create_file(nombre, "create", data)
 
 # =========================================================
-# GRUPOS
-# =========================================================
-def asignar_grupos():
-    st.header("🧩 Asignación de grupos")
-
-    df = cargar_excel("empleados.xlsx")
-    if df.empty:
-        st.warning("No hay empleados")
-        return
-
-    if "Grupo" not in df.columns:
-        df["Grupo"] = ""
-
-    st.dataframe(df)
-
-    if st.button("Asignar grupos"):
-        guardar_excel(df, "empleados.xlsx")
-        st.success("OK")
-
-# =========================================================
 # ABORDAJE
 # =========================================================
 def pantalla_abordaje():
@@ -88,10 +67,10 @@ def pantalla_abordaje():
     df = cargar_excel("abordaje.xlsx")
 
     if df.empty:
-        st.warning("No hay datos")
+        st.warning("Sin datos")
         return
 
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df)
 
 # =========================================================
 # PROGRAMADOR TÉCNICOS
@@ -102,12 +81,12 @@ def generar_malla_tecnicos():
 
     c1, c2 = st.columns(2)
     fecha_ini = c1.date_input("Inicio", datetime.now())
-    fecha_fin = c2.date_input("Fin", datetime.now() + timedelta(days=30))
+    fecha_fin = c2.date_input("Fin", datetime.now() + timedelta(days=28))
 
     # =========================================================
-    # DESCANSOS
+    # DESCANSO DE LEY FIJO
     # =========================================================
-    st.subheader("Descanso parametrizado")
+    st.subheader("Descanso de ley")
 
     descansos = {}
     cols = st.columns(4)
@@ -115,27 +94,30 @@ def generar_malla_tecnicos():
     for i, g in enumerate(GRUPOS_TEC):
         descansos[g] = cols[i].selectbox(g, DIAS, index=i)
 
-    if "descansos_base" not in st.session_state:
-        st.session_state["descansos_base"] = descansos.copy()
+    if "base_descansos" not in st.session_state:
+        st.session_state["base_descansos"] = descansos.copy()
 
     # =========================================================
     # ROTACIÓN MENSUAL
     # =========================================================
-    if st.button("🔁 Rotar descansos mensualmente"):
-        base = st.session_state["descansos_base"]
+    if st.button("🔁 Rotar descansos mensual"):
+        base = st.session_state["base_descansos"]
 
         nuevos = {}
         for g in GRUPOS_TEC:
             idx = DIAS.index(base[g])
             nuevos[g] = DIAS[(idx + 1) % 7]
 
-        st.session_state["descansos_base"] = nuevos
+        st.session_state["base_descansos"] = nuevos
         st.success("Rotación aplicada")
 
     # =========================================================
-    # CONTROL SEMANAL DESCANSO
+    # VARIABLES DE CONTROL
     # =========================================================
-    descanso_semana = {g: 0 for g in GRUPOS_TEC}
+    incumplimiento = {g: 0 for g in GRUPOS_TEC}
+    compensado_pendiente = {g: 0 for g in GRUPOS_TEC}
+    ultimo = {g: None for g in GRUPOS_TEC}
+    conteo = {g: {"T1":0,"T2":0,"T3":0} for g in GRUPOS_TEC}
 
     # =========================================================
     # GENERACIÓN
@@ -145,82 +127,77 @@ def generar_malla_tecnicos():
         fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
         filas = []
 
-        bloque = {g: "T1" for g in GRUPOS_TEC}
-        conteo = {g: {"T1":0,"T2":0,"T3":0} for g in GRUPOS_TEC}
-        ultimo = {g: None for g in GRUPOS_TEC}
+        semana_actual = None
 
-        descansos = st.session_state["descansos_base"].copy()
-
-        offset = fecha_ini.month - 1
-        for g in GRUPOS_TEC:
-            idx = DIAS.index(descansos[g])
-            descansos[g] = DIAS[(idx + offset) % 7]
+        descansos = st.session_state["base_descansos"].copy()
 
         # =====================================================
-        # LOOP PRINCIPAL
+        # LOOP
         # =====================================================
         for fecha in fechas:
 
             dia = DIAS[fecha.weekday()]
+            semana = fecha.isocalendar().week
+
             asignados = {}
-
-            # RESET SEMANA
-            if fecha.weekday() == 0:
-                descanso_semana = {g: 0 for g in GRUPOS_TEC}
-
             activos = []
 
+            # RESET SEMANA
+            if semana != semana_actual:
+                semana_actual = semana
+
+                for g in GRUPOS_TEC:
+                    if incumplimiento[g] > 0:
+                        compensado_pendiente[g] = 1
+                        incumplimiento[g] = 0
+
             # =================================================
-            # DESCANSO REAL (1 POR SEMANA)
+            # DESCANSO DE LEY (NO SE TOCA)
             # =================================================
             for g in GRUPOS_TEC:
 
-                if descansos[g] == dia and descanso_semana[g] < 1:
+                if descansos[g] == dia:
                     asignados[g] = "DESCANSO"
-                    descanso_semana[g] += 1
                 else:
                     activos.append(g)
 
             # =================================================
-            # TURNOS PRINCIPALES
+            # TURNOS
             # =================================================
             for turno in ["T1","T2","T3"]:
 
                 candidatos = []
 
                 for g in activos:
+                    candidatos.append((conteo[g][turno], g))
 
-                    if ultimo[g] == "T3" and turno == "T1":
-                        continue
+                if candidatos:
+                    candidatos.sort()
+                    sel = candidatos[0][1]
 
-                    candidatos.append((0 if bloque[g]==turno else 1,
-                                       conteo[g][turno],
-                                       g))
+                    asignados[sel] = turno
+                    conteo[sel][turno] += 1
 
-                if not candidatos:
-                    candidatos = [(1,0,g) for g in activos]
-
-                candidatos.sort()
-                sel = candidatos[0][2]
-
-                asignados[sel] = turno
-                ultimo[sel] = turno
-                conteo[sel][turno] += 1
-
-                activos.remove(sel)
+                    activos.remove(sel)
 
             # =================================================
-            # COMPENSADOS CORREGIDOS
+            # RESTO (APOYOS / COMPENSADO REAL)
             # =================================================
             for g in activos:
 
-                if descansos[g] != dia:
-                    asignados[g] = "T1 APOYO" if conteo[g]["T1"] <= conteo[g]["T2"] else "T2 APOYO"
-                else:
+                if compensado_pendiente[g] == 1:
                     asignados[g] = "COMPENSADO"
+                    compensado_pendiente[g] = 0
+
+                else:
+                    # si era su día de ley y trabajó → incumplimiento
+                    if descansos[g] == dia:
+                        incumplimiento[g] += 1
+
+                    asignados[g] = "T1 APOYO"
 
             # =================================================
-            # GUARDADO
+            # GUARDAR
             # =================================================
             for g in GRUPOS_TEC:
 
@@ -228,18 +205,18 @@ def generar_malla_tecnicos():
                     "Fecha": fecha.strftime("%Y-%m-%d"),
                     "Día": dia,
                     "Grupo": g,
-                    "Turno": asignados[g]
+                    "Turno": asignados.get(g,"T1 APOYO")
                 })
 
         df = pd.DataFrame(filas)
 
-        st.session_state["malla_tecnicos"] = df
+        st.session_state["malla"] = df
         guardar_excel(df, "malla_historica.xlsx")
 
-        st.success("Malla generada")
+        st.success("Malla generada correctamente")
 
         # =====================================================
-        # 📊 MALLA (FECHA + DÍA EN UNA SOLA CABECERA)
+        # 📊 MALLA VISUAL
         # =====================================================
         st.subheader("📊 Malla de turnos")
 
@@ -250,13 +227,12 @@ def generar_malla_tecnicos():
 
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
-        nuevas_columnas = {}
-
+        nuevas = {}
         for col in pivot.columns:
-            dia = dias_map[dias_map["Fecha"] == col]["Día"].values[0]
-            nuevas_columnas[col] = f"{col.strftime('%Y-%m-%d')}\n{dia}"
+            dia_nombre = dias_map[dias_map["Fecha"] == col]["Día"].values[0]
+            nuevas[col] = f"{col.strftime('%Y-%m-%d')}\n{dia_nombre}"
 
-        pivot.rename(columns=nuevas_columnas, inplace=True)
+        pivot.rename(columns=nuevas, inplace=True)
 
         def color(v):
             return {
@@ -311,13 +287,11 @@ def pantalla_programador():
 
     mod = st.radio(
         "Módulo",
-        ["Programador Técnicos","Grupos","Abordaje"],
+        ["Programador Técnicos","Abordaje"],
         horizontal=True
     )
 
     if mod == "Programador Técnicos":
         generar_malla_tecnicos()
-    elif mod == "Grupos":
-        asignar_grupos()
     else:
         pantalla_abordaje()
