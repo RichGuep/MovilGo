@@ -155,6 +155,9 @@ def pantalla_programador_tecnicos():
                 })
 
         df = pd.DataFrame(resultados)
+        # ordenar correctamente por fecha real
+        df["Fecha_Orden"] = pd.to_datetime(df["Fecha"], format="%d/%m/%Y")
+        df = df.sort_values(["Fecha_Orden", "Grupo"]).reset_index(drop=True)
         st.session_state["malla_tecnicos"] = df
         st.success("✅ Malla generada")
 
@@ -162,7 +165,14 @@ def pantalla_programador_tecnicos():
         df = st.session_state["malla_tecnicos"]
 
         st.subheader("🎨 Malla de Turnos")
+        # ordenar columnas por fecha real antes de pivotear
+        fechas_ordenadas = (
+            df[["Fecha", "Día", "Fecha_Orden"]]
+            .drop_duplicates()
+            .sort_values("Fecha_Orden")
+        )
         matriz = df.pivot_table(index="Grupo", columns=["Fecha", "Día"], values="Turno", aggfunc="first")
+        matriz = matriz.reindex(columns=pd.MultiIndex.from_frame(fechas_ordenadas[["Fecha", "Día"]]))
 
         def color_turnos(val):
             colores = {
