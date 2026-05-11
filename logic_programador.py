@@ -255,6 +255,30 @@ def generar_malla_tecnicos():
         else:
             st.success("✅ Sin saltos inválidos detectados")
 
+        st.markdown("### 🛡️ Auditoría de cobertura diaria (T1, T2 y T3 obligatorios)")
+        cobertura_alertas = []
+
+        for fecha in sorted(df["Fecha"].unique()):
+            dia_df = df[df["Fecha"] == fecha]
+            turnos_dia = set(dia_df["Turno"].tolist())
+            faltantes = []
+
+            for turno_obligatorio in ["T1", "T2", "T3"]:
+                if turno_obligatorio not in turnos_dia:
+                    faltantes.append(turno_obligatorio)
+
+            if faltantes:
+                cobertura_alertas.append({
+                    "Fecha": fecha,
+                    "Faltan": ", ".join(faltantes)
+                })
+
+        if cobertura_alertas:
+            st.error(f"❌ {len(cobertura_alertas)} días NO cumplen cobertura completa")
+            st.dataframe(pd.DataFrame(cobertura_alertas), use_container_width=True)
+        else:
+            st.success("✅ Todos los días tienen garantizados T1, T2 y T3")
+
 # =========================================================
 # ABORDAJE
 # =========================================================
