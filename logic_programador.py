@@ -1,5 +1,5 @@
 # logic_programador.py
-# SISTEMA COMPLETO: PARAMETRIZADOR + DESCANSO DE LEY + COMPENSADO REAL + MALLA PRO
+# SISTEMA COMPLETO: PARAMETRIZADOR + DESCANSO DE LEY + COMPENSADO REAL + MALLA VISIBLE
 
 import streamlit as st
 import pandas as pd
@@ -12,6 +12,8 @@ import holidays
 # CONFIG
 # =========================================================
 TURNOS = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
+
+GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
@@ -60,10 +62,47 @@ def guardar_excel(df, nombre):
         repo.create_file(nombre, "create", data)
 
 # =========================================================
-# ABORDAJE
+# 🧩 PARAMETRIZADOR
 # =========================================================
-def pantalla_abordaje():
-    st.header("🚌 Personal Abordaje")
+def parametrizador():
+
+    st.header("🧩 Parametrizador de Grupos")
+
+    df = cargar_excel("empleados.xlsx")
+
+    if df.empty:
+        st.warning("No hay empleados")
+        return
+
+    if "Grupo" not in df.columns:
+        df["Grupo"] = ""
+
+    st.dataframe(df, use_container_width=True)
+
+    if st.button("🎲 Asignar grupos aleatorios"):
+
+        df = df.sample(frac=1).reset_index(drop=True)
+
+        asignacion = {}
+        i = 0
+
+        for nombre in df["Nombre"]:
+            asignacion[nombre] = GRUPOS[i % len(GRUPOS)]
+            i += 1
+
+        df["Grupo"] = df["Nombre"].map(asignacion)
+
+        guardar_excel(df, "empleados.xlsx")
+
+        st.success("Grupos asignados")
+        st.dataframe(df, use_container_width=True)
+
+# =========================================================
+# 🚌 ABORDAJE
+# =========================================================
+def abordaje():
+
+    st.header("🚌 Abordaje")
 
     df = cargar_excel("abordaje.xlsx")
 
@@ -74,47 +113,9 @@ def pantalla_abordaje():
     st.dataframe(df)
 
 # =========================================================
-# 🧩 PARAMETRIZADOR DE GRUPOS (RESTAURADO)
+# 📅 PROGRAMADOR
 # =========================================================
-def parametrizador_grupos():
-
-    st.header("🧩 Parametrizador de grupos")
-
-    df = cargar_excel("empleados.xlsx")
-
-    if df.empty:
-        st.warning("No hay empleados cargados")
-        return
-
-    if "Grupo" not in df.columns:
-        df["Grupo"] = ""
-
-    st.dataframe(df, use_container_width=True)
-
-    grupos = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
-
-    if st.button("🎲 Asignar grupos aleatorios"):
-
-        df = df.sample(frac=1).reset_index(drop=True)
-
-        asignacion = {}
-
-        i = 0
-        for nombre in df["Nombre"]:
-            asignacion[nombre] = grupos[i % len(grupos)]
-            i += 1
-
-        df["Grupo"] = df["Nombre"].map(asignacion)
-
-        guardar_excel(df, "empleados.xlsx")
-
-        st.success("Grupos asignados correctamente")
-        st.dataframe(df, use_container_width=True)
-
-# =========================================================
-# PROGRAMADOR TÉCNICOS
-# =========================================================
-def generar_malla_tecnicos():
+def generar_malla():
 
     st.header("📅 Programador Técnico PRO")
 
@@ -130,21 +131,17 @@ def generar_malla_tecnicos():
     descanso = {}
     cols = st.columns(4)
 
-    for i,g in enumerate(["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]):
+    for i,g in enumerate(GRUPOS):
         descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
 
     if "base_descanso" not in st.session_state:
         st.session_state["base_descanso"] = descanso.copy()
 
-    # =========================================================
-    # ROTACIÓN
-    # =========================================================
-    if st.button("🔁 Rotar descanso mensual"):
-
+    if st.button("🔁 Rotar descanso"):
         base = st.session_state["base_descanso"]
 
         nuevo = {}
-        for g in base:
+        for g in GRUPOS:
             idx = DIAS_ES.index(base[g])
             nuevo[g] = DIAS_ES[(idx+1)%7]
 
@@ -154,10 +151,10 @@ def generar_malla_tecnicos():
     # =========================================================
     # ESTADO
     # =========================================================
-    carga = {g:0 for g in st.session_state["base_descanso"]}
-    conteo = {g:{"T1":0,"T2":0,"T3":0} for g in st.session_state["base_descanso"]}
-    deuda = {g:0 for g in st.session_state["base_descanso"]}
-    compensado = {g:0 for g in st.session_state["base_descanso"]}
+    carga = {g:0 for g in GRUPOS}
+    conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
+    deuda = {g:0 for g in GRUPOS}
+    compensado = {g:0 for g in GRUPOS}
 
     # =========================================================
     # GENERACIÓN
@@ -180,35 +177,31 @@ def generar_malla_tecnicos():
             activos = []
 
             # =================================================
-            # RESET SEMANA → COMPENSADO REAL
+            # RESET SEMANA
             # =================================================
             if semana != semana_actual:
                 semana_actual = semana
 
-                for g in deuda:
+                for g in GRUPOS:
                     if deuda[g] > 0:
                         compensado[g] += deuda[g]
                         deuda[g] = 0
 
             # =================================================
-            # DESCANSO DE LEY (MANDATORIO)
+            # DESCANSO DE LEY
             # =================================================
-            for g in descanso:
+            for g in GRUPOS:
 
                 if descanso[g] == dia and not festivo:
-
                     asignados[g] = "DESCANSO"
-
                 else:
-
                     activos.append(g)
 
-                    # si era su día de ley y no descansó → genera deuda
                     if descanso[g] == dia:
                         deuda[g] += 1
 
             # =================================================
-            # TURNOS PRINCIPALES
+            # TURNOS
             # =================================================
             for turno in ["T1","T2","T3"]:
 
@@ -222,7 +215,6 @@ def generar_malla_tecnicos():
                 sel = candidatos[0][2]
 
                 asignados[sel] = turno
-
                 carga[sel] += 1
                 conteo[sel][turno] += 1
 
@@ -230,23 +222,20 @@ def generar_malla_tecnicos():
                     activos.remove(sel)
 
             # =================================================
-            # COMPENSADO / APOYO
+            # COMPENSADO
             # =================================================
             for g in activos:
 
                 if compensado[g] > 0:
-
                     asignados[g] = "COMPENSADO"
                     compensado[g] -= 1
-
                 else:
-
                     asignados[g] = "T1 APOYO"
 
             # =================================================
             # GUARDAR
             # =================================================
-            for g in descanso:
+            for g in GRUPOS:
 
                 filas.append({
                     "Fecha": fecha.strftime("%Y-%m-%d"),
@@ -261,11 +250,22 @@ def generar_malla_tecnicos():
         st.session_state["malla"] = df
         guardar_excel(df, "malla_historica.xlsx")
 
-        st.success("Malla generada correctamente")
+        st.success("Malla generada")
 
-        # =========================================================
+    # =========================================================
+    # 👁️ MALLA SIEMPRE VISIBLE (FIX CLAVE)
+    # =========================================================
+    if "malla" in st.session_state:
+
+        st.subheader("📊 Malla de turnos")
+
+        df = st.session_state["malla"]
+
+        st.dataframe(df, use_container_width=True)
+
+        # =====================================================
         # DASHBOARD
-        # =========================================================
+        # =====================================================
         st.subheader("📊 Dashboard")
 
         c1,c2,c3 = st.columns(3)
@@ -277,21 +277,21 @@ def generar_malla_tecnicos():
         st.bar_chart(df.groupby(["Grupo","Turno"]).size().unstack(fill_value=0))
 
 # =========================================================
-# MENÚ PRINCIPAL
+# MENÚ
 # =========================================================
 def pantalla_programador():
 
     mod = st.radio(
         "Módulo",
-        ["Programador Técnicos","Parametrizador","Abordaje"],
+        ["Programador","Parametrizador","Abordaje"],
         horizontal=True
     )
 
-    if mod == "Programador Técnicos":
-        generar_malla_tecnicos()
+    if mod == "Programador":
+        generar_malla()
 
     elif mod == "Parametrizador":
-        parametrizador_grupos()
+        parametrizador()
 
     else:
-        pantalla_abordaje()
+        abordaje()
