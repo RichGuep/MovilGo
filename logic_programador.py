@@ -1,20 +1,24 @@
 # logic_programador.py
-# SISTEMA ESTABLE: DESCANSO DE LEY + COMPENSADO + BALANCE + FALLBACK SEGURO
+# SISTEMA COMPLETO: DESCANSO + COMPENSADO + FESTIVOS COLOMBIA + MALLA PRO
 
 import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime, timedelta
 from github import Github
+import holidays
 
 # =========================================================
 # CONFIGURACIÓN
 # =========================================================
-TURNOS = ["T1", "T2", "T3", "T1 APOYO", "T2 APOYO", "DESCANSO", "COMPENSADO"]
+TURNOS = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
 
-GRUPOS_TEC = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 
-DIAS = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+
+# 🇨🇴 FESTIVOS COLOMBIA
+festivos_co = holidays.Colombia()
 
 # =========================================================
 # GITHUB
@@ -74,29 +78,29 @@ def pantalla_abordaje():
     st.dataframe(df)
 
 # =========================================================
-# PROGRAMADOR TÉCNICOS
+# PROGRAMADOR
 # =========================================================
 def generar_malla_tecnicos():
 
-    st.header("📅 Programador Técnicos (Estable)")
+    st.header("📅 Programador Técnico (Colombia PRO)")
 
-    c1, c2 = st.columns(2)
-    fecha_ini = c1.date_input("Inicio", datetime.now())
-    fecha_fin = c2.date_input("Fin", datetime.now() + timedelta(days=28))
+    c1,c2 = st.columns(2)
+    inicio = c1.date_input("Inicio", datetime.now())
+    fin = c2.date_input("Fin", datetime.now() + timedelta(days=28))
 
     # =========================================================
     # DESCANSO DE LEY
     # =========================================================
     st.subheader("Descanso de ley")
 
-    descansos = {}
+    descanso = {}
     cols = st.columns(4)
 
-    for i, g in enumerate(GRUPOS_TEC):
-        descansos[g] = cols[i].selectbox(g, DIAS, index=i)
+    for i,g in enumerate(GRUPOS_TEC):
+        descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
 
     if "base_descanso" not in st.session_state:
-        st.session_state["base_descanso"] = descansos.copy()
+        st.session_state["base_descanso"] = descanso.copy()
 
     # =========================================================
     # ROTACIÓN
@@ -105,39 +109,40 @@ def generar_malla_tecnicos():
 
         base = st.session_state["base_descanso"]
 
-        nuevos = {}
-
+        nuevo = {}
         for g in GRUPOS_TEC:
-            idx = DIAS.index(base[g])
-            nuevos[g] = DIAS[(idx + 1) % 7]
+            idx = DIAS_ES.index(base[g])
+            nuevo[g] = DIAS_ES[(idx+1)%7]
 
-        st.session_state["base_descanso"] = nuevos
+        st.session_state["base_descanso"] = nuevo
         st.success("Rotación aplicada")
 
     # =========================================================
-    # CONTROL
+    # ESTADO
     # =========================================================
-    carga = {g: 0 for g in GRUPOS_TEC}
-    conteo = {g: {"T1":0,"T2":0,"T3":0} for g in GRUPOS_TEC}
-    compensado = {g: 0 for g in GRUPOS_TEC}
-    ultimo = {g: None for g in GRUPOS_TEC}
+    carga = {g:0 for g in GRUPOS_TEC}
+    conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS_TEC}
+    compensado = {g:0 for g in GRUPOS_TEC}
+    incumplimiento = {g:0 for g in GRUPOS_TEC}
 
     # =========================================================
     # GENERACIÓN
     # =========================================================
     if st.button("🚀 Generar malla"):
 
-        fechas = pd.date_range(fecha_ini, fecha_fin, freq="D")
+        fechas = pd.date_range(inicio, fin, freq="D")
         filas = []
 
         semana_actual = None
 
-        descansos = st.session_state["base_descanso"].copy()
+        descanso = st.session_state["base_descanso"]
 
         for fecha in fechas:
 
-            dia = DIAS[fecha.weekday()]
+            dia_es = DIAS_ES[fecha.weekday()]
             semana = fecha.isocalendar().week
+
+            es_festivo = fecha.date() in festivos_co
 
             asignados = {}
             activos = []
@@ -149,33 +154,31 @@ def generar_malla_tecnicos():
                 semana_actual = semana
 
                 for g in GRUPOS_TEC:
-                    if compensado[g] > 0:
-                        compensado[g] -= 0  # control futuro
+                    if incumplimiento[g] > 0:
+                        compensado[g] += incumplimiento[g]
+                        incumplimiento[g] = 0
 
             # =================================================
             # DESCANSO DE LEY
             # =================================================
             for g in GRUPOS_TEC:
 
-                if descansos[g] == dia:
+                if descanso[g] == dia_es and not es_festivo:
+
                     asignados[g] = "DESCANSO"
+
                 else:
                     activos.append(g)
 
             # =================================================
-            # TURNOS (FIX ROBUSTO)
+            # TURNOS (SAFE MODE)
             # =================================================
             for turno in ["T1","T2","T3"]:
 
-                candidatos = []
+                candidatos = [(carga[g], conteo[g][turno], g) for g in activos]
 
-                for g in activos:
-                    candidatos.append((carga[g], conteo[g][turno], g))
-
-                # 🚨 FALLBACK SI NO HAY CANDIDATOS
-                if len(candidatos) == 0:
-                    for g in activos:
-                        candidatos.append((0, 0, g))
+                if not candidatos:
+                    candidatos = [(0,0,g) for g in activos]
 
                 candidatos.sort()
 
@@ -189,7 +192,7 @@ def generar_malla_tecnicos():
                     activos.remove(sel)
 
             # =================================================
-            # COMPENSADOS
+            # COMPENSADO
             # =================================================
             for g in activos:
 
@@ -206,9 +209,10 @@ def generar_malla_tecnicos():
 
                 filas.append({
                     "Fecha": fecha.strftime("%Y-%m-%d"),
-                    "Día": dia,
+                    "Día": dia_es,
                     "Grupo": g,
-                    "Turno": asignados.get(g,"T1 APOYO")
+                    "Turno": asignados.get(g,"T1 APOYO"),
+                    "Festivo": "SI" if es_festivo else "NO"
                 })
 
         df = pd.DataFrame(filas)
@@ -219,28 +223,25 @@ def generar_malla_tecnicos():
         st.success("Malla generada correctamente")
 
         # =========================================================
-        # 📊 MALLA LEGIBLE (FECHA + DÍA)
+        # 📊 MALLA VISUAL
         # =========================================================
         st.subheader("📊 Malla de turnos")
 
         df["Fecha"] = pd.to_datetime(df["Fecha"])
 
-        dias_map = df.drop_duplicates("Fecha")[["Fecha"]].copy()
-        dias_map["Día"] = dias_map["Fecha"].dt.day_name()
-
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
-        nuevas = {}
+        def estilo(v, fecha):
 
-        for col in pivot.columns:
+            if pd.isna(v):
+                return ""
 
-            dia_nombre = dias_map[dias_map["Fecha"] == col]["Día"].values[0]
+            if fecha.date() in festivos_co:
+                return "background:#FFB703;font-weight:bold;color:black"
 
-            nuevas[col] = f"{col.strftime('%Y-%m-%d')}\n{dia_nombre}"
+            if fecha.weekday() >= 5:
+                return "background:#8ECAE6;font-weight:bold"
 
-        pivot.rename(columns=nuevas, inplace=True)
-
-        def color(v):
             return {
                 "T1":"background:#D8F3DC",
                 "T2":"background:#DCEBFF",
@@ -249,7 +250,14 @@ def generar_malla_tecnicos():
                 "COMPENSADO":"background:#FFF3BF"
             }.get(v,"")
 
-        st.dataframe(pivot.style.map(color), use_container_width=True)
+        styled = pivot.style.apply(
+            lambda col: [
+                estilo(val, col.name) for val in col
+            ],
+            axis=0
+        )
+
+        st.dataframe(styled, use_container_width=True)
 
         # =========================================================
         # 📊 DASHBOARD
