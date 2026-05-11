@@ -654,7 +654,6 @@ def pantalla_programador():
    # =====================================
 # SUBMÓDULO: ASIGNACIÓN DE GRUPOS
 # =====================================
-
 def pantalla_asignacion_grupos():
 
     st.title("🧩 Asignación de Grupos - MovilGo")
@@ -675,7 +674,7 @@ def pantalla_asignacion_grupos():
 
     df.columns = df.columns.str.strip()
 
-    # crear columna Grupo si no existe
+    # Crear columna Grupo si no existe
     if "Grupo" not in df.columns:
         df["Grupo"] = ""
 
@@ -702,9 +701,8 @@ def pantalla_asignacion_grupos():
         asignacion = {}
 
         # ==========================
-        # TECNICOS
+        # TÉCNICOS
         # ==========================
-
         tecnicos = df[
             df["Cargo"].astype(str).str.contains(
                 "Master|Tecnico A|Tecnico B",
@@ -720,7 +718,6 @@ def pantalla_asignacion_grupos():
         # ==========================
         # ABORDAJE
         # ==========================
-
         abordaje = df[
             df["Cargo"].astype(str).str.contains(
                 "Abordaje",
@@ -733,19 +730,34 @@ def pantalla_asignacion_grupos():
             grupo = grupos_abordaje[i % 5]
             asignacion[row["Nombre"]] = grupo
 
-        # ==========================
-        # ASIGNAR
-        # ==========================
-
+        # Aplicar grupos
         df["Grupo"] = df["Nombre"].map(
             lambda x: asignacion.get(x, "")
         )
 
         st.session_state["df_grupos"] = df
 
-        st.success(
-            "✅ Grupos asignados correctamente"
+        st.success("✅ Grupos asignados correctamente")
+
+    # Mostrar resultado
+    if "df_grupos" in st.session_state:
+
+        st.subheader("📊 Resultado")
+
+        st.dataframe(
+            st.session_state["df_grupos"],
+            use_container_width=True
         )
+
+        if st.button("💾 Guardar grupos en GitHub"):
+
+            guardar_empleados(
+                repo,
+                st.session_state["df_grupos"]
+            )
+
+            st.success("✅ empleados.xlsx actualizado")
+
 
     # ==========================
     # RESULTADO
