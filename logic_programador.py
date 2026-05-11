@@ -19,32 +19,54 @@ GRUPOS = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
 TURNOS = ["T1", "T2", "T3", "DESC", "COMP"]
 
 # =========================================================
-# PERSONAL
+# CARGAR PERSONAL DESDE empleados.xlsx
 # =========================================================
+def cargar_personal():
+    repo = conectar_github()
 
-PERSONAL = {
+    if not repo:
+        return {}
 
-    "Grupo 1": [
-        {"Nombre": "Juan Perez", "Cedula": "1010"},
-        {"Nombre": "Maria Lopez", "Cedula": "2020"}
-    ],
+    try:
+        contents = repo.get_contents("empleados.xlsx")
 
-    "Grupo 2": [
-        {"Nombre": "Carlos Ruiz", "Cedula": "3030"},
-        {"Nombre": "Ana Torres", "Cedula": "4040"}
-    ],
+        df_emp = pd.read_excel(
+            io.BytesIO(contents.decoded_content)
+        )
 
-    "Grupo 3": [
-        {"Nombre": "Pedro Diaz", "Cedula": "5050"},
-        {"Nombre": "Luisa Mora", "Cedula": "6060"}
-    ],
+        # limpiar nombres de columnas
+        df_emp.columns = df_emp.columns.str.strip()
 
-    "Grupo 4": [
-        {"Nombre": "Jorge Silva", "Cedula": "7070"},
-        {"Nombre": "Paula Rojas", "Cedula": "8080"}
-    ]
-}
+        # validar columnas
+        columnas = ["Nombre", "Cedula", "Grupo"]
 
+        for c in columnas:
+            if c not in df_emp.columns:
+                st.error(f"Falta columna '{c}' en empleados.xlsx")
+                return {}
+
+        personal = {}
+
+        for grupo in GRUPOS:
+
+            grupo_df = df_emp[
+                df_emp["Grupo"] == grupo
+            ]
+
+            personal[grupo] = []
+
+            for _, row in grupo_df.iterrows():
+
+                personal[grupo].append({
+                    "Nombre": str(row["Nombre"]),
+                    "Cedula": str(row["Cedula"])
+                })
+
+        return personal
+
+    except Exception as e:
+        st.error(f"Error cargando empleados.xlsx: {e}")
+        return {}
 # =========================================================
 # GITHUB
 # =========================================================
@@ -449,28 +471,417 @@ def auditar_malla(df):
             st.success(
                 "✅ Cobertura completa"
             )
-
 # =========================================================
-# PANTALLA PRINCIPAL
+# MODULO PERSONAL ABORDAJE
 # =========================================================
 
-def pantalla_programador():
+def pantalla_abordaje():
 
-    st.title(
-        "📅 Programador Maestro MovilGo"
+    st.header("🚍 Programador Personal Abordaje")
+
+    st.info(
+        "Módulo inicial para programación del personal de abordaje."
     )
 
     dias_semana = [
-
-        "Lunes",
-        "Martes",
-        "Miércoles",
-        "Jueves",
-        "Viernes",
-        "Sábado",
-        "Domingo"
-
+        "Lunes","Martes","Miércoles",
+        "Jueves","Viernes","Sábado","Domingo"
     ]
+
+    GRUPOS_AB = [
+        "Grupo A",
+        "Grupo B",
+        "Grupo C",
+        "Grupo D",
+        "Grupo E"
+    ]
+
+    # -----------------------------------
+    # Cargar personal
+    # -----------------------------------
+
+    repo = conectar_github()
+
+    try:
+        contents = repo.get_contents(
+            "empleados.xlsx"
+        )
+
+        df_emp = pd.read_excel(
+            io.BytesIO(contents.decoded_content)
+        )
+
+        df_emp.columns = (
+            df_emp.columns.str.strip()
+        )
+
+        df_ab = df_emp[
+            df_emp["Area"] == "Abordaje"
+        ]
+
+        st.success(
+            f"{len(df_ab)} personas cargadas."
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Error cargando personal: {e}"
+        )
+        return
+
+    # -----------------------------------
+    # Descansos
+    # -----------------------------------
+
+    st.subheader(
+        "📅 Parametrizador de descansos"
+    )
+
+    c1, c2 = st.columns(2)
+
+    d_a = c1.selectbox(
+        "Grupo A",
+        dias_semana,
+        index=0
+    )
+
+    d_b = c2.selectbox(
+        "Grupo B",
+        dias_semana,
+        index=1
+    )
+
+    d_c = c1.selectbox(
+        "Grupo C",
+        dias_semana,
+        index=2
+    )
+
+    d_d = c2.selectbox(
+        "Grupo D",
+        dias_semana,
+        index=3
+    )
+
+    d_e = c1.selectbox(
+        "Grupo E",
+        dias_semana,
+        index=4
+    )
+
+    # -----------------------------------
+    # Horarios
+    # -----------------------------------
+
+    st.subheader("⏰ Horarios")
+
+    h1,h2,h3 = st.columns(3)
+
+    with h1:
+        st.markdown("### T1")
+        st.time_input(
+            "Inicio T1",
+            datetime.strptime(
+                "06:00",
+                "%H:%M"
+            ).time()
+        )
+
+    with h2:
+        st.markdown("### T2")
+        st.time_input(
+            "Inicio T2",
+            datetime.strptime(
+                "14:00",
+                "%H:%M"
+            ).time()
+        )
+
+    with h3:
+        st.markdown("### TR")
+        st.time_input(
+            "Inicio TR",
+            datetime.strptime(
+                "10:00",
+                "%H:%M"
+            ).time()
+        )
+
+    # -----------------------------------
+    # Fechas
+    # -----------------------------------
+
+    st.subheader("📆 Periodo")
+
+    c1,c2 = st.columns(2)
+
+    c1.date_input(
+        "Inicio",
+        datetime.now()
+    )
+
+    c2.date_input(
+        "Fin",
+        datetime.now()
+        + timedelta(days=14)
+    )
+
+    # -----------------------------------
+    # Botón
+    # -----------------------------------
+
+    if st.button(
+        "🚀 Generar Malla Abordaje"
+    ):
+
+        st.success(
+            "✅ Submódulo Abordaje funcionando correctamente."
+        )
+
+        st.info(
+            "Siguiente paso: lógica automática T1/T2/TR."
+        )
+
+# hasta aqui va abordaje
+
+    
+    # =========================================
+    # FECHAS
+    # =========================================
+
+    st.subheader("📆 Periodo")
+
+    f1, f2 = st.columns(2)
+
+    fecha_ini = f1.date_input(
+        "Inicio",
+        datetime.now()
+    )
+
+    fecha_fin = f2.date_input(
+        "Fin",
+        datetime.now()
+        + timedelta(days=14)
+    )
+
+    # =========================================
+    # BOTÓN GENERAR
+    # =========================================
+
+    if st.button(
+        "🚀 Generar Malla Abordaje"
+    ):
+
+        st.success(
+            "✅ Módulo conectado correctamente."
+        )
+
+        st.info(
+            "Siguiente paso: construir motor de asignación T1/T2/TR."
+        )
+
+    # =====================================================
+    # CONFIG
+    # =====================================================
+
+    with st.container(border=True):
+
+        st.subheader("⚙️ Configuración")
+
+        col1, col2 = st.columns([2, 1])
+
+        # =============================================
+        # DESCANSOS
+        # =============================================
+
+        with col1:
+
+            d_g1 = st.selectbox(
+                "Descanso Grupo 1",
+                dias_semana,
+                index=0
+            )
+
+            d_g2 = st.selectbox(
+                "Descanso Grupo 2",
+                dias_semana,
+                index=4
+            )
+
+            d_g3 = st.selectbox(
+                "Descanso Grupo 3",
+                dias_semana,
+                index=5
+            )
+
+            d_g4 = st.selectbox(
+                "Descanso Grupo 4",
+                dias_semana,
+                index=6
+            )
+
+            descansos_base = {
+                "Grupo 1": dias_semana.index(d_g1),
+                "Grupo 2": dias_semana.index(d_g2),
+                "Grupo 3": dias_semana.index(d_g3),
+                "Grupo 4": dias_semana.index(d_g4)
+            }
+
+        # =============================================
+        # STAFFING
+        # =============================================
+
+        with col2:
+
+            req_lider = st.number_input(
+                "Masters",
+                1,
+                10,
+                1
+            )
+
+            req_tecnico = st.number_input(
+                "Técnicos A",
+                1,
+                20,
+                3
+            )
+
+            req_aux = st.number_input(
+                "Técnicos B",
+                0,
+                20,
+                2
+            )
+
+    # =====================================================
+    # ROTACIÓN AUTOMÁTICA
+    # =====================================================
+
+    st.subheader("🔄 Rotación Automática Descansos")
+
+    r1, r2 = st.columns(2)
+
+    with r1:
+
+        activar_rotacion = st.toggle(
+            "Activar Rotación",
+            value=True
+        )
+
+    with r2:
+
+        tipo_rotacion = st.selectbox(
+            "Frecuencia",
+            [
+                "Mensual",
+                "Quincenal"
+            ]
+        )
+
+    # =====================================================
+    # HORARIOS
+    # =====================================================
+
+    st.subheader("⏰ Horarios Turnos")
+
+    h1, h2, h3 = st.columns(3)
+
+    with h1:
+
+        hora_inicio_t1 = st.time_input(
+            "Inicio T1",
+            value=datetime.strptime(
+                "06:00",
+                "%H:%M"
+            ).time()
+        )
+
+        hora_fin_t1 = st.time_input(
+            "Fin T1",
+            value=datetime.strptime(
+                "14:00",
+                "%H:%M"
+            ).time()
+        )
+
+    with h2:
+
+        hora_inicio_t2 = st.time_input(
+            "Inicio T2",
+            value=datetime.strptime(
+                "14:00",
+                "%H:%M"
+            ).time()
+        )
+
+        hora_fin_t2 = st.time_input(
+            "Fin T2",
+            value=datetime.strptime(
+                "22:00",
+                "%H:%M"
+            ).time()
+        )
+
+    with h3:
+
+        hora_inicio_t3 = st.time_input(
+            "Inicio T3",
+            value=datetime.strptime(
+                "22:00",
+                "%H:%M"
+            ).time()
+        )
+
+        hora_fin_t3 = st.time_input(
+            "Fin T3",
+            value=datetime.strptime(
+                "06:00",
+                "%H:%M"
+            ).time()
+        )
+
+    HORARIOS = {
+        "T1": {
+            "inicio": str(hora_inicio_t1),
+            "fin": str(hora_fin_t1)
+        },
+        "T2": {
+            "inicio": str(hora_inicio_t2),
+            "fin": str(hora_fin_t2)
+        },
+        "T3": {
+            "inicio": str(hora_inicio_t3),
+            "fin": str(hora_fin_t3)
+        }
+    }
+
+    # =====================================================
+    # FECHAS
+    # =====================================================
+
+    st.subheader("📆 Periodo")
+
+    c1, c2 = st.columns(2)
+
+    f_ini = c1.date_input(
+        "Inicio",
+        datetime.now()
+    )
+
+    f_fin = c2.date_input(
+        "Fin",
+        datetime.now() + timedelta(days=14)
+    )
+
+    # =====================================================
+    # AQUÍ SIGUE TU LÓGICA ACTUAL DE TÉCNICOS
+    # =====================================================
+
+    st.info(
+        "✅ Aquí continúa exactamente tu lógica actual de generación de técnicos (no cambiar)."
+    )
 
     # =====================================================
     # CONFIG
