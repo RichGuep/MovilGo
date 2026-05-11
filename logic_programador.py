@@ -653,19 +653,3 @@ def pantalla_programador():
 
     elif modulo == "🧩 Grupos":
         pantalla_asignacion_grupos()
-
-```
-
-# app.py
-
-```python
-import streamlit as st
-from logic_programador import pantalla_programador
-
-st.set_page_config(
-    page_title="MovilGo",
-    layout="wide"
-)
-
-pantalla_programador()
-```
