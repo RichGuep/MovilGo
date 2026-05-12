@@ -1,11 +1,11 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL REAL
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL EDITABLE
 # =========================================================
 
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
+from datetime import datetime, timedelta, date
 import holidays
 import io
 from github import Github
@@ -14,16 +14,16 @@ from github import Github
 # CONFIG
 # =========================================================
 TURNOS = [
-    "T1", "T2", "T3",
-    "T1 APOYO", "T2 APOYO",
-    "DESCANSO", "COMPENSADO"
+    "T1","T2","T3",
+    "T1 APOYO","T2 APOYO",
+    "DESCANSO","COMPENSADO"
 ]
 
-GRUPOS = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"]
+GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 
 DIAS_ES = [
-    "Lunes", "Martes", "Miércoles",
-    "Jueves", "Viernes", "Sábado", "Domingo"
+    "Lunes","Martes","Miércoles",
+    "Jueves","Viernes","Sábado","Domingo"
 ]
 
 festivos_co = holidays.Colombia()
@@ -57,15 +57,15 @@ def guardar_github(df):
     except:
         repo.create_file("malla_historica.xlsx", "create", data)
 
+
 # =========================================================
 # COLORES SUAVES
 # =========================================================
 def color_cell(v):
-
     return {
-        "T1": "background-color:#D6EAF8;",
-        "T2": "background-color:#D5F5E3;",
-        "T3": "background-color:#FADBD8;",
+        "T1": "background-color:#D6EAF8;color:#1B4F72;",
+        "T2": "background-color:#D5F5E3;color:#145A32;",
+        "T3": "background-color:#FADBD8;color:#7B241C;",
 
         "T1 APOYO": "background-color:#EBF5FB;",
         "T2 APOYO": "background-color:#EAF2F8;",
@@ -75,30 +75,32 @@ def color_cell(v):
         "COMPENSADO": "background-color:#FDEBD0;"
     }.get(v, "")
 
+
 # =========================================================
 # AUDITORÍA
 # =========================================================
 def auditoria(df):
 
     errores = []
+
     df = df.copy()
 
     # seguridad fechas
     df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
 
-    # =====================================================
-    # COBERTURA DIARIA (T1/T2/T3)
-    # =====================================================
-    cobertura = df[df["Turno"].isin(["T1", "T2", "T3"])] \
+    # =========================
+    # COBERTURA
+    # =========================
+    cobertura = df[df["Turno"].isin(["T1","T2","T3"])] \
         .groupby("Fecha").size()
 
     for f, c in cobertura.items():
         if c < 3:
             errores.append(f"❌ Cobertura incompleta {f.date()} ({c}/3)")
 
-    # =====================================================
+    # =========================
     # SALTOS INDEBIDOS
-    # =====================================================
+    # =========================
     for g in GRUPOS:
 
         gdf = df[df["Grupo"] == g].sort_values("Fecha")
@@ -107,15 +109,20 @@ def auditoria(df):
 
         for _, r in gdf.iterrows():
 
-            if prev == "T2" and r["Turno"] == "T1":
+            actual = r["Turno"]
+
+            # T2 → T1 prohibido
+            if prev == "T2" and actual == "T1":
                 errores.append(f"{g} salto T2→T1 {r['Fecha'].date()}")
 
-            if prev == "T3" and r["Turno"] in ["T1", "T2"]:
-                errores.append(f"{g} salto T3→alto {r['Fecha'].date()}")
+            # T3 NO puede bajar a nada operativo ni apoyo
+            if prev == "T3" and actual in ["T1","T2","T1 APOYO","T2 APOYO"]:
+                errores.append(f"{g} salto T3→{actual} {r['Fecha'].date()}")
 
-            prev = r["Turno"]
+            prev = actual
 
     return errores, cobertura
+
 
 # =========================================================
 # GENERADOR
@@ -129,9 +136,9 @@ def generar_malla():
     inicio = c1.date_input("Inicio", date.today())
     fin = c2.date_input("Fin", date.today() + timedelta(days=30))
 
-    # =====================================================
-    # DESCANSO DE LEY
-    # =====================================================
+    # =========================
+    # DESCANSOS
+    # =========================
     st.subheader("⚖️ Descanso de ley")
 
     descanso = {}
@@ -140,20 +147,19 @@ def generar_malla():
     for i, g in enumerate(GRUPOS):
         descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
 
-    # =====================================================
+    # =========================
     # ESTADO
-    # =====================================================
+    # =========================
     carga = {g: 0 for g in GRUPOS}
-    conteo = {g: {"T1": 0, "T2": 0, "T3": 0} for g in GRUPOS}
-
+    conteo = {g: {"T1":0,"T2":0,"T3":0} for g in GRUPOS}
     compensado = {g: 0 for g in GRUPOS}
     sacrificio = {g: 0 for g in GRUPOS}
 
     filas = []
 
-    # =====================================================
-    # GENERACIÓN
-    # =====================================================
+    # =========================
+    # GENERAR
+    # =========================
     if st.button("🚀 Generar malla"):
 
         fechas = pd.date_range(inicio, fin)
@@ -165,15 +171,14 @@ def generar_malla():
 
             asignados = {}
 
+            # descansos
             descanso_dia = [g for g in GRUPOS if descanso[g] == dia]
             activos = [g for g in GRUPOS if g not in descanso_dia]
 
-            # =================================================
-            # COBERTURA MÍNIMA 3
-            # =================================================
+            # asegurar cobertura
             while len(activos) < 3:
 
-                mov = sorted(descanso_dia, key=lambda g: (sacrificio[g], carga[g]))[0]
+                mov = sorted(descanso_dia, key=lambda g:(sacrificio[g], carga[g]))[0]
 
                 descanso_dia.remove(mov)
                 activos.append(mov)
@@ -181,27 +186,21 @@ def generar_malla():
                 sacrificio[mov] += 1
                 compensado[mov] += 1
 
-            # =================================================
-            # DESCANSOS
-            # =================================================
+            # descansos
             for g in descanso_dia:
                 asignados[g] = "DESCANSO"
 
-            # =================================================
-            # TURNOS PRINCIPALES
-            # =================================================
-            for turno in ["T1", "T2", "T3"]:
+            # turnos obligatorios
+            for turno in ["T1","T2","T3"]:
 
-                sel = sorted(activos, key=lambda g: (carga[g], conteo[g][turno]))[0]
+                sel = sorted(activos, key=lambda g:(carga[g], conteo[g][turno]))[0]
 
                 asignados[sel] = turno
                 carga[sel] += 1
                 conteo[sel][turno] += 1
                 activos.remove(sel)
 
-            # =================================================
-            # COMPENSADO / APOYO
-            # =================================================
+            # compensados / apoyo
             for g in activos:
 
                 if compensado[g] > 0:
@@ -210,9 +209,7 @@ def generar_malla():
                 else:
                     asignados[g] = "T1 APOYO"
 
-            # =================================================
-            # GUARDAR
-            # =================================================
+            # guardar
             for g in GRUPOS:
 
                 filas.append({
@@ -224,21 +221,22 @@ def generar_malla():
                 })
 
         df = pd.DataFrame(filas)
-        st.session_state["malla"] = df
 
+        st.session_state["malla"] = df
         guardar_github(df)
 
-        st.success("Malla generada y guardada")
+        st.success("Malla generada correctamente")
+
 
 # =========================================================
 # INTERFAZ PRINCIPAL
 # =========================================================
 def pantalla_programador():
 
-    op = st.radio("Módulo", ["Programador", "Parametrizador"], horizontal=True)
+    op = st.radio("Módulo", ["Programador","Parametrizador"], horizontal=True)
 
     if op == "Parametrizador":
-        st.info("Módulo en expansión")
+        st.write("OK")
         return
 
     generar_malla()
@@ -248,66 +246,74 @@ def pantalla_programador():
 
     df = st.session_state["malla"]
 
-    # =====================================================
-    # PIVOT HORIZONTAL REAL
-    # =====================================================
-    pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno").sort_index(axis=1)
+    st.subheader("📊 MALLA HORIZONTAL EDITABLE")
 
-    # =====================================================
-    # LAYOUT CONTROL CENTER
-    # =====================================================
-    col1, col2 = st.columns([3, 1])
+    # =========================
+    # PIVOT HORIZONTAL
+    # =========================
+    pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
+    pivot = pivot.sort_index(axis=1)
 
-    # =====================================================
-    # MALLA + EDITOR
-    # =====================================================
+    # =========================
+    # EDITOR ÚNICO
+    # =========================
+    edit = st.data_editor(
+        pivot,
+        use_container_width=True,
+        column_config={
+            col: st.column_config.SelectboxColumn(
+                col,
+                options=TURNOS
+            )
+            for col in pivot.columns
+        }
+    )
+
+    # =========================
+    # GUARDAR
+    # =========================
+    if st.button("💾 Guardar cambios"):
+
+        df_edit = edit.reset_index().melt(
+            id_vars="Grupo",
+            var_name="Fecha",
+            value_name="Turno"
+        )
+
+        df_edit["Fecha"] = pd.to_datetime(df_edit["Fecha"], errors="coerce")
+
+        st.session_state["malla"] = df_edit
+        guardar_github(df_edit)
+
+        st.success("Cambios guardados")
+
+
+    # =========================
+    # LAYOUT
+    # =========================
+    col1, col2 = st.columns([3,1])
+
     with col1:
 
-        st.subheader("📊 Malla Operativa")
+        st.subheader("📋 Vista operativa")
 
         st.dataframe(
             pivot.style.map(color_cell),
             use_container_width=True
         )
 
-        st.subheader("✏️ Editor directo")
-
-        edit = st.data_editor(
-            df,
-            use_container_width=True,
-            column_config={
-                "Turno": st.column_config.SelectboxColumn(
-                    "Turno",
-                    options=TURNOS
-                )
-            }
-        )
-
-        st.session_state["malla"] = edit
-
-    # =====================================================
-    # PANEL DERECHO
-    # =====================================================
     with col2:
 
-        st.subheader("🚨 Alertas")
+        st.subheader("🚨 Auditoría")
 
-        errores, cobertura = auditoria(edit)
+        errores, cobertura = auditoria(df)
 
         if errores:
-            for e in errores[:15]:
-                st.caption(f"⚠️ {e}")
+            for e in errores[:12]:
+                st.warning(e)
         else:
-            st.success("Sin alertas")
-
-        st.divider()
+            st.success("Sin errores")
 
         st.subheader("📈 Cobertura")
 
-        st.line_chart(cobertura, height=180)
-
-        st.divider()
-
-        st.caption("✔ Sistema activo")
-        st.caption("✔ Auditoría en tiempo real")
-        st.caption("✔ Editor sincronizado")
+        st.line_chart(cobertura)
