@@ -6,9 +6,21 @@ import io
 from github import Github
 
 # =========================================================
-# CONFIGURACIÓN Y CONSTANTES
+# CONFIGURACIÓN Y ESTILOS AVANZADOS
 # =========================================================
 st.set_page_config(page_title="MovilGo Optimizer Enterprise Pro v5.0", layout="wide")
+
+# Inyección de CSS para mejorar la estética general
+st.markdown("""
+    <style>
+    .stApp { background-color: #F4F7F9; }
+    .main-header { font-size: 28px; font-weight: bold; color: #1E3A8A; margin-bottom: 20px; }
+    [data-testid="stMetricValue"] { font-size: 24px; color: #1E40AF; }
+    .stButton>button { border-radius: 8px; font-weight: 600; transition: all 0.3s; }
+    .stButton>button:hover { transform: scale(1.02); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+    [data-testid="stDataEditor"] { border: 1px solid #DEE2E6; border-radius: 12px; overflow: hidden; }
+    </style>
+    """, unsafe_allow_html=True)
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
@@ -20,8 +32,23 @@ PERSONAL_ABO = {g: [f"Abordaje {g[-2:]}-{i+1:02d}" for i in range(5)] for g in G
 
 OPCIONES_TURNOS = ["T1", "T2", "T3", "RELEVO", "DISPONIBLE", "T1 APOYO", "DESCANSO", "COMPENSADO"]
 
+# Paleta de colores refinada
+COLORES_MAP = {
+    "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
+    "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
+    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#FDEBD0"
+}
+
+def style_malla(df_pivot):
+    def apply_styles(val):
+        bg = COLORES_MAP.get(val, "")
+        txt = "white" if val == "DESCANSO" else "#17202A"
+        return f'background-color: {bg}; color: {txt}; font-weight: 500; border: 0.1px solid #D5DBDB' if bg else ''
+    
+    return df_pivot.style.map(apply_styles)
+
 # =========================================================
-# CONECTIVIDAD Y ESTILOS
+# CONECTIVIDAD GITHUB (ORIGINAL)
 # =========================================================
 def conectar_github():
     try:
@@ -41,29 +68,32 @@ def guardar_github(df, nombre_archivo):
     except:
         repo.create_file(nombre_archivo, "Create", buffer.getvalue())
 
-COLORES_MAP = {
-    "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
-    "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
-    "T1 APOYO": "#EBF5FB", "DESCANSO": "#2C3E50", "COMPENSADO": "#FDEBD0"
-}
-
-def style_malla(df_pivot):
-    def apply_styles(val):
-        bg = COLORES_MAP.get(val, "")
-        txt = "white" if val == "DESCANSO" else "black"
-        return f'background-color: {bg}; color: {txt}' if bg else ''
-    def highlight_special_days(col):
-        try:
-            fecha_str = col.name.split(" - ")[1]
-            f_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
-            if f_obj.weekday() >= 5 or f_obj in festivos_co:
-                return ['background-color: #FEF5E7; border-bottom: 2px solid #E67E22;' for _ in col]
-        except: pass
-        return ['' for _ in col]
-    return df_pivot.style.map(apply_styles).apply(highlight_special_days, axis=0)
+# =========================================================
+# NUEVA FUNCIÓN DE DESCARGA INTEGRAL
+# =========================================================
+def generar_reporte_completo(df_malla, errores, cobertura):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Pestaña 1: La Malla Editada
+        df_malla.to_excel(writer, sheet_name='Malla_Final')
+        
+        # Pestaña 2: Auditoría y Errores
+        df_err = pd.DataFrame(errores, columns=["Alerta de Auditoría"])
+        df_err.to_excel(writer, sheet_name='Auditoria_Revision', index=False)
+        
+        # Pestaña 3: Métricas de Cobertura
+        df_cob = cobertura.reset_index()
+        df_cob.columns = ["Fecha", "Personal_Activo"]
+        df_cob.to_excel(writer, sheet_name='Metricas_Cobertura', index=False)
+        
+        # Ajuste automático de columnas en Excel
+        for sheet in writer.sheets.values():
+            sheet.set_column('A:Z', 18)
+            
+    return output.getvalue()
 
 # =========================================================
-# AUDITORÍA DE REVISIÓN
+# AUDITORÍA (ORIGINAL)
 # =========================================================
 def ejecutar_auditoria(df, tipo):
     errores = []
@@ -85,12 +115,12 @@ def ejecutar_auditoria(df, tipo):
         for f in t1.index:
             if t1.get(f,0) != 10: errores.append(f"⚠️ {f.date()}: T1 debe ser 10 (Hay {t1.get(f,0)})")
             if t2.get(f,0) != 10: errores.append(f"⚠️ {f.date()}: T2 debe ser 10 (Hay {t2.get(f,0)})")
-            if relevo.get(f,0) != 1: errores.append(f"⚠️ {f.date()}: Debe haber 1 RELEVO")
+            if relevo.get(f,0) != 1: errores.append(f"⚠️ {f.date()}: Falta RELEVO")
             
     return errores, cobertura
 
 # =========================================================
-# LÓGICAS DE GENERACIÓN
+# LÓGICAS DE GENERACIÓN (ORIGINALES)
 # =========================================================
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
     filas = []
@@ -147,24 +177,16 @@ def generar_malla_abordaje(inicio, fin, desc_cfg, ciclo):
         gps_descansan = [g for g in GRUPOS_ABO if desc_cfg.get(g) == dia_nombre]
         gps_activos = [g for g in GRUPOS_ABO if g not in gps_descansan]
         
-        # Para Abordaje, si un grupo descansa, los otros 4 cubren T1(2gps), T2(2gps). 
-        # Si nadie descansa, el 5to grupo hace Relevo/Disponible.
-        
         if ciclo == "Diario": seed = (fecha - pd.to_datetime(inicio)).days
         elif ciclo == "Quincenal": seed = (fecha.day-1)//15 + (fecha.month*10)
         else: seed = fecha.month + (fecha.year*12)
         
         gps_ord = sorted(GRUPOS_ABO, key=lambda g: (hash(g) + seed) % 100)
-        
-        # Filtrar los que no están descansando hoy
         disponibles_hoy = [g for g in gps_ord if g not in gps_descansan]
         
         asig_gps = {}
-        # Asignar 2 grupos a T1 (10 personas)
         for _ in range(min(2, len(disponibles_hoy))): asig_gps[disponibles_hoy.pop(0)] = "T1"
-        # Asignar 2 grupos a T2 (10 personas)
         for _ in range(min(2, len(disponibles_hoy))): asig_gps[disponibles_hoy.pop(0)] = "T2"
-        # El grupo que sobra (si hay) hace Relevo 1 persona y 4 Disponibles
         gp_sobrante = disponibles_hoy[0] if disponibles_hoy else None
         
         for g in GRUPOS_ABO:
@@ -179,63 +201,88 @@ def generar_malla_abordaje(inicio, fin, desc_cfg, ciclo):
     return pd.DataFrame(filas)
 
 # =========================================================
-# INTERFAZ
+# INTERFAZ (MEJORADA)
 # =========================================================
 def pantalla_programador():
-    st.sidebar.title("MovilGo Pro v5.0")
-    tipo = st.sidebar.radio("Sección", ["Técnicos", "Abordaje"])
+    st.sidebar.markdown("### 🚀 MovilGo Pro v5.0")
+    tipo = st.sidebar.radio("Navegación", ["Técnicos", "Abordaje"])
     
-    st.header(f"📅 Planificación: {tipo}")
-    c1, c2 = st.columns(2)
-    inicio = c1.date_input("Desde", date.today())
-    fin = c2.date_input("Hasta", date.today() + timedelta(days=30))
+    st.markdown(f"<div class='main-header'>📅 Planificación Operativa: {tipo}</div>", unsafe_allow_html=True)
+    
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        inicio = c1.date_input("Fecha Inicio", date.today())
+        fin = c2.date_input("Fecha Término", date.today() + timedelta(days=21))
 
-    descansos = {}
-    ciclo = "Diario"
-    if tipo == "Técnicos":
-        cols = st.columns(4)
-        for i, g in enumerate(GRUPOS_TEC): descansos[g] = cols[i].selectbox(f"{g}", DIAS_ES, index=(5 if i<2 else 6))
-    else:
-        cr, cd = st.columns([1,3])
-        ciclo = cr.selectbox("Rotación Bloques", ["Diario", "Quincenal", "Mensual"])
-        cols_a = cd.columns(5)
-        for i, g in enumerate(GRUPOS_ABO): descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
+        descansos = {}
+        if tipo == "Técnicos":
+            cols = st.columns(4)
+            for i, g in enumerate(GRUPOS_TEC): 
+                descansos[g] = cols[i].selectbox(f"Día Descanso {g}", DIAS_ES, index=(5 if i<2 else 6))
+            ciclo = "Fijo"
+        else:
+            cr, cd = st.columns([1,3])
+            ciclo = cr.selectbox("Modo Rotación", ["Diario", "Quincenal", "Mensual"])
+            cols_a = cd.columns(5)
+            for i, g in enumerate(GRUPOS_ABO): 
+                descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
 
-    if st.button(f"🚀 Generar Malla {tipo}"):
+    if st.button(f"✨ Ejecutar Algoritmo {tipo}", use_container_width=True):
         df = generar_malla_tecnicos(inicio, fin, descansos) if tipo == "Técnicos" else generar_malla_abordaje(inicio, fin, descansos, ciclo)
         st.session_state[f"m_{tipo}"] = df
 
     key = f"m_{tipo}"
     if key in st.session_state:
         df_view = st.session_state[key].copy()
-        df_view["Label"] = df_view["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}")
+        df_view["Label"] = df_view["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} {x.strftime('%d/%m')}")
         pivot = df_view.pivot(index="Sujeto", columns="Label", values="Turno")
-        sorted_cols = sorted(pivot.columns, key=lambda x: x.split(" - ")[1])
+        
+        # Mantener orden cronológico
+        sorted_cols = sorted(pivot.columns, key=lambda x: datetime.strptime(x.split(" ")[1] + f"/{date.today().year}", '%d/%m/%Y'))
         pivot = pivot[sorted_cols]
 
-        st.subheader("📝 Editor de Turnos")
+        st.subheader("📝 Edición de Turnos y Supervisión")
         config_cols = {str(c): st.column_config.SelectboxColumn(options=OPCIONES_TURNOS, width="small") for c in pivot.columns}
-        df_edit = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols)
+        
+        # DATA EDITOR CON ESTILO
+        df_edit = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols, height=400)
 
-        if st.button("💾 Guardar y Validar"):
-            df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
-            df_final["Fecha"] = pd.to_datetime(df_final["Label"].apply(lambda x: x.split(" - ")[1]))
-            st.session_state[key] = df_final
-            guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
-            st.toast("✅ Guardado")
+        # Reconstrucción de DF para validaciones
+        df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
+        # Mapear las fechas originales
+        map_fechas = dict(zip(df_view["Label"], df_view["Fecha"]))
+        df_final["Fecha"] = df_final["Label"].map(map_fechas)
+
+        col_save1, col_save2 = st.columns(2)
+        with col_save1:
+            if st.button("💾 Guardar Cambios en GitHub", use_container_width=True):
+                st.session_state[key] = df_final
+                guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
+                st.toast("✅ Sincronizado con GitHub", icon="☁️")
+
+        with col_save2:
+            # BOTÓN DE DESCARGA COMPLETO
+            errs, cob = ejecutar_auditoria(df_final, tipo)
+            reporte_excel = generar_reporte_completo(df_edit, errs, cob)
+            st.download_button(
+                label="📥 Descargar Escenario Completo (Excel)",
+                data=reporte_excel,
+                file_name=f"Reporte_{tipo}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
         st.divider()
-        errs, cob = ejecutar_auditoria(st.session_state[key], tipo)
         a1, a2 = st.columns([1, 2])
         with a1:
-            st.metric("Alertas Activas", len(errs))
-            with st.container(height=300):
+            st.metric("Total Alertas", len(errs))
+            with st.container(height=300, border=True):
                 if errs:
                     for e in errs: st.error(e)
-                else: st.success("✅ Malla perfecta.")
+                else: st.success("✅ Malla perfecta según normativa.")
         with a2:
-            st.subheader("📈 Cobertura")
-            st.line_chart(cob)
+            st.subheader("📈 Visualización de Cobertura")
+            st.area_chart(cob, color="#2563EB")
 
 if __name__ == "__main__":
     pantalla_programador()
