@@ -8,7 +8,7 @@ from github import Github
 # =========================================================
 # CONFIGURACIÓN Y CONSTANTES
 # =========================================================
-st.set_page_config(page_title="MovilGo Optimizer Enterprise Pro", layout="wide")
+st.set_page_config(page_title="MovilGo Optimizer Enterprise Pro v5.0", layout="wide")
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
@@ -80,10 +80,12 @@ def ejecutar_auditoria(df, tipo):
     else:
         t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
         t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
+        relevo = df[df["Turno"] == "RELEVO"].groupby("Fecha").size()
         cobertura = t1 + t2
         for f in t1.index:
-            if t1.get(f,0) < 10: errores.append(f"⚠️ {f.date()}: Falta T1")
-            if t2.get(f,0) < 10: errores.append(f"⚠️ {f.date()}: Falta T2")
+            if t1.get(f,0) != 10: errores.append(f"⚠️ {f.date()}: T1 debe ser 10 (Hay {t1.get(f,0)})")
+            if t2.get(f,0) != 10: errores.append(f"⚠️ {f.date()}: T2 debe ser 10 (Hay {t2.get(f,0)})")
+            if relevo.get(f,0) != 1: errores.append(f"⚠️ {f.date()}: Debe haber 1 RELEVO")
             
     return errores, cobertura
 
@@ -144,24 +146,35 @@ def generar_malla_abordaje(inicio, fin, desc_cfg, ciclo):
         dia_nombre = DIAS_ES[fecha.weekday()]
         gps_descansan = [g for g in GRUPOS_ABO if desc_cfg.get(g) == dia_nombre]
         gps_activos = [g for g in GRUPOS_ABO if g not in gps_descansan]
-        while len(gps_activos) < 4 and gps_descansan: gps_activos.append(gps_descansan.pop(0))
-
+        
+        # Para Abordaje, si un grupo descansa, los otros 4 cubren T1(2gps), T2(2gps). 
+        # Si nadie descansa, el 5to grupo hace Relevo/Disponible.
+        
         if ciclo == "Diario": seed = (fecha - pd.to_datetime(inicio)).days
         elif ciclo == "Quincenal": seed = (fecha.day-1)//15 + (fecha.month*10)
         else: seed = fecha.month + (fecha.year*12)
         
-        gps_ord = sorted(gps_activos, key=lambda g: (hash(g) + seed) % 100)
+        gps_ord = sorted(GRUPOS_ABO, key=lambda g: (hash(g) + seed) % 100)
+        
+        # Filtrar los que no están descansando hoy
+        disponibles_hoy = [g for g in gps_ord if g not in gps_descansan]
+        
         asig_gps = {}
-        for _ in range(min(2, len(gps_ord))): asig_gps[gps_ord.pop(0)] = "T1"
-        for _ in range(min(2, len(gps_ord))): asig_gps[gps_ord.pop(0)] = "T2"
-        gp_sobrante = gps_ord[0] if gps_ord else None
+        # Asignar 2 grupos a T1 (10 personas)
+        for _ in range(min(2, len(disponibles_hoy))): asig_gps[disponibles_hoy.pop(0)] = "T1"
+        # Asignar 2 grupos a T2 (10 personas)
+        for _ in range(min(2, len(disponibles_hoy))): asig_gps[disponibles_hoy.pop(0)] = "T2"
+        # El grupo que sobra (si hay) hace Relevo 1 persona y 4 Disponibles
+        gp_sobrante = disponibles_hoy[0] if disponibles_hoy else None
         
         for g in GRUPOS_ABO:
-            turno_gp = asig_gps.get(g, "DESCANSO")
+            turno_base = asig_gps.get(g, "DESCANSO")
             for i, p in enumerate(PERSONAL_ABO[g]):
-                ft = turno_gp
-                if g == gp_sobrante: ft = "RELEVO" if i == 0 else "DISPONIBLE"
-                elif g in gps_descansan: ft = "DESCANSO"
+                ft = turno_base
+                if g == gp_sobrante:
+                    ft = "RELEVO" if i == 0 else "DISPONIBLE"
+                elif g in gps_descansan:
+                    ft = "DESCANSO"
                 filas.append({"Fecha": fecha, "Sujeto": p, "Turno": ft})
     return pd.DataFrame(filas)
 
@@ -169,10 +182,10 @@ def generar_malla_abordaje(inicio, fin, desc_cfg, ciclo):
 # INTERFAZ
 # =========================================================
 def pantalla_programador():
-    st.sidebar.title("MovilGo Pro Enterprise")
+    st.sidebar.title("MovilGo Pro v5.0")
     tipo = st.sidebar.radio("Sección", ["Técnicos", "Abordaje"])
     
-    st.header(f"📅 Gestión: {tipo}")
+    st.header(f"📅 Planificación: {tipo}")
     c1, c2 = st.columns(2)
     inicio = c1.date_input("Desde", date.today())
     fin = c2.date_input("Hasta", date.today() + timedelta(days=30))
@@ -184,7 +197,7 @@ def pantalla_programador():
         for i, g in enumerate(GRUPOS_TEC): descansos[g] = cols[i].selectbox(f"{g}", DIAS_ES, index=(5 if i<2 else 6))
     else:
         cr, cd = st.columns([1,3])
-        ciclo = cr.selectbox("Rotación de Bloques", ["Diario", "Quincenal", "Mensual"])
+        ciclo = cr.selectbox("Rotación Bloques", ["Diario", "Quincenal", "Mensual"])
         cols_a = cd.columns(5)
         for i, g in enumerate(GRUPOS_ABO): descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
 
@@ -200,27 +213,26 @@ def pantalla_programador():
         sorted_cols = sorted(pivot.columns, key=lambda x: x.split(" - ")[1])
         pivot = pivot[sorted_cols]
 
-        st.subheader("📝 Editor Pro")
+        st.subheader("📝 Editor de Turnos")
         config_cols = {str(c): st.column_config.SelectboxColumn(options=OPCIONES_TURNOS, width="small") for c in pivot.columns}
         df_edit = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols)
 
-        if st.button("💾 Guardar y Auditar"):
+        if st.button("💾 Guardar y Validar"):
             df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
             df_final["Fecha"] = pd.to_datetime(df_final["Label"].apply(lambda x: x.split(" - ")[1]))
             st.session_state[key] = df_final
             guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
-            st.toast("✅ Sincronizado")
+            st.toast("✅ Guardado")
 
-        # PANEL DE ALERTAS Y MÉTRICAS
         st.divider()
         errs, cob = ejecutar_auditoria(st.session_state[key], tipo)
         a1, a2 = st.columns([1, 2])
         with a1:
-            st.metric("Alertas de Revisión", len(errs))
+            st.metric("Alertas Activas", len(errs))
             with st.container(height=300):
                 if errs:
                     for e in errs: st.error(e)
-                else: st.success("✅ Malla sin conflictos.")
+                else: st.success("✅ Malla perfecta.")
         with a2:
             st.subheader("📈 Cobertura")
             st.line_chart(cob)
