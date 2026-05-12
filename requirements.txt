@@ -5,3 +5,5 @@ plotly
 datetime
 PyGithub
 holidays
+openpyxl
+xlsxwriter
