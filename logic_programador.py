@@ -79,24 +79,20 @@ def asignar_grupos_automatico(df):
     df = df.copy()
     if 'GrupoAsignado' in df.columns: df = df.drop(columns=['GrupoAsignado'])
     
-    # Segmentación por Cargo para cumplir cuotas
     masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).reset_index(drop=True)
-    tecs_a = df[df['Cargo'].str.contains('Técnico A', case=False, na=False)].sample(frac=1).reset_index(drop=True)
-    tecs_b = df[df['Cargo'].str.contains('Técnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
+    tecs_a = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).reset_index(drop=True)
+    tecs_b = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     abordaje = df[df['Cargo'].str.contains('Auxiliar|Abordaje', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     
     res = []
-    # Cuotas Técnicos: 2 Master, 7 Tec A, 3 Tec B
     for i, g in enumerate(GRUPOS_TEC):
         m = masters.iloc[i*2:(i+1)*2].copy(); m['GrupoAsignado'] = g
         ta = tecs_a.iloc[i*7:(i+1)*7].copy(); ta['GrupoAsignado'] = g
         tb = tecs_b.iloc[i*3:(i+1)*3].copy(); tb['GrupoAsignado'] = g
         res.extend([m, ta, tb])
-    # Cuotas Abordaje: 5 por grupo
     for i, g in enumerate(GRUPOS_ABO):
         abo = abordaje.iloc[i*5:(i+1)*5].copy(); abo['GrupoAsignado'] = g
         res.append(abo)
-        
     return pd.concat(res).reset_index(drop=True)
 
 def pantalla_personal():
@@ -106,19 +102,17 @@ def pantalla_personal():
         if not df.empty: 
             st.session_state.df_pers = df
             st.success("Personal cargado.")
-
     if 'df_pers' in st.session_state:
-        if st.button("🎲 Asignar Grupos Aleatoriamente"):
+        if st.button("🎲 Asignar Grupos (Cuotas: 2 Master, 7 Tec A, 3 Tec B)"):
             st.session_state.df_pers_ready = asignar_grupos_automatico(st.session_state.df_pers)
             st.balloons()
-
         if 'df_pers_ready' in st.session_state:
             df_edit = st.data_editor(st.session_state.df_pers_ready, use_container_width=True)
             if st.button("💾 Guardar Estructura en GitHub"):
                 guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 5. MOTOR DE MALLAS Y TURNOS
+# 5. MOTOR DE MALLAS Y AUDITORÍA
 # =========================================================
 def style_malla(df_pivot):
     def apply_styles(val):
@@ -131,17 +125,11 @@ def style_malla(df_pivot):
 def generar_malla_transaccional(df_final, tipo, config_horas):
     df_empleados = cargar_excel("empleados_grupos.xlsx")
     if df_empleados.empty:
-        st.warning("⚠️ No se encontró 'empleados_grupos.xlsx'.")
-        return pd.DataFrame()
-
-    # Cruce exacto de Nombres y Cargos por GrupoAsignado
-    detallada = pd.merge(
-        df_final, 
-        df_empleados[['Nombre', 'GrupoAsignado', 'Cargo']], 
-        left_on="Sujeto", 
-        right_on="GrupoAsignado", 
-        how="inner"
-    )
+        st.warning("⚠️ No se encontró 'empleados_grupos.xlsx'. Usando grupos genéricos.")
+        detallada = df_final.copy()
+        detallada["Nombre"] = "Sin Nombre"; detallada["Cargo"] = "Sin Cargo"; detallada["GrupoAsignado"] = detallada["Sujeto"]
+    else:
+        detallada = pd.merge(df_final, df_empleados[['Nombre', 'GrupoAsignado', 'Cargo']], left_on="Sujeto", right_on="GrupoAsignado", how="inner")
 
     detallada["Hora Inicio"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Inicio", "OFF"))
     detallada["Hora Fin"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Fin", "OFF"))
@@ -164,8 +152,12 @@ def ejecutar_auditoria(df, tipo):
             if c < 3: errores.append(f"❌ Cobertura insuficiente el {f.date()}")
     else:
         cob = t1 + t2
+        for f in t1.index:
+            if t1.get(f,0) < 10 or t2.get(f,0) < 10: errores.append(f"⚠️ {f.date()}: Personal insuficiente T1/T2")
     
     equidad = df.groupby(["Sujeto", "Turno"]).size().unstack(fill_value=0)
+    for c in ["T1", "T2", "T3", "DESCANSO"]:
+        if c not in equidad.columns: equidad[c] = 0
     return errores, cob, equidad
 
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
@@ -215,7 +207,7 @@ def generar_malla_abordaje(inicio, fin, desc_cfg, ciclo):
 def pantalla_programador():
     tipo = st.sidebar.radio("Módulo", ["Técnicos", "Abordaje"])
     
-    with st.expander("⏰ Configuración de Jornadas (Minutos Exactos)"):
+    with st.expander("⏰ Configuración de Horas (Minutos Exactos)"):
         config_horas = {}
         t_list = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
         def_h = {"T1": [time(6,0), time(14,0)], "T2": [time(14,0), time(22,0)], "T3": [time(22,0), time(6,0)], "RELEVO": [time(8,0), time(16,0)], "T1 APOYO": [time(7,0), time(15,0)], "DISPONIBLE": [time(0,0), time(0,0)]}
@@ -259,15 +251,21 @@ def pantalla_programador():
         st.subheader("📋 Malla Detallada por Persona")
         st.dataframe(malla_det, use_container_width=True)
         
-        st.subheader("📊 Análisis de Equidad y Cobertura")
+        st.subheader("📊 Análisis Operativo (Equidad y Cobertura)")
         a1, a2 = st.columns(2)
         with a1: st.dataframe(equidad.style.highlight_max(axis=0, color='#FADBD8'), use_container_width=True)
         with a2: st.area_chart(cob)
         
         if not errs:
-            st.markdown("""<div style="background-color: #e8f5e9; padding: 25px; border-radius: 15px; border-left: 6px solid #2e7d32; margin: 10px 0;">
+            st.markdown("""<div style="background-color: #e8f5e9; padding: 25px; border-radius: 15px; border-left: 6px solid #2e7d32;">
                 <h3 style="color: #1b5e20; margin-top: 0;">✅ Validación Exitosa</h3>
-                <p style="color: #2e7d32;">Malla alineada con la Reforma Laboral 2026. Escenario apto para implementación.</p></div>""", unsafe_allow_html=True)
+                <p style="color: #2e7d32;">Malla alineada con la Reforma Laboral 2026. Distribución de carga equitativa.</p></div>""", unsafe_allow_html=True)
             st.balloons()
         else:
             for e in errs: st.error(e)
+
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
+            df_edit.to_excel(wr, sheet_name='Compacta')
+            malla_det.to_excel(wr, sheet_name='Detallada', index=False)
+        st.download_button("📥 Descargar Reporte Completo", out.getvalue(), f"Malla_{tipo}.xlsx", use_container_width=True)
