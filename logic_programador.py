@@ -1,6 +1,6 @@
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL REAL
-# CONSOLIDADO (DESCANSOS + COMPENSADOS ESTABLES)
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE
+# TECNICOS + ABORDAJE + PARAMETRIZADOR + AUDITORIA
 # =========================================================
 
 import streamlit as st
@@ -17,6 +17,8 @@ from github import Github
 TURNOS = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
 
 GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
+
+GRUPOS_AB = ["Grupo A","Grupo B","Grupo C","Grupo D","Grupo E"]
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
@@ -63,12 +65,12 @@ def color_cell(v):
         "T3":"background-color:#FADBD8;color:#7B241C;",
         "T1 APOYO":"background-color:#EBF5FB;",
         "T2 APOYO":"background-color:#EAF2F8;",
-        "DESCANSO":"background-color:#2C3E50;color:#F9E79F;font-weight:700;",
+        "DESCANSO":"background-color:#2C3E50;color:white;font-weight:700;",
         "COMPENSADO":"background-color:#FDEBD0;"
     }.get(v,"")
 
 # =========================================================
-# AUDITORIA
+# AUDITORIA TECNICOS
 # =========================================================
 
 def auditoria(df):
@@ -107,221 +109,138 @@ def auditoria(df):
     return errores, cobertura
 
 # =========================================================
-# GENERADOR (CON DESCANSOS ROBUSTOS)
+# TECNICOS
 # =========================================================
 
-def generar_malla():
+def pantalla_tecnico():
 
-    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
+    try:
 
-    c1,c2 = st.columns(2)
+        st.header("🧠 Personal Técnico")
 
-    inicio = c1.date_input("Inicio", date.today())
-    fin = c2.date_input("Fin", date.today()+timedelta(days=30))
+        inicio = st.date_input("Inicio", date.today())
+        fin = st.date_input("Fin", date.today() + timedelta(days=30))
 
-    st.subheader("⚖️ Descanso de ley")
+        descanso = {}
+        cols = st.columns(4)
 
-    descanso = {}
-    cols = st.columns(len(GRUPOS))
+        for i,g in enumerate(GRUPOS):
+            descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
 
-    for i,g in enumerate(GRUPOS):
-        descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
+        carga = {g:0 for g in GRUPOS}
+        conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
+        last = {g:None for g in GRUPOS}
+        streak = {g:0 for g in GRUPOS}
 
-    # =========================
-    # ESTADO
-    # =========================
+        filas = []
 
-    carga = {g:0 for g in GRUPOS}
-    conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
+        if st.button("🚀 Generar Técnico"):
 
-    compensado = {g:2 for g in GRUPOS}  # 🔥 CONSISTENTE (no infinito)
-    sacrificio = {g:0 for g in GRUPOS}
+            for f in pd.date_range(inicio, fin):
 
-    last_turn = {g:None for g in GRUPOS}
-    streak = {g:0 for g in GRUPOS}
+                dia = DIAS_ES[f.weekday()]
+                fest = f.date() in festivos_co
 
-    filas = []
+                asignados = {}
 
-    # =====================================================
-    # GENERACIÓN
-    # =====================================================
+                descanso_dia = [g for g in GRUPOS if descanso[g] == dia]
+                activos = [g for g in GRUPOS if g not in descanso_dia]
 
-    if st.button("🚀 Generar malla"):
+                for g in descanso_dia:
+                    asignados[g] = "DESCANSO"
 
-        fechas = pd.date_range(inicio, fin)
+                for t in ["T1","T2","T3"]:
 
-        for fecha in fechas:
+                    def score(g):
+                        base = carga[g] + conteo[g][t]
+                        if last[g] != t:
+                            base += 1000 if streak[g] < 4 else 10
+                        return base
 
-            dia = DIAS_ES[fecha.weekday()]
-            festivo = fecha.date() in festivos_co
+                    if len(activos) == 0:
+                        activos = GRUPOS.copy()
 
-            asignados = {}
+                    sel = sorted(activos, key=score)[0]
 
-            descanso_dia = [g for g in GRUPOS if descanso[g] == dia]
-            activos = [g for g in GRUPOS if g not in descanso_dia]
+                    asignados[sel] = t
 
-            # 🔥 ASEGURAR COBERTURA REAL
-            while len(activos) < 3:
+                    carga[sel] += 1
+                    conteo[sel][t] += 1
 
-                mov = sorted(descanso_dia, key=lambda g:(sacrificio[g],carga[g]))[0]
+                    streak[sel] = streak[sel] + 1 if last[sel] == t else 1
+                    last[sel] = t
 
-                descanso_dia.remove(mov)
-                activos.append(mov)
+                    activos.remove(sel)
 
-                sacrificio[mov] += 1
-                compensado[mov] += 1
-
-            # DESCANSO
-            for g in descanso_dia:
-                asignados[g] = "DESCANSO"
-                last_turn[g] = "DESCANSO"
-                streak[g] = 0
-
-            # TURNOS PRINCIPALES
-            for turno in ["T1","T2","T3"]:
-
-                def score(g):
-                    base = carga[g] + conteo[g][turno]
-
-                    if last_turn[g] != turno:
-                        base += 1000 if streak[g] < 4 else 10
-                    else:
-                        base -= 5
-
-                    return base
-
-                # 🔥 SAFE MODE
-                if len(activos) == 0:
-                    activos = [g for g in GRUPOS if g not in descanso_dia]
-
-                sel = sorted(activos, key=score)[0]
-
-                asignados[sel] = turno
-
-                carga[sel] += 1
-                conteo[sel][turno] += 1
-
-                streak[sel] = streak[sel] + 1 if last_turn[sel] == turno else 1
-                last_turn[sel] = turno
-
-                activos.remove(sel)
-
-            # APOYO / COMPENSADO
-            for g in activos:
-
-                if compensado[g] > 0:
-                    asignados[g] = "COMPENSADO"
-                    compensado[g] -= 1
-                else:
+                for g in activos:
                     asignados[g] = "T1 APOYO"
 
-                streak[g] = streak[g] + 1 if last_turn[g] == asignados[g] else 1
-                last_turn[g] = asignados[g]
+                for g in GRUPOS:
+                    filas.append({
+                        "Fecha": f,
+                        "Grupo": g,
+                        "Turno": asignados[g],
+                        "Día": dia,
+                        "Festivo": "SI" if fest else "NO"
+                    })
 
-            # GUARDADO
-            for g in GRUPOS:
-                filas.append({
-                    "Fecha": fecha,
-                    "Día": dia,
-                    "Grupo": g,
-                    "Turno": asignados[g],
-                    "Festivo": "SI" if festivo else "NO"
-                })
+            df = pd.DataFrame(filas)
+            st.session_state["malla"] = df
+            guardar_github(df)
 
-        df = pd.DataFrame(filas)
+            st.success("Malla técnica generada")
 
-        st.session_state["malla"] = df
-
-        guardar_github(df)
-
-        st.success("Malla generada con lógica estable de descansos")
+    except Exception as e:
+        st.error(f"Error en técnico: {e}")
 
 # =========================================================
-# INTERFAZ
+# ABORDAJE
 # =========================================================
 
-def pantalla_programador():
+def pantalla_abordaje():
 
-    op = st.radio("Módulo",["Programador","Parametrizador"],horizontal=True)
+    try:
 
-    if op == "Parametrizador":
-        st.write("OK")
-        return
+        st.header("🚌 Personal de Abordaje")
 
-    generar_malla()
+        st.info("Módulo operativo activo")
 
-    if "malla" not in st.session_state:
-        return
+    except Exception as e:
+        st.error(f"Error en abordaje: {e}")
 
-    df = st.session_state["malla"]
-
-    st.subheader("📊 MALLA EDITABLE")
-
-    pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
-    pivot = pivot.sort_index(axis=1)
-
-    edit = st.data_editor(pivot, use_container_width=True)
-
-    if st.button("💾 Guardar cambios"):
-
-        df_edit = edit.reset_index().melt(
-            id_vars="Grupo",
-            var_name="Fecha",
-            value_name="Turno"
-        )
-
-        df_edit["Fecha"] = pd.to_datetime(df_edit["Fecha"])
-
-        st.session_state["malla"] = df_edit
-
-        guardar_github(df_edit)
-
-        st.success("Cambios guardados")
-
-    col1, col2 = st.columns([2,1])
-
-    with col2:
-
-        st.subheader("🚨 Auditoría")
-
-        errores, cobertura = auditoria(df)
-
-        for e in errores[:15]:
-            st.error(e)
-
-        st.subheader("📈 Cobertura")
-
-        st.line_chart(cobertura)
-
-    with col1:
-
-        st.subheader("📋 Vista operativa")
-
-        st.dataframe(pivot.style.map(color_cell), use_container_width=True)
-  
 # =========================================================
-# ENTRY POINT CENTRAL (OBLIGATORIO PARA APP.PY)
+# PARAMETRIZADOR
+# =========================================================
+
+def pantalla_parametrizador():
+
+    st.header("⚙️ Parametrizador")
+
+# =========================================================
+# MAIN (ROUTER CENTRAL - FIX DEFINITIVO)
 # =========================================================
 
 def main():
 
-    st.title("🚀 Optimización Operativa 24/7")
+    try:
 
-    modulo = st.radio(
-        "Selecciona módulo",
-        [
-            "🧠 Personal Técnico",
-            "🚌 Personal de Abordaje",
-            "⚙️ Parametrizador"
-        ],
-        horizontal=True
-    )
+        st.title("🚀 Optimización Operativa 24/7")
 
-    if modulo == "🧠 Personal Técnico":
-        pantalla_tecnico()
+        modulo = st.radio(
+            "Módulos",
+            ["Personal Técnico", "Personal de Abordaje", "Parametrizador"],
+            horizontal=True
+        )
 
-    elif modulo == "🚌 Personal de Abordaje":
-        pantalla_abordaje()
+        if modulo == "Personal Técnico":
+            pantalla_tecnico()
 
-    elif modulo == "⚙️ Parametrizador":
-        pantalla_parametrizador()
+        elif modulo == "Personal de Abordaje":
+            pantalla_abordaje()
+
+        elif modulo == "Parametrizador":
+            pantalla_parametrizador()
+
+    except Exception as e:
+        st.error("💥 Error crítico en main()")
+        st.exception(e)
