@@ -216,9 +216,8 @@ def generar_malla():
                     streak[g] = 1
                     last_turn[g] = turno
 
-                conteo[g][turno] += 1
-
-                asignacion_grupo[g] = turno
+                if turno in conteo[sel]:
+                    conteo[sel][turno] += 1
 
             # =================================================
             # EXPANSIÓN A PERSONAS
