@@ -242,22 +242,11 @@ if errs:
                 for e in errs: 
                     st.error(e)
         else:
-            # Banner Profesional de Certificación
-            st.markdown("""
-                <div style="background-color: #e8f5e9; padding: 25px; border-radius: 15px; border-left: 6px solid #2e7d32; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin: 10px 0;">
-                    <h3 style="color: #1b5e20; margin-top: 0;">✅ Validación de Malla Exitosa</h3>
-                    <p style="color: #2e7d32; font-size: 1.1em; line-height: 1.6;">
-                        <b>Certificación de Cumplimiento Operativo MovilGo Pro:</b><br>
-                        • <b>Marco Legal:</b> Planificación alineada con la jornada de ley y respeto integral a los descansos obligatorios.<br>
-                        • <b>Equidad de Carga:</b> Algoritmo de equilibrio simétrico verificado; turnos <b>T1, T2 y T3</b> distribuidos equitativamente entre los grupos.<br>
-                        • <b>Continuidad Crítica:</b> Cobertura 24/7 garantizada, sin saltos operativos ni traslapes de jornada detectados.
-                    </p>
-                    <p style="color: #1b5e20; font-weight: bold; margin-bottom: 0;">
-                        ✓ El escenario actual es apto para su implementación inmediata.
-                    </p>
-                </div>
-                <br>
-            """, unsafe_allow_html=True)
-            
-            # Un pequeño detalle visual para el éxito
-            st.balloons()
+            # MENSAJE PROFESIONAL DE VALIDACIÓN
+            st.success("### ✅ Validación de Malla Exitosa")
+            st.info("""
+                **Certificación de Cumplimiento Operativo:**
+                * **Marco Legal:** La planificación se ajusta estrictamente a la jornada de ley y respeta los descansos obligatorios.
+                * **Equidad de Carga:** Se ha verificado el equilibrio de turnos (T1/T2/T3) entre todos los grupos, garantizando una distribución justa de la carga laboral.
+                * **Continuidad:** Cobertura 24/7 garantizada sin saltos ni traslapes críticos detectados.
+            """)
