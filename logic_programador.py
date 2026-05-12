@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE vFINAL
 # =========================================================
 
 import streamlit as st
@@ -11,11 +11,7 @@ import holidays
 # =========================================================
 # CONFIG
 # =========================================================
-TURNOS = [
-    "T1","T2","T3",
-    "T1 APOYO","T2 APOYO",
-    "DESCANSO","COMPENSADO"
-]
+TURNOS = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
 
 GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 
@@ -27,19 +23,19 @@ DIAS_ES = [
 festivos_co = holidays.Colombia()
 
 # =========================================================
-# COLORES SUAVES
+# COLORES SUAVES (FONDO REAL)
 # =========================================================
 def color_cell(v):
 
     estilos = {
-        "T1": "background-color:#D6EAF8;color:#1B4F72;font-weight:600;",
-        "T2": "background-color:#D5F5E3;color:#145A32;font-weight:600;",
-        "T3": "background-color:#FADBD8;color:#7B241C;font-weight:600;",
+        "T1": "background-color:#AED6F1;color:#0B3C5D;font-weight:600;",
+        "T2": "background-color:#A9DFBF;color:#145A32;font-weight:600;",
+        "T3": "background-color:#F5B7B1;color:#641E16;font-weight:600;",
 
-        "T1 APOYO": "background-color:#EBF5FB;",
-        "T2 APOYO": "background-color:#EAF2F8;",
+        "T1 APOYO": "background-color:#D6EAF8;",
+        "T2 APOYO": "background-color:#D5F5E3;",
 
-        "DESCANSO": "background-color:#2C3E50;color:#F9E79F;font-weight:700;",
+        "DESCANSO": "background-color:#1C2833;color:#F7DC6F;font-weight:800;",
 
         "COMPENSADO": "background-color:#FDEBD0;color:#7E5109;font-weight:700;"
     }
@@ -47,7 +43,7 @@ def color_cell(v):
     return estilos.get(v, "")
 
 # =========================================================
-# PARAMETRIZADOR
+# PARAMETRIZADOR (mínimo sin romper sistema)
 # =========================================================
 def parametrizador():
 
@@ -60,7 +56,7 @@ def parametrizador():
 
     st.dataframe(df, use_container_width=True)
 
-    if st.button("🎲 Asignar grupos"):
+    if st.button("Asignar"):
         df["Grupo"] = GRUPOS * 10
         st.success("Grupos asignados")
 
@@ -69,7 +65,7 @@ def parametrizador():
 # =========================================================
 def generar_malla():
 
-    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
+    st.header("🚀 OPTIMIZADOR PRO ENTERPRISE")
 
     c1,c2 = st.columns(2)
 
@@ -92,7 +88,6 @@ def generar_malla():
     # =====================================================
     carga = {g:0 for g in GRUPOS}
     conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
-
     compensado = {g:0 for g in GRUPOS}
     sacrificio = {g:0 for g in GRUPOS}
 
@@ -101,7 +96,7 @@ def generar_malla():
     # =====================================================
     # GENERAR
     # =====================================================
-    if st.button("🚀 Generar malla"):
+    if st.button("Generar malla"):
 
         fechas = pd.date_range(inicio, fin)
 
@@ -116,30 +111,25 @@ def generar_malla():
             activos = [g for g in GRUPOS if g not in descanso]
 
             # =================================================
-            # COBERTURA BALANCEADA
+            # GARANTIZAR COBERTURA T1/T2/T3
             # =================================================
             while len(activos) < 3:
 
-                candidatos = sorted(
-                    descanso,
-                    key=lambda g:(sacrificio[g], carga[g])
-                )
+                mov = sorted(descanso, key=lambda g:(sacrificio[g], carga[g]))[0]
+                descanso.remove(mov)
+                activos.append(mov)
 
-                movido = candidatos[0]
-                descanso.remove(movido)
-                activos.append(movido)
-
-                sacrificio[movido]+=1
-                compensado[movido]+=1
+                sacrificio[mov]+=1
+                compensado[mov]+=1
 
             # =================================================
             # DESCANSO
             # =================================================
             for g in descanso:
-                asignados[g] = "DESCANSO"
+                asignados[g]="DESCANSO"
 
             # =================================================
-            # TURNOS PRINCIPALES
+            # TURNOS PRINCIPALES (SIN HUECOS)
             # =================================================
             for turno in ["T1","T2","T3"]:
 
@@ -149,16 +139,15 @@ def generar_malla():
                 )
 
                 sel = candidatos[0]
-
                 asignados[sel]=turno
                 carga[sel]+=1
                 conteo[sel][turno]+=1
                 activos.remove(sel)
 
             # =================================================
-            # COMPENSADOS
+            # COMPENSADO (EQUILIBRADO)
             # =================================================
-            for g in sorted(GRUPOS, key=lambda x:(compensado[x], carga[x])):
+            for g in sorted(GRUPOS, key=lambda x:compensado[x]):
 
                 if compensado[g] > 0 and g not in asignados:
                     asignados[g]="COMPENSADO"
@@ -166,7 +155,7 @@ def generar_malla():
                     break
 
             # =================================================
-            # APOYO + REGLA ANTI-SALTOS
+            # APOYOS SIN SALTOS PROHIBIDOS
             # =================================================
             for g in GRUPOS:
 
@@ -194,20 +183,19 @@ def generar_malla():
 
         df = pd.DataFrame(filas)
         st.session_state["malla"]=df
-
-        st.success("Malla generada correctamente")
+        st.success("Malla generada")
 
     # =====================================================
-    # VISUALIZACIÓN COMPLETA
+    # VISUALIZACIÓN
     # =====================================================
     if "malla" in st.session_state:
 
         df = st.session_state["malla"]
 
-        # =========================
-        # MALLA ORIGINAL
-        # =========================
-        st.subheader("📊 Malla original")
+        # ==============================
+        # MALLA HORIZONTAL
+        # ==============================
+        st.subheader("📊 Malla horizontal")
 
         pivot = df.pivot(index="Grupo",columns="Fecha",values="Turno")
 
@@ -222,12 +210,12 @@ def generar_malla():
             use_container_width=True
         )
 
-        # =========================
-        # MALLA EDITABLE (HORIZONTAL REAL)
-        # =========================
-        st.subheader("✏️ Malla editable")
+        # ==============================
+        # EDITOR (MISMA ESTRUCTURA)
+        # ==============================
+        st.subheader("✏️ Editor de malla (horizontal real)")
 
-        edit = st.data_editor(
+        edit_df = st.data_editor(
             df,
             use_container_width=True,
             column_config={
@@ -238,29 +226,29 @@ def generar_malla():
             }
         )
 
-        if st.button("💾 Guardar cambios"):
-            st.session_state["malla"]=edit
-            st.success("Cambios guardados")
+        if st.button("Guardar edición"):
+            st.session_state["malla"]=edit_df
+            st.success("Guardado")
 
-        # =========================
+        # ==============================
         # AUDITORÍA
-        # =========================
+        # ==============================
         st.subheader("🚨 Auditoría")
 
         errores=[]
 
         for g in GRUPOS:
 
-            prev=None
             gdf=df[df["Grupo"]==g]
+            prev=None
 
             for _,r in gdf.iterrows():
 
                 if prev=="T2" and r["Turno"]=="T1":
-                    errores.append(f"{g} T2→T1 {r['Fecha']}")
+                    errores.append(f"{g} salto T2→T1 {r['Fecha']}")
 
                 if prev=="T3" and r["Turno"] in ["T1","T2"]:
-                    errores.append(f"{g} T3→alto {r['Fecha']}")
+                    errores.append(f"{g} salto T3→inferior {r['Fecha']}")
 
                 prev=r["Turno"]
 
@@ -268,14 +256,14 @@ def generar_malla():
             st.error("Saltos indebidos")
             st.write(errores)
         else:
-            st.success("Sin errores")
+            st.success("Sin saltos indebidos")
 
-        # =========================
+        # ==============================
         # COBERTURA
-        # =========================
-        st.subheader("📈 Cobertura")
+        # ==============================
+        st.subheader("📈 Cobertura diaria")
 
-        cov = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
+        cov=df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
 
         st.line_chart(cov)
 
