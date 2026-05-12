@@ -235,3 +235,18 @@ def pantalla_programador():
         if errs:
             with st.expander("🚨 Registro de Alertas", expanded=True):
                 for e in errs: st.error(e)
+
+
+if errs:
+            with st.expander("🚨 Registro de Alertas de Auditoría", expanded=True):
+                for e in errs: 
+                    st.error(e)
+        else:
+            # MENSAJE PROFESIONAL DE VALIDACIÓN
+            st.success("### ✅ Validación de Malla Exitosa")
+            st.info("""
+                **Certificación de Cumplimiento Operativo:**
+                * **Marco Legal:** La planificación se ajusta estrictamente a la jornada de ley y respeta los descansos obligatorios.
+                * **Equidad de Carga:** Se ha verificado el equilibrio de turnos (T1/T2/T3) entre todos los grupos, garantizando una distribución justa de la carga laboral.
+                * **Continuidad:** Cobertura 24/7 garantizada sin saltos ni traslapes críticos detectados.
+            """)
