@@ -1,6 +1,6 @@
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE
-# TECNICOS + ABORDAJE + PARAMETRIZADOR + AUDITORIA
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL REAL
+# + PARAMETRIZADOR CORREGIDO (SOLO CARGO)
 # =========================================================
 
 import streamlit as st
@@ -8,6 +8,7 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 import holidays
 import io
+import base64
 from github import Github
 
 # =========================================================
@@ -17,8 +18,6 @@ from github import Github
 TURNOS = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
 
 GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
-
-GRUPOS_AB = ["Grupo A","Grupo B","Grupo C","Grupo D","Grupo E"]
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
@@ -35,6 +34,37 @@ def conectar_github():
         return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
     except:
         return None
+
+
+def cargar_empleados():
+    repo = conectar_github()
+    if not repo:
+        return None
+
+    try:
+        file = repo.get_contents("empleados.xlsx")
+        data = base64.b64decode(file.content)
+        return pd.read_excel(io.BytesIO(data))
+    except:
+        return None
+
+
+def guardar_empleados(df):
+    repo = conectar_github()
+    if not repo:
+        return
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+
+    data = buffer.getvalue()
+
+    try:
+        file = repo.get_contents("empleados.xlsx")
+        repo.update_file("empleados.xlsx", "update empleados", data, file.sha)
+    except:
+        repo.create_file("empleados.xlsx", "create empleados", data)
 
 
 def guardar_github(df):
@@ -55,6 +85,99 @@ def guardar_github(df):
         repo.create_file("malla_historica.xlsx", "create", data)
 
 # =========================================================
+# PARAMETRIZADOR (CORREGIDO SOLO CARGO)
+# =========================================================
+
+def pantalla_parametrizador():
+
+    st.header("⚙️ Parametrizador de Grupos Inteligente")
+
+    df = cargar_empleados()
+
+    if df is None:
+        st.error("No se pudo cargar empleados.xlsx")
+        return
+
+    st.subheader("📄 Vista empleados")
+    st.dataframe(df)
+
+    if "Cargo" not in df.columns:
+        st.error("❌ Falta la columna 'Cargo' en empleados.xlsx")
+        return
+
+    if "Nombre" not in df.columns:
+        st.error("❌ Falta la columna 'Nombre' en empleados.xlsx")
+        return
+
+    if st.button("🚀 Asignar grupos automáticamente"):
+
+        # =====================================================
+        # TECNICOS (4 GRUPOS)
+        # =====================================================
+
+        tecnicos = df[df["Cargo"].isin(["Master", "Tecnico A", "Tecnico B"])].copy()
+        tecnicos = tecnicos.sample(frac=1).reset_index(drop=True)
+
+        masters = tecnicos[tecnicos["Cargo"] == "Master"]
+        a = tecnicos[tecnicos["Cargo"] == "Tecnico A"]
+        b = tecnicos[tecnicos["Cargo"] == "Tecnico B"]
+
+        grupos_tecnicos = {f"Grupo {i+1}": [] for i in range(4)}
+
+        for i in range(4):
+
+            grupos_tecnicos[f"Grupo {i+1}"].extend(
+                masters.iloc[i*2:(i+1)*2]["Nombre"].tolist()
+            )
+
+            grupos_tecnicos[f"Grupo {i+1}"].extend(
+                a.iloc[i*7:(i+1)*7]["Nombre"].tolist()
+            )
+
+            grupos_tecnicos[f"Grupo {i+1}"].extend(
+                b.iloc[i*3:(i+1)*3]["Nombre"].tolist()
+            )
+
+        # =====================================================
+        # ABORDAJE (5 GRUPOS DE 5 PERSONAS)
+        # =====================================================
+
+        abordaje = df[df["Cargo"] == "Auxiliar de Abordaje y Atención al Público"].copy()
+        abordaje = abordaje.sample(frac=1).reset_index(drop=True)
+
+        grupos_abordaje = {f"Abordaje {i+1}": [] for i in range(5)}
+
+        for i, nombre in enumerate(abordaje["Nombre"]):
+            grupo = f"Abordaje {(i % 5) + 1}"
+            grupos_abordaje[grupo].append(nombre)
+
+        # =====================================================
+        # RESULTADO
+        # =====================================================
+
+        st.subheader("🧠 Grupos Técnicos")
+        st.json(grupos_tecnicos)
+
+        st.subheader("🚌 Grupos Abordaje")
+        st.json(grupos_abordaje)
+
+        # =====================================================
+        # GUARDAR
+        # =====================================================
+
+        df["GrupoAsignado"] = ""
+
+        for g, lista in grupos_tecnicos.items():
+            df.loc[df["Nombre"].isin(lista), "GrupoAsignado"] = g
+
+        for g, lista in grupos_abordaje.items():
+            df.loc[df["Nombre"].isin(lista), "GrupoAsignado"] = g
+
+        guardar_empleados(df)
+
+        st.success("✅ Grupos asignados y guardados en GitHub")
+
+# =========================================================
 # COLORES
 # =========================================================
 
@@ -65,12 +188,12 @@ def color_cell(v):
         "T3":"background-color:#FADBD8;color:#7B241C;",
         "T1 APOYO":"background-color:#EBF5FB;",
         "T2 APOYO":"background-color:#EAF2F8;",
-        "DESCANSO":"background-color:#2C3E50;color:white;font-weight:700;",
+        "DESCANSO":"background-color:#2C3E50;color:#F9E79F;font-weight:700;",
         "COMPENSADO":"background-color:#FDEBD0;"
     }.get(v,"")
 
 # =========================================================
-# AUDITORIA TECNICOS
+# AUDITORÍA
 # =========================================================
 
 def auditoria(df):
@@ -85,141 +208,130 @@ def auditoria(df):
         if c < 3:
             errores.append(f"❌ Cobertura incompleta {f.date()} ({c}/3)")
 
-    for g in GRUPOS:
-
-        gdf = df[df["Grupo"] == g].sort_values("Fecha")
-
-        prev = None
-        streak = 0
-
-        for _, r in gdf.iterrows():
-
-            t = r["Turno"]
-
-            if prev == "T3" and t in ["T1","T2"]:
-                errores.append(f"❌ Salto T3→{t} | {g} | {r['Fecha'].date()}")
-
-            if t in ["T1","T2","T3"]:
-                streak = streak + 1 if prev == t else 1
-                if streak < 4:
-                    errores.append(f"⚠️ Bloque corto {g} {t} {r['Fecha'].date()}")
-
-            prev = t
-
     return errores, cobertura
 
 # =========================================================
-# TECNICOS
+# GENERADOR MALLA
 # =========================================================
 
-def pantalla_tecnico():
+def generar_malla():
 
-    try:
+    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
 
-        st.header("🧠 Personal Técnico")
+    c1,c2 = st.columns(2)
 
-        inicio = st.date_input("Inicio", date.today())
-        fin = st.date_input("Fin", date.today() + timedelta(days=30))
+    inicio = c1.date_input("Inicio", date.today())
+    fin = c2.date_input("Fin", date.today()+timedelta(days=30))
 
-        descanso = {}
-        cols = st.columns(4)
+    st.subheader("⚖️ Descanso de ley")
 
-        for i,g in enumerate(GRUPOS):
-            descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
+    descanso = {}
+    cols = st.columns(len(GRUPOS))
 
-        carga = {g:0 for g in GRUPOS}
-        conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
-        last = {g:None for g in GRUPOS}
-        streak = {g:0 for g in GRUPOS}
+    for i,g in enumerate(GRUPOS):
+        descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
 
-        filas = []
+    carga = {g:0 for g in GRUPOS}
+    conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
 
-        if st.button("🚀 Generar Técnico"):
+    compensado = {g:0 for g in GRUPOS}
+    sacrificio = {g:0 for g in GRUPOS}
 
-            for f in pd.date_range(inicio, fin):
+    last_turn = {g: None for g in GRUPOS}
+    streak = {g: 0 for g in GRUPOS}
 
-                dia = DIAS_ES[f.weekday()]
-                fest = f.date() in festivos_co
+    filas = []
 
-                asignados = {}
+    if st.button("🚀 Generar malla"):
 
-                descanso_dia = [g for g in GRUPOS if descanso[g] == dia]
-                activos = [g for g in GRUPOS if g not in descanso_dia]
+        fechas = pd.date_range(inicio, fin)
 
-                for g in descanso_dia:
-                    asignados[g] = "DESCANSO"
+        for fecha in fechas:
 
-                for t in ["T1","T2","T3"]:
+            dia = DIAS_ES[fecha.weekday()]
+            festivo = fecha.date() in festivos_co
 
-                    def score(g):
-                        base = carga[g] + conteo[g][t]
-                        if last[g] != t:
-                            base += 1000 if streak[g] < 4 else 10
-                        return base
+            asignados = {}
 
-                    if len(activos) == 0:
-                        activos = GRUPOS.copy()
+            descanso_dia = [g for g in GRUPOS if descanso[g]==dia]
+            activos = [g for g in GRUPOS if g not in descanso_dia]
 
-                    sel = sorted(activos, key=score)[0]
+            while len(activos) < 3:
+                mov = sorted(descanso_dia, key=lambda g:(sacrificio[g],carga[g]))[0]
+                descanso_dia.remove(mov)
+                activos.append(mov)
 
-                    asignados[sel] = t
+            for g in descanso_dia:
+                asignados[g]="DESCANSO"
+                last_turn[g]="DESCANSO"
+                streak[g]=0
 
-                    carga[sel] += 1
-                    conteo[sel][t] += 1
+            for turno in ["T1","T2","T3"]:
 
-                    streak[sel] = streak[sel] + 1 if last[sel] == t else 1
-                    last[sel] = t
+                def score(g):
+                    base = carga[g] + conteo[g][turno]
+                    if last_turn[g] != turno:
+                        base += 1000 if streak[g] < 4 else 10
+                    else:
+                        base -= 5
+                    return base
 
-                    activos.remove(sel)
+                sel = sorted(activos, key=score)[0]
 
-                for g in activos:
-                    asignados[g] = "T1 APOYO"
+                asignados[sel]=turno
+                carga[sel]+=1
+                conteo[sel][turno]+=1
 
-                for g in GRUPOS:
-                    filas.append({
-                        "Fecha": f,
-                        "Grupo": g,
-                        "Turno": asignados[g],
-                        "Día": dia,
-                        "Festivo": "SI" if fest else "NO"
-                    })
+                if last_turn[sel]==turno:
+                    streak[sel]+=1
+                else:
+                    streak[sel]=1
+                    last_turn[sel]=turno
 
-            df = pd.DataFrame(filas)
-            st.session_state["malla"] = df
-            guardar_github(df)
+                activos.remove(sel)
 
-            st.success("Malla técnica generada")
+            for g in activos:
+                asignados[g]="T1 APOYO"
 
-    except Exception as e:
-        st.error(f"Error en técnico: {e}")
+            for g in GRUPOS:
+                filas.append({
+                    "Fecha":fecha,
+                    "Día":dia,
+                    "Grupo":g,
+                    "Turno":asignados[g],
+                    "Festivo":"SI" if festivo else "NO"
+                })
 
-# =========================================================
-# ABORDAJE
-# =========================================================
+        df = pd.DataFrame(filas)
+        st.session_state["malla"]=df
+        guardar_github(df)
 
-def pantalla_abordaje():
-
-    try:
-
-        st.header("🚌 Personal de Abordaje")
-
-        st.info("Módulo operativo activo")
-
-    except Exception as e:
-        st.error(f"Error en abordaje: {e}")
+        st.success("Malla generada")
 
 # =========================================================
-# PARAMETRIZADOR
+# INTERFAZ
 # =========================================================
 
-def pantalla_parametrizador():
+def pantalla_programador():
 
-    st.header("⚙️ Parametrizador")
+    op = st.radio("Módulo",["Programador","Parametrizador"],horizontal=True)
 
-# =========================================================
-# MAIN (ROUTER CENTRAL - FIX DEFINITIVO)
-# =========================================================
+    if op=="Parametrizador":
+        pantalla_parametrizador()
+        return
 
+    generar_malla()
+
+    if "malla" not in st.session_state:
+        return
+
+    df = st.session_state["malla"]
+
+    st.subheader("📊 MALLA")
+
+    pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
+
+    st.data_editor(pivot, use_container_width=True)
 def main():
 
     try:
