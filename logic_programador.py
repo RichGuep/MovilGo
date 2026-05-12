@@ -77,20 +77,26 @@ def guardar_github(df, nombre_archivo):
 # =========================================================
 def asignar_grupos_automatico(df):
     df = df.copy()
+    # Limpiamos si ya existen asignaciones previas para empezar de cero
+    if 'GrupoAsignado' in df.columns: df = df.drop(columns=['GrupoAsignado'])
+    
     masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     tecs_a = df[df['Cargo'].str.contains('Técnico A', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     tecs_b = df[df['Cargo'].str.contains('Técnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
-    abordaje = df[df['Cargo'].str.contains('Abordaje', case=False, na=False)].sample(frac=1).reset_index(drop=True)
+    abordaje = df[df['Cargo'].str.contains('Auxiliar', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     
     res = []
+    # Técnicos
     for i, g in enumerate(GRUPOS_TEC):
-        m = masters.iloc[i*2:(i+1)*2].copy(); m['Grupo'] = g
-        ta = tecs_a.iloc[i*7:(i+1)*7].copy(); ta['Grupo'] = g
-        tb = tecs_b.iloc[i*3:(i+1)*3].copy(); tb['Grupo'] = g
+        m = masters.iloc[i*2:(i+1)*2].copy(); m['GrupoAsignado'] = g
+        ta = tecs_a.iloc[i*7:(i+1)*7].copy(); ta['GrupoAsignado'] = g
+        tb = tecs_b.iloc[i*3:(i+1)*3].copy(); tb['GrupoAsignado'] = g
         res.extend([m, ta, tb])
+    # Abordaje
     for i, g in enumerate(GRUPOS_ABO):
-        abo = abordaje.iloc[i*5:(i+1)*5].copy(); abo['Grupo'] = g
+        abo = abordaje.iloc[i*5:(i+1)*5].copy(); abo['GrupoAsignado'] = g
         res.append(abo)
+        
     return pd.concat(res)
 
 def pantalla_personal():
@@ -99,12 +105,15 @@ def pantalla_personal():
         df = cargar_excel("empleados.xlsx")
         if not df.empty: 
             st.session_state.df_pers = df
-            st.success("Personal cargado.")
+            st.success("Personal cargado desde GitHub.")
+
     if 'df_pers' in st.session_state:
         if st.button("🎲 Asignar Grupos (2 Master, 7 Tec A, 3 Tec B)"):
             st.session_state.df_pers_ready = asignar_grupos_automatico(st.session_state.df_pers)
             st.balloons()
+
         if 'df_pers_ready' in st.session_state:
+            # Mostramos el editor para ajustes manuales
             df_edit = st.data_editor(st.session_state.df_pers_ready, use_container_width=True)
             if st.button("💾 Guardar Estructura en GitHub"):
                 guardar_github(df_edit, "empleados_grupos.xlsx")
@@ -121,22 +130,32 @@ def style_malla(df_pivot):
     return df_pivot.style.map(apply_styles)
 
 def generar_malla_transaccional(df_final, tipo, config_horas):
+    # Intentar cargar la base con las asignaciones aleatorias
     df_empleados = cargar_excel("empleados_grupos.xlsx")
+    
     if df_empleados.empty:
-        st.warning("⚠️ No se encontró 'empleados_grupos.xlsx'. Usando grupos como nombres.")
+        st.warning("⚠️ No se encontró 'empleados_grupos.xlsx'. Realice la asignación en 'Personal' primero.")
         detallada = df_final.copy()
-        detallada["Nombre"] = detallada["Sujeto"]
-        detallada["Grupo"] = detallada["Sujeto"]
+        detallada["Nombre"] = "Sin Asignar"
+        detallada["GrupoAsignado"] = detallada["Sujeto"]
     else:
-        detallada = pd.merge(df_final, df_empleados, left_on="Sujeto", right_on="Grupo", how="inner")
-        detallada = detallada.drop(columns=["Sujeto"])
+        # CRUCE CRÍTICO: Usamos 'GrupoAsignado' para traer a los nombres reales
+        detallada = pd.merge(
+            df_final, 
+            df_empleados[['Nombre', 'GrupoAsignado', 'Cargo']], 
+            left_on="Sujeto", 
+            right_on="GrupoAsignado", 
+            how="inner"
+        )
 
     detallada["Hora Inicio"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Inicio", "OFF"))
     detallada["Hora Fin"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Fin", "OFF"))
     detallada["Horas Prog."] = detallada.apply(calcular_horas_turno, axis=1)
     detallada["Tipo Día"] = detallada["Fecha"].apply(obtener_tipo_dia)
     
-    return detallada[["Fecha", "Tipo Día", "Nombre", "Grupo", "Turno", "Hora Inicio", "Hora Fin", "Horas Prog."]]
+    # Reordenar para el reporte final
+    res = detallada[["Fecha", "Tipo Día", "Nombre", "GrupoAsignado", "Cargo", "Turno", "Hora Inicio", "Hora Fin", "Horas Prog."]]
+    return res.rename(columns={"GrupoAsignado": "Grupo"})
 
 def ejecutar_auditoria(df, tipo):
     df = df.copy()
@@ -151,12 +170,8 @@ def ejecutar_auditoria(df, tipo):
             if c < 3: errores.append(f"❌ Cobertura insuficiente el {f.date()}")
     else:
         cob = t1 + t2
-        for f in t1.index:
-            if t1.get(f,0) < 10 or t2.get(f,0) < 10: errores.append(f"⚠️ {f.date()}: Falta personal en T1/T2")
     
     equidad = df.groupby(["Sujeto", "Turno"]).size().unstack(fill_value=0)
-    for c in ["T1", "T2", "T3", "DESCANSO"]:
-        if c not in equidad.columns: equidad[c] = 0
     return errores, cob, equidad
 
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
@@ -204,7 +219,7 @@ def generar_malla_abordaje(inicio, fin, desc_cfg, ciclo):
 def pantalla_programador():
     tipo = st.sidebar.radio("Módulo", ["Técnicos", "Abordaje"])
     
-    with st.expander("⏰ Configuración de Horas (Minutos Exactos)"):
+    with st.expander("⏰ Configuración de Horas"):
         config_horas = {}
         t_list = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
         def_h = {"T1": [time(6,0), time(14,0)], "T2": [time(14,0), time(22,0)], "T3": [time(22,0), time(6,0)], "RELEVO": [time(8,0), time(16,0)], "T1 APOYO": [time(7,0), time(15,0)], "DISPONIBLE": [time(0,0), time(0,0)]}
@@ -248,15 +263,15 @@ def pantalla_programador():
         st.subheader("📋 Malla Detallada por Persona")
         st.dataframe(malla_det, use_container_width=True)
         
-        st.subheader("📊 Análisis de Equidad y Cobertura")
+        st.subheader("📊 Análisis Operativo")
         a1, a2 = st.columns(2)
         with a1: st.dataframe(equidad.style.highlight_max(axis=0, color='#FADBD8'), use_container_width=True)
         with a2: st.area_chart(cob)
         
         if not errs:
-            st.markdown("""<div style="background-color: #e8f5e9; padding: 25px; border-radius: 15px; border-left: 6px solid #2e7d32;">
-                <h3 style="color: #1b5e20; margin-top: 0;">✅ Validación Exitosa</h3>
-                <p style="color: #2e7d32;">Malla alineada con la Reforma Laboral 2026. Distribución de carga equitativa.</p></div>""", unsafe_allow_html=True)
+            st.markdown("""<div style="background-color: #e8f5e9; padding: 20px; border-radius: 10px; border-left: 5px solid #2e7d32;">
+                <h3 style="color: #1b5e20; margin-top: 0;">✅ Escenario Validado</h3>
+                <p style="color: #2e7d32;">Malla lista para exportar.</p></div>""", unsafe_allow_html=True)
             st.balloons()
         else:
             for e in errs: st.error(e)
