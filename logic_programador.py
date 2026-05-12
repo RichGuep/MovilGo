@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO - FULL UI + EDITOR + AUDITORIA
+# OPTIMIZADOR INTELIGENTE PRO - MALLA HORIZONTAL EDITABLE
 # =========================================================
 
 import streamlit as st
@@ -36,7 +36,7 @@ def color_cell(v):
     }.get(v,"")
 
 # =========================================================
-# GENERADOR BASE
+# MOTOR
 # =========================================================
 def generar_base(inicio, fin):
 
@@ -58,18 +58,15 @@ def generar_base(inicio, fin):
         descanso = [g for g in GRUPOS if st.session_state["descanso"][g]==dia]
         activos = [g for g in GRUPOS if g not in descanso]
 
-        # cobertura mínima
         while len(activos) < 3:
             g = sorted(descanso, key=lambda x:carga[x])[0]
             descanso.remove(g)
             activos.append(g)
             compensado[g]+=1
 
-        # descanso
         for g in descanso:
             asignados[g]="DESCANSO"
 
-        # turnos fijos
         for turno in ["T1","T2","T3"]:
 
             sel = sorted(activos, key=lambda g:(carga[g],conteo[g][turno]))[0]
@@ -79,13 +76,11 @@ def generar_base(inicio, fin):
             conteo[sel][turno]+=1
             activos.remove(sel)
 
-        # compensados
         for g in GRUPOS:
             if compensado[g]>0 and g not in asignados:
                 asignados[g]="COMPENSADO"
                 compensado[g]-=1
 
-        # apoyo
         for g in GRUPOS:
             if g not in asignados:
                 asignados[g]="T1 APOYO"
@@ -109,7 +104,6 @@ def auditoria(df):
     errores = []
     cobertura = []
 
-    # --- cobertura diaria ---
     for f, gdf in df.groupby("Fecha"):
 
         cnt = len(gdf[gdf["Turno"].isin(["T1","T2","T3"])])
@@ -117,7 +111,6 @@ def auditoria(df):
         if cnt < 3:
             cobertura.append(f"⚠️ Cobertura incompleta {f.date()} ({cnt}/3)")
 
-    # --- saltos ---
     for g in GRUPOS:
 
         prev = None
@@ -126,10 +119,10 @@ def auditoria(df):
         for _,r in gdf.iterrows():
 
             if prev=="T3" and r["Turno"] in ["T1","T2"]:
-                errores.append(f"{g} salto T3→{r['Turno']} {r['Fecha'].date()}")
+                errores.append(f"{g} T3→{r['Turno']} {r['Fecha'].date()}")
 
             if prev=="T2" and r["Turno"]=="T1":
-                errores.append(f"{g} salto T2→T1 {r['Fecha'].date()}")
+                errores.append(f"{g} T2→T1 {r['Fecha'].date()}")
 
             prev = r["Turno"]
 
@@ -140,19 +133,18 @@ def auditoria(df):
 # =========================================================
 def generar_malla():
 
-    st.header("🚀 OPTIMIZADOR PRO ENTERPRISE")
+    st.header("🚀 OPTIMIZADOR PRO - MALLA HORIZONTAL")
 
     c1,c2 = st.columns(2)
 
     inicio = c1.date_input("Inicio", date.today())
     fin = c2.date_input("Fin", date.today()+timedelta(days=30))
 
-    # guardar fechas
     st.session_state["inicio"]=inicio
     st.session_state["fin"]=fin
 
     # =====================================================
-    # DESCANSOS
+    # DESCANSO
     # =====================================================
     st.subheader("⚖️ Descanso de ley")
 
@@ -179,42 +171,50 @@ def generar_malla():
         st.session_state["malla"] = generar_base(inicio,fin)
 
     # =====================================================
-    # MOSTRAR SISTEMA
+    # VISUALIZACIÓN ÚNICA
     # =====================================================
     if "malla" in st.session_state:
 
         df = st.session_state["malla"]
 
+        st.subheader("📊 MALLA HORIZONTAL EDITABLE")
+
+        pivot = df.pivot(index="Grupo",columns="Fecha",values="Turno")
+
+        rename = {}
+        for c in pivot.columns:
+            rename[c]=f"{c.strftime('%d-%m')}\n{DIAS_ES[c.weekday()]}"
+
+        pivot.rename(columns=rename,inplace=True)
+
+        # ================================
+        # EDITOR REAL (MISMA MALLA)
+        # ================================
+        edited = st.data_editor(
+            pivot,
+            use_container_width=True,
+            num_rows="fixed"
+        )
+
+        # reconstrucción segura
+        df_edit = edited.reset_index().melt(
+            id_vars=["Grupo"],
+            var_name="Fecha",
+            value_name="Turno"
+        )
+
+        st.session_state["malla"]=df_edit
+
+        # ================================
+        # PANEL DE ALERTAS LATERAL
+        # ================================
         col1,col2 = st.columns([3,1])
 
-        # =========================
-        # MALLA EDITABLE (PRINCIPAL)
-        # =========================
-        with col1:
-
-            st.subheader("📊 Malla operativa (editable)")
-
-            edited = st.data_editor(
-                df,
-                use_container_width=True,
-                column_config={
-                    "Turno": st.column_config.SelectboxColumn(
-                        "Turno",
-                        options=TURNOS
-                    )
-                }
-            )
-
-            st.session_state["malla"] = edited
-
-        # =========================
-        # PANEL DE ALERTAS
-        # =========================
         with col2:
 
             st.subheader("🚨 Alertas")
 
-            errores, cobertura = auditoria(edited)
+            errores,cobertura = auditoria(df_edit)
 
             if errores:
                 st.error("Saltos indebidos")
@@ -230,16 +230,16 @@ def generar_malla():
             else:
                 st.success("Cobertura OK")
 
-        # =========================
+        # ================================
         # DASHBOARD
-        # =========================
+        # ================================
         st.subheader("📊 Dashboard")
 
         c1,c2,c3 = st.columns(3)
 
-        c1.metric("T1", len(df[df["Turno"]=="T1"]))
-        c2.metric("T2/T3", len(df[df["Turno"].isin(["T2","T3"])]))
-        c3.metric("Descansos", len(df[df["Turno"]=="DESCANSO"]))
+        c1.metric("T1", len(df_edit[df_edit["Turno"]=="T1"]))
+        c2.metric("T2/T3", len(df_edit[df_edit["Turno"].isin(["T2","T3"])]))
+        c3.metric("Descansos", len(df_edit[df_edit["Turno"]=="DESCANSO"]))
 
 # =========================================================
 # MENU
@@ -251,4 +251,4 @@ def pantalla_programador():
     if op=="Programador":
         generar_malla()
     else:
-        st.write("Parametrizador en mantenimiento")
+        st.write("Parametrizador activo")
