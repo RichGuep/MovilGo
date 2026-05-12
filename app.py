@@ -1,86 +1,30 @@
+# =========================================================
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL REAL
+# + PARAMETRIZADOR CORREGIDO (SOLO CARGO)
+# =========================================================
+
 import streamlit as st
 import pandas as pd
+from datetime import datetime, timedelta, date
+import holidays
 import io
-import random
-from datetime import datetime, timedelta
+import base64
 from github import Github
 
 # =========================================================
-# IMPORTACIÓN DEL MOTOR DE LÓGICA (NUEVO SISTEMA)
+# CONFIG
 # =========================================================
 
-from logic_programador import main
+TURNOS = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
+
+GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
+
+DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+
+festivos_co = holidays.Colombia()
 
 # =========================================================
-# CONFIGURACIÓN DE PÁGINA
-# =========================================================
-
-st.set_page_config(
-    page_title="MovilGo - Gestión Operativa 24/7",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# =========================================================
-# URLs DE IMÁGENES GITHUB
-# =========================================================
-
-URL_BASE = "https://raw.githubusercontent.com/RichGuep/movilgo/main/"
-LOGO_APP = f"{URL_BASE}MovilGo.png"
-LOGO_CABLE = f"{URL_BASE}logo_empresa_2.png"
-
-# =========================================================
-# ESTILOS CSS
-# =========================================================
-
-PRIMARY_COLOR = "#1E3D59"
-
-st.markdown(f"""
-<style>
-.main {{ background-color: #f8f9fa; }}
-
-[data-testid="stSidebar"] {{
-    background-color: {PRIMARY_COLOR};
-    border-right: 1px solid #ffffff22;
-}}
-
-[data-testid="stSidebar"] * {{
-    color: white !important;
-    font-weight: 500;
-}}
-
-.stButton>button {{
-    width: 100%;
-    border-radius: 12px;
-    font-weight: bold;
-    height: 3em;
-    transition: 0.3s;
-    border: none;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-}}
-
-.welcome-card {{
-    background: linear-gradient(135deg, {PRIMARY_COLOR} 0%, #3a6073 100%);
-    color: white;
-    padding: 2.5rem;
-    border-radius: 20px;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-    margin-bottom: 2rem;
-}}
-
-.card-empresa {{
-    background-color: white;
-    padding: 30px;
-    border-radius: 25px;
-    text-align: center;
-    border: 1px solid #eee;
-    transition: 0.4s;
-}}
-</style>
-""", unsafe_allow_html=True)
-
-# =========================================================
-# CONEXIÓN GITHUB (GENÉRICA UI)
+# GITHUB
 # =========================================================
 
 def conectar_github():
@@ -91,143 +35,324 @@ def conectar_github():
     except:
         return None
 
-# =========================================================
-# MÓDULOS UI SIMPLES (NO PROGRAMACIÓN)
-# =========================================================
 
-def modulo_inicio():
+def cargar_empleados():
+    repo = conectar_github()
+    if not repo:
+        return None
 
-    st.markdown(
-        f"""
-        <div class="welcome-card">
-            <h1>Panel de Control {st.session_state.empresa}</h1>
-            <p>Gestión operativa de turnos, cobertura y equilibrio laboral.</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    try:
+        file = repo.get_contents("empleados.xlsx")
+        data = base64.b64decode(file.content)
+        return pd.read_excel(io.BytesIO(data))
+    except:
+        return None
 
-    st.info("Usa el módulo de Programación para gestionar Técnicos y Abordaje")
 
-# =========================================================
-# PERSONAL (CRUD SIMPLE)
-# =========================================================
+def guardar_empleados(df):
+    repo = conectar_github()
+    if not repo:
+        return
 
-def modulo_personal():
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
 
-    st.header("👥 Gestión de Personal")
+    data = buffer.getvalue()
 
-    st.info("Este módulo puede conectarse al parametrizador del sistema")
+    try:
+        file = repo.get_contents("empleados.xlsx")
+        repo.update_file("empleados.xlsx", "update empleados", data, file.sha)
+    except:
+        repo.create_file("empleados.xlsx", "create empleados", data)
 
-    st.warning("La lógica de asignación ahora está en el módulo Parametrizador dentro de logic_programador.py")
 
-# =========================================================
-# DETALLADO (MANTENIDO COMPATIBLE)
-# =========================================================
+def guardar_github(df):
+    repo = conectar_github()
+    if not repo:
+        return
 
-def modulo_detallado():
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
 
-    st.header("📋 Reporte Detallado")
+    data = buffer.getvalue()
 
-    st.info("Este módulo depende de la malla generada en el sistema de programación")
-
-# =========================================================
-# FLUJO PRINCIPAL
-# =========================================================
-
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if "empresa" not in st.session_state:
-    st.session_state.empresa = None
-
-# =========================================================
-# LOGIN
-# =========================================================
-
-if not st.session_state.logged_in:
-
-    _, col, _ = st.columns([1, 1.2, 1])
-
-    with col:
-        st.image(LOGO_APP, use_container_width=True)
-
-        st.markdown("<h2 style='text-align:center;'>Portal de Acceso</h2>", unsafe_allow_html=True)
-
-        with st.container(border=True):
-
-            user = st.text_input("Usuario Operativo")
-            pw = st.text_input("Contraseña", type="password")
-
-            if st.button("Iniciar Sesión"):
-                st.session_state.logged_in = True
-                st.rerun()
+    try:
+        file = repo.get_contents("malla_historica.xlsx")
+        repo.update_file("malla_historica.xlsx", "update", data, file.sha)
+    except:
+        repo.create_file("malla_historica.xlsx", "create", data)
 
 # =========================================================
-# SELECCIÓN EMPRESA
+# PARAMETRIZADOR (CORREGIDO SOLO CARGO)
 # =========================================================
 
-elif st.session_state.empresa is None:
+def pantalla_parametrizador():
 
-    st.markdown(
-        "<h2 style='text-align:center; padding: 2rem;'>Seleccione Unidad de Negocio</h2>",
-        unsafe_allow_html=True
-    )
+    st.header("⚙️ Parametrizador de Grupos Inteligente")
 
-    _, col, _ = st.columns([1, 1.5, 1])
+    df = cargar_empleados()
 
-    with col:
+    if df is None:
+        st.error("No se pudo cargar empleados.xlsx")
+        return
 
-        st.markdown(
-            f"""
-            <div class="card-empresa">
-                <img src="{LOGO_CABLE}" width="200">
-                <h3>Cable Móvil</h3>
-                <p>Soporte Técnico y Operaciones</p>
-            </div>
-            """,
-            unsafe_allow_html=True
+    st.subheader("📄 Vista empleados")
+    st.dataframe(df)
+
+    if "Cargo" not in df.columns:
+        st.error("❌ Falta la columna 'Cargo' en empleados.xlsx")
+        return
+
+    if "Nombre" not in df.columns:
+        st.error("❌ Falta la columna 'Nombre' en empleados.xlsx")
+        return
+
+    if st.button("🚀 Asignar grupos automáticamente"):
+
+        # =====================================================
+        # TECNICOS (4 GRUPOS)
+        # =====================================================
+
+        tecnicos = df[df["Cargo"].isin(["Master", "Tecnico A", "Tecnico B"])].copy()
+        tecnicos = tecnicos.sample(frac=1).reset_index(drop=True)
+
+        masters = tecnicos[tecnicos["Cargo"] == "Master"]
+        a = tecnicos[tecnicos["Cargo"] == "Tecnico A"]
+        b = tecnicos[tecnicos["Cargo"] == "Tecnico B"]
+
+        grupos_tecnicos = {f"Grupo {i+1}": [] for i in range(4)}
+
+        for i in range(4):
+
+            grupos_tecnicos[f"Grupo {i+1}"].extend(
+                masters.iloc[i*2:(i+1)*2]["Nombre"].tolist()
+            )
+
+            grupos_tecnicos[f"Grupo {i+1}"].extend(
+                a.iloc[i*7:(i+1)*7]["Nombre"].tolist()
+            )
+
+            grupos_tecnicos[f"Grupo {i+1}"].extend(
+                b.iloc[i*3:(i+1)*3]["Nombre"].tolist()
+            )
+
+        # =====================================================
+        # ABORDAJE (5 GRUPOS DE 5 PERSONAS)
+        # =====================================================
+
+        abordaje = df[df["Cargo"] == "Auxiliar de Abordaje y Atención al Público"].copy()
+        abordaje = abordaje.sample(frac=1).reset_index(drop=True)
+
+        grupos_abordaje = {f"Abordaje {i+1}": [] for i in range(5)}
+
+        for i, nombre in enumerate(abordaje["Nombre"]):
+            grupo = f"Abordaje {(i % 5) + 1}"
+            grupos_abordaje[grupo].append(nombre)
+
+        # =====================================================
+        # RESULTADO
+        # =====================================================
+
+        st.subheader("🧠 Grupos Técnicos")
+        st.json(grupos_tecnicos)
+
+        st.subheader("🚌 Grupos Abordaje")
+        st.json(grupos_abordaje)
+
+        # =====================================================
+        # GUARDAR
+        # =====================================================
+
+        df["GrupoAsignado"] = ""
+
+        for g, lista in grupos_tecnicos.items():
+            df.loc[df["Nombre"].isin(lista), "GrupoAsignado"] = g
+
+        for g, lista in grupos_abordaje.items():
+            df.loc[df["Nombre"].isin(lista), "GrupoAsignado"] = g
+
+        guardar_empleados(df)
+
+        st.success("✅ Grupos asignados y guardados en GitHub")
+
+# =========================================================
+# COLORES
+# =========================================================
+
+def color_cell(v):
+    return {
+        "T1":"background-color:#D6EAF8;color:#1B4F72;",
+        "T2":"background-color:#D5F5E3;color:#145A32;",
+        "T3":"background-color:#FADBD8;color:#7B241C;",
+        "T1 APOYO":"background-color:#EBF5FB;",
+        "T2 APOYO":"background-color:#EAF2F8;",
+        "DESCANSO":"background-color:#2C3E50;color:#F9E79F;font-weight:700;",
+        "COMPENSADO":"background-color:#FDEBD0;"
+    }.get(v,"")
+
+# =========================================================
+# AUDITORÍA
+# =========================================================
+
+def auditoria(df):
+
+    errores = []
+    df = df.copy()
+    df["Fecha"] = pd.to_datetime(df["Fecha"])
+
+    cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
+
+    for f,c in cobertura.items():
+        if c < 3:
+            errores.append(f"❌ Cobertura incompleta {f.date()} ({c}/3)")
+
+    return errores, cobertura
+
+# =========================================================
+# GENERADOR MALLA
+# =========================================================
+
+def generar_malla():
+
+    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
+
+    c1,c2 = st.columns(2)
+
+    inicio = c1.date_input("Inicio", date.today())
+    fin = c2.date_input("Fin", date.today()+timedelta(days=30))
+
+    st.subheader("⚖️ Descanso de ley")
+
+    descanso = {}
+    cols = st.columns(len(GRUPOS))
+
+    for i,g in enumerate(GRUPOS):
+        descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
+
+    carga = {g:0 for g in GRUPOS}
+    conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
+
+    compensado = {g:0 for g in GRUPOS}
+    sacrificio = {g:0 for g in GRUPOS}
+
+    last_turn = {g: None for g in GRUPOS}
+    streak = {g: 0 for g in GRUPOS}
+
+    filas = []
+
+    if st.button("🚀 Generar malla"):
+
+        fechas = pd.date_range(inicio, fin)
+
+        for fecha in fechas:
+
+            dia = DIAS_ES[fecha.weekday()]
+            festivo = fecha.date() in festivos_co
+
+            asignados = {}
+
+            descanso_dia = [g for g in GRUPOS if descanso[g]==dia]
+            activos = [g for g in GRUPOS if g not in descanso_dia]
+
+            while len(activos) < 3:
+                mov = sorted(descanso_dia, key=lambda g:(sacrificio[g],carga[g]))[0]
+                descanso_dia.remove(mov)
+                activos.append(mov)
+
+            for g in descanso_dia:
+                asignados[g]="DESCANSO"
+                last_turn[g]="DESCANSO"
+                streak[g]=0
+
+            for turno in ["T1","T2","T3"]:
+
+                def score(g):
+                    base = carga[g] + conteo[g][turno]
+                    if last_turn[g] != turno:
+                        base += 1000 if streak[g] < 4 else 10
+                    else:
+                        base -= 5
+                    return base
+
+                sel = sorted(activos, key=score)[0]
+
+                asignados[sel]=turno
+                carga[sel]+=1
+                conteo[sel][turno]+=1
+
+                if last_turn[sel]==turno:
+                    streak[sel]+=1
+                else:
+                    streak[sel]=1
+                    last_turn[sel]=turno
+
+                activos.remove(sel)
+
+            for g in activos:
+                asignados[g]="T1 APOYO"
+
+            for g in GRUPOS:
+                filas.append({
+                    "Fecha":fecha,
+                    "Día":dia,
+                    "Grupo":g,
+                    "Turno":asignados[g],
+                    "Festivo":"SI" if festivo else "NO"
+                })
+
+        df = pd.DataFrame(filas)
+        st.session_state["malla"]=df
+        guardar_github(df)
+
+        st.success("Malla generada")
+
+# =========================================================
+# INTERFAZ
+# =========================================================
+
+def pantalla_programador():
+
+    op = st.radio("Módulo",["Programador","Parametrizador"],horizontal=True)
+
+    if op=="Parametrizador":
+        pantalla_parametrizador()
+        return
+
+    generar_malla()
+
+    if "malla" not in st.session_state:
+        return
+
+    df = st.session_state["malla"]
+
+    st.subheader("📊 MALLA")
+
+    pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
+
+    st.data_editor(pivot, use_container_width=True)
+def main():
+
+    try:
+
+        st.title("🚀 Optimización Operativa 24/7")
+
+        modulo = st.radio(
+            "Módulos",
+            ["Personal Técnico", "Personal de Abordaje", "Parametrizador"],
+            horizontal=True
         )
 
-        if st.button("Gestionar Cable Móvil"):
-            st.session_state.empresa = "Cable Móvil"
-            st.rerun()
+        if modulo == "Personal Técnico":
+            pantalla_tecnico()
 
-# =========================================================
-# DASHBOARD PRINCIPAL
-# =========================================================
+        elif modulo == "Personal de Abordaje":
+            pantalla_abordaje()
 
-else:
+        elif modulo == "Parametrizador":
+            pantalla_parametrizador()
 
-    with st.sidebar:
-
-        st.image(LOGO_CABLE, width=150)
-        st.divider()
-
-        menu = st.radio(
-            "NAVEGACIÓN",
-            ["🏠 Inicio", "📅 Programación", "📋 Reporte Detallado", "👥 Personal"]
-        )
-
-        st.divider()
-
-        if st.button("🚪 Salir del Sistema"):
-            st.session_state.empresa = None
-            st.rerun()
-
-# =========================================================
-# ROUTER PRINCIPAL (CLAVE)
-# =========================================================
-
-    if menu == "🏠 Inicio":
-        modulo_inicio()
-
-    elif menu == "📅 Programación":
-        # 🔥 AQUÍ ESTÁ LA CORRECCIÓN IMPORTANTE
-        main()
-
-    elif menu == "📋 Reporte Detallado":
-        modulo_detallado()
-
-    elif menu == "👥 Personal":
-        modulo_personal()
+    except Exception as e:
+        st.error("💥 Error crítico en main()")
+        st.exception(e)
