@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE V5
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - STABLE VERSION
 # =========================================================
 
 import streamlit as st
@@ -65,40 +65,35 @@ def color_cell(v):
     }.get(v,"")
 
 # =========================================================
-# AUDITORÍA INTELIGENTE
+# AUDITORÍA
 # =========================================================
 def auditoria(df):
 
     errores = []
-
-    # asegurar datetime limpio
+    df = df.copy()
     df["Fecha"] = pd.to_datetime(df["Fecha"])
-
-    for g in GRUPOS:
-        gdf = df[df["Grupo"] == g].sort_values("Fecha")
-
-        prev = None
-
-        for _, r in gdf.iterrows():
-
-            turno = r["Turno"]
-
-            # saltos peligrosos
-            if prev == "T2" and turno == "T1":
-                errores.append(f"{g} salto T2→T1 {r['Fecha'].date()}")
-
-            if prev == "T3" and turno in ["T1","T2"]:
-                errores.append(f"{g} salto T3→{turno} {r['Fecha'].date()}")
-
-            prev = turno
 
     # cobertura diaria
     cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
 
-    sin_cobertura = cobertura[cobertura < 3]
+    for f,c in cobertura.items():
+        if c < 3:
+            errores.append(f"❌ Cobertura incompleta {f.date()} ({c}/3)")
 
-    for f, c in sin_cobertura.items():
-        errores.append(f"❌ Cobertura incompleta {f.date()} ({c}/3)")
+    # saltos indebidos
+    for g in GRUPOS:
+        gdf = df[df["Grupo"]==g].sort_values("Fecha")
+
+        prev = None
+        for _,r in gdf.iterrows():
+
+            if prev == "T2" and r["Turno"] == "T1":
+                errores.append(f"{g} T2→T1 {r['Fecha'].date()}")
+
+            if prev == "T3" and r["Turno"] in ["T1","T2"]:
+                errores.append(f"{g} T3→alto {r['Fecha'].date()}")
+
+            prev = r["Turno"]
 
     return errores, cobertura
 
@@ -115,7 +110,7 @@ def generar_malla():
     fin = c2.date_input("Fin", date.today()+timedelta(days=30))
 
     # =====================================================
-    # DESCANSOS
+    # DESCANSO
     # =====================================================
     st.subheader("⚖️ Descanso de ley")
 
@@ -137,9 +132,9 @@ def generar_malla():
     filas = []
 
     # =====================================================
-    # GENERAR MALLA
+    # GENERAR
     # =====================================================
-    if st.button("Generar"):
+    if st.button("Generar malla"):
 
         fechas = pd.date_range(inicio, fin)
 
@@ -168,7 +163,7 @@ def generar_malla():
             for g in descanso_dia:
                 asignados[g]="DESCANSO"
 
-            # turnos obligatorios
+            # turnos
             for turno in ["T1","T2","T3"]:
 
                 sel = sorted(activos, key=lambda g:(carga[g],conteo[g][turno]))[0]
@@ -178,7 +173,7 @@ def generar_malla():
                 conteo[sel][turno]+=1
                 activos.remove(sel)
 
-            # compensados
+            # compensados / apoyo
             for g in activos:
                 if compensado[g]>0:
                     asignados[g]="COMPENSADO"
@@ -197,22 +192,21 @@ def generar_malla():
                 })
 
         df = pd.DataFrame(filas)
-
-        st.session_state["malla"] = df
+        st.session_state["malla"]=df
 
         guardar_github(df)
 
         st.success("Malla generada y guardada")
 
 # =========================================================
-# VISUAL + EDITOR ÚNICO
+# VISUAL + EDITOR ESTABLE
 # =========================================================
 def pantalla_programador():
 
     op = st.radio("Módulo",["Programador","Parametrizador"],horizontal=True)
 
     if op=="Parametrizador":
-        st.write("Parametrización base")
+        st.write("OK")
         return
 
     generar_malla()
@@ -222,34 +216,35 @@ def pantalla_programador():
 
     df = st.session_state["malla"]
 
-    st.subheader("📊 MALLA HORIZONTAL EDITABLE (ÚNICA)")
+    st.subheader("📊 MALLA HORIZONTAL EDITABLE")
 
-    # convertir a formato horizontal
-    pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
-
-    # editor tipo Excel real
+    # =====================================================
+    # EDITOR ESTABLE (SIN ERROR STREAMLIT)
+    # =====================================================
     edit = st.data_editor(
-        pivot,
+        df,
         use_container_width=True,
         column_config={
-            col: st.column_config.SelectboxColumn(
-                col,
+            "Turno": st.column_config.SelectboxColumn(
+                "Turno",
                 options=TURNOS
-            )
-            for col in pivot.columns
-        }
+            ),
+            "Grupo": st.column_config.TextColumn("Grupo"),
+            "Fecha": st.column_config.DatetimeColumn("Fecha")
+        },
+        hide_index=True
     )
 
-    # guardar cambios
     if st.button("💾 Guardar cambios"):
-        df_edit = edit.reset_index().melt(id_vars="Grupo", var_name="Fecha", value_name="Turno")
-        df_edit["Fecha"] = pd.to_datetime(df_edit["Fecha"])
-        st.session_state["malla"] = df_edit
-        guardar_github(df_edit)
+
+        st.session_state["malla"] = edit
+
+        guardar_github(edit)
+
         st.success("Guardado")
 
     # =====================================================
-    # ALERTAS A LADO (NO BLOQUEAN)
+    # ALERTAS LATERALES
     # =====================================================
     col1, col2 = st.columns([2,1])
 
@@ -257,23 +252,23 @@ def pantalla_programador():
 
         st.subheader("🚨 Auditoría")
 
-        errores, cobertura = auditoria(df)
+        errores, cobertura = auditoria(edit)
 
         if errores:
             for e in errores[:15]:
                 st.error(e)
         else:
-            st.success("Sin errores críticos")
+            st.success("Sin errores")
 
-        st.subheader("📈 Cobertura diaria")
+        st.subheader("📈 Cobertura")
 
         st.line_chart(cobertura)
 
     with col1:
 
-        st.subheader("📋 Vista final")
+        st.subheader("📋 Vista")
 
         st.dataframe(
-            pivot.style.map(color_cell),
+            edit.style.map(color_cell),
             use_container_width=True
         )
