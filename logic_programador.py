@@ -299,3 +299,29 @@ def pantalla_programador():
 
         st.dataframe(pivot.style.map(color_cell), use_container_width=True)
   
+# =========================================================
+# ENTRY POINT CENTRAL (OBLIGATORIO PARA APP.PY)
+# =========================================================
+
+def main():
+
+    st.title("🚀 Optimización Operativa 24/7")
+
+    modulo = st.radio(
+        "Selecciona módulo",
+        [
+            "🧠 Personal Técnico",
+            "🚌 Personal de Abordaje",
+            "⚙️ Parametrizador"
+        ],
+        horizontal=True
+    )
+
+    if modulo == "🧠 Personal Técnico":
+        pantalla_tecnico()
+
+    elif modulo == "🚌 Personal de Abordaje":
+        pantalla_abordaje()
+
+    elif modulo == "⚙️ Parametrizador":
+        pantalla_parametrizador()
