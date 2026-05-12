@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL EDITABLE
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - VERSION ESTABLE
 # =========================================================
 
 import streamlit as st
@@ -21,10 +21,7 @@ TURNOS = [
 
 GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 
-DIAS_ES = [
-    "Lunes","Martes","Miércoles",
-    "Jueves","Viernes","Sábado","Domingo"
-]
+DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
 festivos_co = holidays.Colombia()
 
@@ -66,12 +63,9 @@ def color_cell(v):
         "T1": "background-color:#D6EAF8;color:#1B4F72;",
         "T2": "background-color:#D5F5E3;color:#145A32;",
         "T3": "background-color:#FADBD8;color:#7B241C;",
-
         "T1 APOYO": "background-color:#EBF5FB;",
         "T2 APOYO": "background-color:#EAF2F8;",
-
         "DESCANSO": "background-color:#2C3E50;color:#F9E79F;font-weight:700;",
-
         "COMPENSADO": "background-color:#FDEBD0;"
     }.get(v, "")
 
@@ -84,8 +78,6 @@ def auditoria(df):
     errores = []
 
     df = df.copy()
-
-    # seguridad fechas
     df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
 
     # =========================
@@ -111,11 +103,9 @@ def auditoria(df):
 
             actual = r["Turno"]
 
-            # T2 → T1 prohibido
             if prev == "T2" and actual == "T1":
                 errores.append(f"{g} salto T2→T1 {r['Fecha'].date()}")
 
-            # T3 NO puede bajar a nada operativo ni apoyo
             if prev == "T3" and actual in ["T1","T2","T1 APOYO","T2 APOYO"]:
                 errores.append(f"{g} salto T3→{actual} {r['Fecha'].date()}")
 
@@ -158,7 +148,7 @@ def generar_malla():
     filas = []
 
     # =========================
-    # GENERAR
+    # GENERACIÓN
     # =========================
     if st.button("🚀 Generar malla"):
 
@@ -171,11 +161,10 @@ def generar_malla():
 
             asignados = {}
 
-            # descansos
             descanso_dia = [g for g in GRUPOS if descanso[g] == dia]
             activos = [g for g in GRUPOS if g not in descanso_dia]
 
-            # asegurar cobertura
+            # cobertura mínima
             while len(activos) < 3:
 
                 mov = sorted(descanso_dia, key=lambda g:(sacrificio[g], carga[g]))[0]
@@ -190,7 +179,7 @@ def generar_malla():
             for g in descanso_dia:
                 asignados[g] = "DESCANSO"
 
-            # turnos obligatorios
+            # turnos base
             for turno in ["T1","T2","T3"]:
 
                 sel = sorted(activos, key=lambda g:(carga[g], conteo[g][turno]))[0]
@@ -209,9 +198,7 @@ def generar_malla():
                 else:
                     asignados[g] = "T1 APOYO"
 
-            # guardar
             for g in GRUPOS:
-
                 filas.append({
                     "Fecha": fecha,
                     "Día": dia,
@@ -249,28 +236,25 @@ def pantalla_programador():
     st.subheader("📊 MALLA HORIZONTAL EDITABLE")
 
     # =========================
-    # PIVOT HORIZONTAL
+    # PIVOT SEGURO
     # =========================
     pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
+
     pivot = pivot.sort_index(axis=1)
 
+    # 🔥 FIX CRÍTICO STREAMLIT
+    pivot.columns = pivot.columns.astype(str)
+
     # =========================
-    # EDITOR ÚNICO
+    # EDITOR (SIN ERROR)
     # =========================
     edit = st.data_editor(
         pivot,
-        use_container_width=True,
-        column_config={
-            col: st.column_config.SelectboxColumn(
-                col,
-                options=TURNOS
-            )
-            for col in pivot.columns
-        }
+        use_container_width=True
     )
 
     # =========================
-    # GUARDAR
+    # GUARDAR CAMBIOS
     # =========================
     if st.button("💾 Guardar cambios"):
 
