@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - FINAL STABLE
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - REACTIVO
 # =========================================================
 
 import streamlit as st
@@ -20,7 +20,7 @@ DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 festivos_co = holidays.Colombia()
 
 # =========================================================
-# COLORES SUAVES PROFESIONALES
+# COLORES SUAVES
 # =========================================================
 def color_cell(v):
     return {
@@ -31,7 +31,7 @@ def color_cell(v):
         "T1 APOYO":"background-color:#EBF5FB;",
         "T2 APOYO":"background-color:#EAF2F8;",
 
-        "DESCANSO":"background-color:#1C2833;color:#F9E79F;font-weight:700;",
+        "DESCANSO":"background-color:#2C3E50;color:#F9E79F;font-weight:700;",
         "COMPENSADO":"background-color:#FDEBD0;font-weight:600;"
     }.get(v,"")
 
@@ -40,7 +40,7 @@ def color_cell(v):
 # =========================================================
 def parametrizador():
 
-    st.header("🧩 Parametrizador de grupos")
+    st.header("🧩 Parametrizador")
 
     df = pd.DataFrame({
         "Empleado":["A","B","C","D"],
@@ -50,23 +50,47 @@ def parametrizador():
     st.dataframe(df, use_container_width=True)
 
 # =========================================================
-# GENERADOR PRINCIPAL
+# AUDITORÍA REACTIVA
+# =========================================================
+def auditoria(df):
+
+    errores = []
+
+    for g in GRUPOS:
+
+        prev = None
+        gdf = df[df["Grupo"] == g].sort_values("Fecha")
+
+        for _, r in gdf.iterrows():
+
+            if prev == "T2" and r["Turno"] == "T1":
+                errores.append(f"{g} salto T2→T1 {r['Fecha'].date()}")
+
+            if prev == "T3" and r["Turno"] in ["T1","T2"]:
+                errores.append(f"{g} salto T3→alto {r['Fecha'].date()}")
+
+            prev = r["Turno"]
+
+    return errores
+
+# =========================================================
+# GENERADOR + EDITOR
 # =========================================================
 def generar_malla():
 
     st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
 
-    # =====================================================
+    # =========================
     # FECHAS
-    # =====================================================
+    # =========================
     c1,c2 = st.columns(2)
 
-    inicio = c1.date_input("Fecha inicio", date.today())
-    fin = c2.date_input("Fecha fin", date.today()+timedelta(days=30))
+    inicio = c1.date_input("Inicio", date.today())
+    fin = c2.date_input("Fin", date.today()+timedelta(days=30))
 
-    # =====================================================
-    # DESCANSOS
-    # =====================================================
+    # =========================
+    # DESCANSO DE LEY
+    # =========================
     st.subheader("⚖️ Descanso de ley")
 
     descanso = {}
@@ -75,17 +99,17 @@ def generar_malla():
     for i,g in enumerate(GRUPOS):
         descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i, key=f"d_{g}")
 
-    # =====================================================
+    # =========================
     # ESTADO
-    # =====================================================
+    # =========================
     carga = {g:0 for g in GRUPOS}
     conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
     compensado = {g:0 for g in GRUPOS}
     sacrificio = {g:0 for g in GRUPOS}
 
-    # =====================================================
-    # GENERAR MALLA
-    # =====================================================
+    # =========================
+    # GENERAR
+    # =========================
     if st.button("🚀 Generar malla"):
 
         filas = []
@@ -98,15 +122,16 @@ def generar_malla():
 
             asignados = {}
 
-            # DESCANSOS
             descanso_grupos = [g for g in GRUPOS if descanso[g]==dia]
             activos = [g for g in GRUPOS if g not in descanso_grupos]
 
             # COBERTURA MÍNIMA
             while len(activos) < 3:
+
                 mov = sorted(descanso_grupos, key=lambda g:(sacrificio[g],carga[g]))[0]
                 descanso_grupos.remove(mov)
                 activos.append(mov)
+
                 sacrificio[mov]+=1
                 compensado[mov]+=1
 
@@ -116,6 +141,7 @@ def generar_malla():
 
             # TURNOS BASE
             for t in ["T1","T2","T3"]:
+
                 sel = sorted(activos, key=lambda g:(carga[g],conteo[g][t]))[0]
                 asignados[sel]=t
                 carga[sel]+=1
@@ -133,7 +159,6 @@ def generar_malla():
                 if g not in asignados:
                     asignados[g]="T1 APOYO"
 
-            # GUARDAR
             for g in GRUPOS:
                 filas.append({
                     "Grupo":g,
@@ -145,13 +170,16 @@ def generar_malla():
 
         st.session_state["df"]=pd.DataFrame(filas)
 
-    # =====================================================
-    # VISUALIZACIÓN PRINCIPAL
-    # =====================================================
+    # =========================
+    # VISUAL + EDITOR + ALERTAS
+    # =========================
     if "df" in st.session_state:
 
         df = st.session_state["df"]
 
+        # ---------------------
+        # PIVOT HORIZONTAL
+        # ---------------------
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
         pivot.columns = [
@@ -159,29 +187,9 @@ def generar_malla():
             for c in pivot.columns
         ]
 
-        # =====================================================
-        # AUDITORÍA
-        # =====================================================
-        errores = []
-
-        for g in GRUPOS:
-
-            prev=None
-            gdf=df[df["Grupo"]==g]
-
-            for _,r in gdf.iterrows():
-
-                if prev=="T2" and r["Turno"]=="T1":
-                    errores.append(f"{g} T2→T1 {r['Fecha'].date()}")
-
-                if prev=="T3" and r["Turno"] in ["T1","T2"]:
-                    errores.append(f"{g} T3→salto {r['Fecha'].date()}")
-
-                prev=r["Turno"]
-
-        # =====================================================
-        # LAYOUT: MALLA + ALERTAS
-        # =====================================================
+        # =========================
+        # LAYOUT
+        # =========================
         col1,col2 = st.columns([3,1])
 
         with col1:
@@ -213,38 +221,43 @@ def generar_malla():
 
                 st.session_state["df"]=long
 
-                st.success("Guardado correctamente")
+                st.rerun()
 
             st.dataframe(
                 edited.style.map(color_cell),
                 use_container_width=True
             )
 
+        # =========================
+        # ALERTAS DINÁMICAS
+        # =========================
         with col2:
 
-            st.subheader("🚨 Alertas")
+            st.subheader("🚨 Auditoría")
 
-            if len(errores)==0:
+            errores = auditoria(df)
+
+            if not errores:
                 st.success("Sin errores")
 
             else:
-                st.warning(f"{len(errores)} alertas")
+                st.warning(f"{len(errores)} alertas activas")
 
-                for e in errores[:10]:
+                for e in errores:
                     st.error(e)
 
-        # =====================================================
+        # =========================
         # COBERTURA
-        # =====================================================
+        # =========================
         st.subheader("📈 Cobertura T1/T2/T3")
 
         cov = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
 
         st.line_chart(cov)
 
-        # =====================================================
-        # BALANCE POR GRUPO
-        # =====================================================
+        # =========================
+        # BALANCE
+        # =========================
         st.subheader("⚖️ Balance por grupo")
 
         st.dataframe(
