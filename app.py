@@ -9,7 +9,7 @@ from github import Github
 # IMPORTACIÓN DEL MOTOR DE LÓGICA (NUEVO SISTEMA)
 # =========================================================
 
-from logic_programador import main
+from logic_programador import pantalla_tecnico, pantalla_abordaje, pantalla_parametrizador
 
 # =========================================================
 # CONFIGURACIÓN DE PÁGINA
