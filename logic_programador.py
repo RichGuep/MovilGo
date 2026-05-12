@@ -1,5 +1,5 @@
 # =========================================================
-# SISTEMA ENTERPRISE DE PROGRAMACIÓN DE TURNOS
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE
 # TECNICOS + ABORDAJE + PARAMETRIZADOR + AUDITORIA
 # =========================================================
 
@@ -8,22 +8,21 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 import holidays
 import io
-import base64
 from github import Github
 
 # =========================================================
-# CONFIG GLOBAL
+# CONFIG
 # =========================================================
 
 TURNOS_TEC = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
 TURNOS_AB = ["T1","T2"]
 
 GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
-GRUPOS_AB = ["Abordaje 1","Abordaje 2","Abordaje 3","Abordaje 4","Abordaje 5"]
+GRUPOS_AB = ["Grupo A","Grupo B","Grupo C","Grupo D","Grupo E"]
 
-DIAS = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
-festivos = holidays.Colombia()
+festivos_co = holidays.Colombia()
 
 MAX_AB = 10
 
@@ -31,87 +30,103 @@ MAX_AB = 10
 # GITHUB
 # =========================================================
 
-def repo():
+def conectar_github():
     try:
+        if "GITHUB_TOKEN" not in st.secrets:
+            return None
         return Github(st.secrets["GITHUB_TOKEN"]).get_repo("RichGuep/movilgo")
     except:
         return None
 
 
-def load_employees():
-    r = repo()
-    if not r:
-        return None
-    try:
-        f = r.get_contents("empleados.xlsx")
-        data = base64.b64decode(f.content)
-        return pd.read_excel(io.BytesIO(data))
-    except:
-        return None
-
-
-def save_file(df, name):
-    r = repo()
-    if not r:
+def guardar_github(df):
+    repo = conectar_github()
+    if not repo:
         return
 
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as w:
-        df.to_excel(w, index=False)
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
 
     data = buffer.getvalue()
 
     try:
-        f = r.get_contents(name)
-        r.update_file(name, "update", data, f.sha)
+        file = repo.get_contents("malla_historica.xlsx")
+        repo.update_file("malla_historica.xlsx", "update", data, file.sha)
     except:
-        r.create_file(name, "create", data)
+        repo.create_file("malla_historica.xlsx", "create", data)
 
 # =========================================================
-# AUDITORIA GLOBAL
+# COLORES
 # =========================================================
 
-def auditoria(df, tipo="TEC"):
+def color_cell(v):
+    return {
+        "T1":"background-color:#D6EAF8;color:#1B4F72;",
+        "T2":"background-color:#D5F5E3;color:#145A32;",
+        "T3":"background-color:#FADBD8;color:#7B241C;",
+        "T1 APOYO":"background-color:#EBF5FB;",
+        "T2 APOYO":"background-color:#EAF2F8;",
+        "DESCANSO":"background-color:#2C3E50;color:white;font-weight:700;",
+        "COMPENSADO":"background-color:#FDEBD0;"
+    }.get(v,"")
+
+# =========================================================
+# AUDITORIA TECNICOS
+# =========================================================
+
+def auditoria_tecnicos(df):
 
     errores = []
-
     df = df.copy()
     df["Fecha"] = pd.to_datetime(df["Fecha"])
 
-    if tipo == "TEC":
+    cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
 
-        for g in df["Grupo"].unique():
+    for f,c in cobertura.items():
+        if c < 3:
+            errores.append(f"❌ Cobertura incompleta {f.date()} ({c}/3)")
 
-            gdf = df[df["Grupo"] == g].sort_values("Fecha")
+    for g in GRUPOS_TEC:
 
-            prev = None
-            streak = 0
+        gdf = df[df["Grupo"] == g].sort_values("Fecha")
 
-            for _,r in gdf.iterrows():
+        prev = None
+        streak = 0
 
-                t = r["Turno"]
+        for _,r in gdf.iterrows():
 
-                # SALTOS CRÍTICOS
-                if prev == "T3" and t in ["T1","T2"]:
-                    errores.append(f"❌ Salto T3 → {t} | {g} | {r['Fecha'].date()}")
+            t = r["Turno"]
 
-                # BLOQUES
-                if t in ["T1","T2","T3"]:
-                    streak = streak + 1 if prev == t else 1
-                    if streak < 4:
-                        errores.append(f"⚠️ Bloque corto {g} {t} {r['Fecha'].date()}")
+            if prev == "T3" and t in ["T1","T2"]:
+                errores.append(f"❌ Salto T3→{t} | {g} | {r['Fecha'].date()}")
 
-                prev = t
+            if t in ["T1","T2","T3"]:
+                streak = streak + 1 if prev == t else 1
+                if streak < 4:
+                    errores.append(f"⚠️ Bloque corto {g} {t} {r['Fecha'].date()}")
 
-    else:
+            prev = t
 
-        # ABORDAJE
-        pivot = df.groupby(["Nombre","Turno"]).size().unstack(fill_value=0)
+    return errores, cobertura
 
-        if "T1" in pivot and "T2" in pivot:
-            diff = (pivot["T1"] - pivot["T2"]).abs().mean()
-            if diff > 3:
-                errores.append("⚠️ Desbalance fuerte entre T1 y T2")
+# =========================================================
+# AUDITORIA ABORDAJE
+# =========================================================
+
+def auditoria_abordaje(df):
+
+    errores = []
+    df = df.copy()
+
+    pivot = df.groupby(["Nombre","Turno"]).size().unstack(fill_value=0)
+
+    if "T1" in pivot.columns and "T2" in pivot.columns:
+
+        diff = (pivot["T1"] - pivot["T2"]).abs().mean()
+
+        if diff > 3:
+            errores.append("⚠️ Desbalance global entre T1 y T2")
 
     return errores
 
@@ -123,12 +138,6 @@ def pantalla_tecnico():
 
     st.header("🧠 Personal Técnico")
 
-    df = load_employees()
-    if df is None:
-        return
-
-    tecnicos = df[df["Cargo"].isin(["Master","Tecnico A","Tecnico B"])]
-
     inicio = st.date_input("Inicio", date.today())
     fin = st.date_input("Fin", date.today()+timedelta(days=30))
 
@@ -137,25 +146,25 @@ def pantalla_tecnico():
     cols = st.columns(4)
 
     for i,g in enumerate(GRUPOS_TEC):
-        descanso[g] = cols[i].selectbox(g, DIAS, index=i)
+        descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
 
     carga = {g:0 for g in GRUPOS_TEC}
     conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS_TEC}
     last = {g:None for g in GRUPOS_TEC}
     streak = {g:0 for g in GRUPOS_TEC}
 
-    rows = []
+    filas = []
 
     if st.button("🚀 Generar Técnico"):
 
         for f in pd.date_range(inicio, fin):
 
-            dia = DIAS[f.weekday()]
-            fest = f.date() in festivos
+            dia = DIAS_ES[f.weekday()]
+            fest = f.date() in festivos_co
 
             asignados = {}
 
-            descanso_dia = [g for g in GRUPOS_TEC if descanso[g]==dia]
+            descanso_dia = [g for g in GRUPOS_TEC if descanso[g] == dia]
             activos = [g for g in GRUPOS_TEC if g not in descanso_dia]
 
             for g in descanso_dia:
@@ -169,48 +178,51 @@ def pantalla_tecnico():
                         base += 1000 if streak[g] < 4 else 10
                     return base
 
-                sel = sorted(activos,key=score)[0]
+                sel = sorted(activos, key=score)[0]
 
-                asignados[sel]=t
-                carga[sel]+=1
-                conteo[sel][t]+=1
+                asignados[sel] = t
 
-                streak[sel] = streak[sel]+1 if last[sel]==t else 1
-                last[sel]=t
+                carga[sel] += 1
+                conteo[sel][t] += 1
+
+                streak[sel] = streak[sel] + 1 if last[sel] == t else 1
+                last[sel] = t
 
                 activos.remove(sel)
 
             for g in activos:
-                asignados[g]="T1 APOYO"
+                asignados[g] = "T1 APOYO"
 
             for g in GRUPOS_TEC:
-                rows.append({
-                    "Fecha":f,
-                    "Grupo":g,
-                    "Turno":asignados[g],
-                    "Día":dia,
-                    "Festivo":"SI" if fest else "NO"
+                filas.append({
+                    "Fecha": f,
+                    "Grupo": g,
+                    "Turno": asignados[g],
+                    "Día": dia,
+                    "Festivo": "SI" if fest else "NO"
                 })
 
-        df_out = pd.DataFrame(rows)
+        df = pd.DataFrame(filas)
 
-        st.session_state["tec"]=df_out
+        st.session_state["malla"] = df
 
-        save_file(df_out,"malla_tecnicos.xlsx")
+        guardar_github(df)
 
-    if "tec" in st.session_state:
+        st.success("Malla técnica generada")
 
-        dfv = st.session_state["tec"]
+    if "malla" in st.session_state:
+
+        df = st.session_state["malla"]
 
         st.subheader("📊 Malla Técnica")
 
-        pivot = dfv.pivot(index="Grupo",columns="Fecha",values="Turno")
+        pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
-        st.data_editor(pivot,use_container_width=True)
+        st.data_editor(pivot, use_container_width=True)
 
         st.subheader("🚨 Auditoría")
 
-        err = auditoria(dfv,"TEC")
+        err, cov = auditoria_tecnicos(df)
 
         for e in err[:20]:
             st.error(e)
@@ -223,81 +235,97 @@ def pantalla_abordaje():
 
     st.header("🚌 Personal de Abordaje")
 
-    df = load_employees()
-    if df is None:
-        return
-
-    ab = df[df["Cargo"]=="Auxiliar de Abordaje y Atención al Público"]
-
     inicio = st.date_input("Inicio AB", date.today())
     fin = st.date_input("Fin AB", date.today()+timedelta(days=30))
 
     descanso = {}
 
-    cols = st.columns(5)
+    cols = st.columns(len(GRUPOS_AB))
 
     for i,g in enumerate(GRUPOS_AB):
-        descanso[g] = cols[i].selectbox(g, DIAS, index=i)
+        descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
 
-    rows = []
+    filas = []
+
+    historial = {}
 
     if st.button("🚀 Generar Abordaje"):
 
         for f in pd.date_range(inicio, fin):
 
-            dia = DIAS[f.weekday()]
-            fest = f.date() in festivos
+            dia = DIAS_ES[f.weekday()]
+            fest = f.date() in festivos_co
 
-            asignados = {"T1":[], "T2":[]}
+            grupos_descanso = [g for g in GRUPOS_AB if descanso[g] == dia]
 
-            descanso_global = any(dia == descanso[g] for g in GRUPOS_AB)
+            # DESCANSO TOTAL
+            if grupos_descanso:
 
-            if descanso_global:
-
-                for _,r in ab.iterrows():
-                    rows.append({
-                        "Fecha":f,
-                        "Nombre":r["Nombre"],
-                        "Turno":"DESCANSO",
-                        "Festivo":"SI" if fest else "NO"
+                for g in GRUPOS_AB:
+                    filas.append({
+                        "Fecha": f,
+                        "Grupo": g,
+                        "Turno": "DESCANSO",
+                        "Festivo": "SI" if fest else "NO"
                     })
+
                 continue
 
-            pool = ab.sample(frac=1)
+            t1, t2 = 0, 0
 
-            for _,r in pool.iterrows():
+            for g in GRUPOS_AB:
 
-                turno = "T1" if len(asignados["T1"]) < MAX_AB else "T2"
+                if g not in historial:
+                    historial[g] = {"T1":0,"T2":0}
 
-                asignados[turno].append(r["Nombre"])
+                if historial[g]["T1"] <= historial[g]["T2"]:
+                    turno = "T1"
+                else:
+                    turno = "T2"
 
-                rows.append({
-                    "Fecha":f,
-                    "Nombre":r["Nombre"],
-                    "Turno":turno,
-                    "Festivo":"SI" if fest else "NO"
+                if turno == "T1" and t1 >= MAX_AB:
+                    turno = "T2"
+                if turno == "T2" and t2 >= MAX_AB:
+                    turno = "T1"
+
+                if turno == "T1":
+                    t1 += 1
+                else:
+                    t2 += 1
+
+                historial[g][turno] += 1
+
+                filas.append({
+                    "Fecha": f,
+                    "Grupo": g,
+                    "Turno": turno,
+                    "Festivo": "SI" if fest else "NO"
                 })
 
-        df_out = pd.DataFrame(rows)
+        df = pd.DataFrame(filas)
 
-        st.session_state["ab"]=df_out
+        st.session_state["abordaje"] = df
 
-        save_file(df_out,"malla_abordaje.xlsx")
+        guardar_github(df)
 
-    if "ab" in st.session_state:
+        st.success("Malla de abordaje generada")
+
+    if "abordaje" in st.session_state:
+
+        df = st.session_state["abordaje"]
 
         st.subheader("📊 Abordaje")
 
         st.data_editor(
-            st.session_state["ab"].pivot(index="Nombre",columns="Fecha",values="Turno"),
+            df.pivot(index="Grupo", columns="Fecha", values="Turno"),
             use_container_width=True
         )
 
         st.subheader("🚨 Auditoría")
 
-        err = auditoria(st.session_state["ab"],"AB")
+        err = auditoria_abordaje(df)
 
-        for e in err[:20]:
+        for e in err:
             st.warning(e)
 
 # =========================================================
@@ -308,34 +336,4 @@ def pantalla_parametrizador():
 
     st.header("⚙️ Parametrizador")
 
-    df = load_employees()
-
-    if df is None:
-        return
-
-    st.dataframe(df)
-
-    st.info("Aquí va asignación de grupos (ya integrada en versión anterior)")
-
-# =========================================================
-# MENU PRINCIPAL
-# =========================================================
-
-def main():
-
-    op = st.radio(
-        "Módulos",
-        ["Personal Técnico","Parametrizador","Personal de Abordaje"],
-        horizontal=True
-    )
-
-    if op=="Personal Técnico":
-        pantalla_tecnico()
-
-    if op=="Personal de Abordaje":
-        pantalla_abordaje()
-
-    if op=="Parametrizador":
-        pantalla_parametrizador()
-
-main()
+    st.info("Aquí conectarás empleados.xlsx y asignación de grupos")
