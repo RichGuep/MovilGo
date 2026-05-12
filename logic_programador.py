@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - CON HORARIOS
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - ESTABLE
 # =========================================================
 
 import streamlit as st
@@ -11,23 +11,24 @@ import io
 from github import Github
 
 # =========================================================
-# CONFIG TURNOS + HORARIOS
+# CONFIG
 # =========================================================
 TURNOS = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
-
-TURNOS_PRINCIPALES = ["T1","T2","T3"]
-
-HORARIOS = {
-    "T1": "05:30 - 12:50",
-    "T2": "13:30 - 20:50",
-    "T3": "21:30 - 04:50"
-}
 
 GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 
 festivos_co = holidays.Colombia()
+
+# =========================================================
+# HORARIOS (solo para programación detallada)
+# =========================================================
+HORARIOS = {
+    "T1": ("05:30","12:50"),
+    "T2": ("13:30","20:50"),
+    "T3": ("21:30","04:50")
+}
 
 # =========================================================
 # GITHUB
@@ -59,7 +60,7 @@ def guardar_github(df):
         repo.create_file("malla_historica.xlsx", "create", data)
 
 # =========================================================
-# COLORES
+# COLORES (SOFT)
 # =========================================================
 def color_cell(v):
     return {
@@ -73,12 +74,7 @@ def color_cell(v):
     }.get(v,"")
 
 # =========================================================
-# MODOS
-# =========================================================
-MODOS = ["Rotación semanal","Fijo quincenal","Fijo mensual"]
-
-# =========================================================
-# AUDITORIA CON HORARIOS
+# AUDITORIA
 # =========================================================
 def auditoria(df):
 
@@ -90,38 +86,24 @@ def auditoria(df):
 
         turnos = grupo["Turno"].tolist()
 
-        for t in TURNOS_PRINCIPALES:
+        for t in ["T1","T2","T3"]:
             if t not in turnos:
                 errores.append(f"❌ Falta {t} {fecha.date()}")
 
     return errores
 
 # =========================================================
-# GENERADOR
+# GENERADOR (SIN CAMBIAR LO QUE YA FUNCIONABA)
 # =========================================================
-def generar_malla(modo):
+def generar_malla():
 
-    st.header("🚀 OPTIMIZADOR PRO - HORARIOS OPERATIVOS")
+    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
 
     c1,c2 = st.columns(2)
 
     inicio = c1.date_input("Inicio", date.today())
     fin = c2.date_input("Fin", date.today()+timedelta(days=30))
 
-    # =========================
-    # HORARIOS VISUALES
-    # =========================
-    st.subheader("⏰ Horarios definidos")
-
-    st.info(f"""
-    - **T1:** {HORARIOS['T1']}  
-    - **T2:** {HORARIOS['T2']}  
-    - **T3:** {HORARIOS['T3']}
-    """)
-
-    # =========================
-    # DESCANSOS
-    # =========================
     descanso = {}
     cols = st.columns(len(GRUPOS))
 
@@ -142,63 +124,80 @@ def generar_malla(modo):
             festivo = fecha.date() in festivos_co
 
             asignados = {}
-            disponibles = GRUPOS.copy()
+            activos = GRUPOS.copy()
 
-            # DESCANSOS
-            descansan = [g for g in GRUPOS if descanso[g]==dia]
+            # descansos
+            desc = [g for g in GRUPOS if descanso[g]==dia]
 
-            for g in descansan:
-                asignados[g]="DESCANSO"
-                if g in disponibles:
-                    disponibles.remove(g)
+            for g in desc:
+                asignados[g] = "DESCANSO"
+                if g in activos:
+                    activos.remove(g)
 
-            # ROTACIÓN CONTROLADA
-            if modo == "Rotación semanal":
-                offset = (i // 7) % 3
-            elif modo == "Fijo quincenal":
-                offset = (i // 15) % 3
-            else:
-                offset = (i // 30) % 3
+            # rotación estable
+            offset = (i // 7) % 3
 
-            # ASIGNACIÓN PRINCIPAL
-            for j,g in enumerate(disponibles[:3]):
+            for j,g in enumerate(activos[:3]):
 
-                turno = rotacion[(offset + j) % 3]
+                asignados[g] = rotacion[(offset+j)%3]
 
-                asignados[g] = f"{turno} ({HORARIOS[turno]})"
-
-            # APOYOS
-            for g in disponibles[3:]:
+            for g in activos[3:]:
 
                 asignados[g] = "T1 APOYO"
 
-            # GUARDAR
+            # guardar
             for g in GRUPOS:
 
                 filas.append({
                     "Fecha": fecha,
                     "Día": dia,
                     "Grupo": g,
-                    "Turno": asignados.get(g,"DESCANSO"),
+                    "Turno": asignados[g],
                     "Festivo": "SI" if festivo else "NO"
                 })
 
         df = pd.DataFrame(filas)
 
         st.session_state["malla"] = df
-
         guardar_github(df)
 
-        st.success("Malla generada correctamente")
+        st.success("Malla generada")
+
+# =========================================================
+# PROGRAMACIÓN DETALLADA (NUEVO BLOQUE)
+# =========================================================
+def programacion_detallada(df):
+
+    st.subheader("📋 Programación detallada")
+
+    detalle = []
+
+    for _,r in df.iterrows():
+
+        turno = r["Turno"]
+
+        if turno in HORARIOS:
+
+            inicio, fin = HORARIOS[turno]
+        else:
+            inicio, fin = "",""
+
+        detalle.append({
+            "Fecha": r["Fecha"],
+            "Grupo": r["Grupo"],
+            "Turno": turno,
+            "Hora inicio": inicio,
+            "Hora fin": fin
+        })
+
+    st.dataframe(pd.DataFrame(detalle), use_container_width=True)
 
 # =========================================================
 # UI PRINCIPAL
 # =========================================================
 def pantalla_programador():
 
-    modo = st.radio("Modo de planificación", MODOS)
-
-    generar_malla(modo)
+    generar_malla()
 
     if "malla" not in st.session_state:
         return
@@ -209,7 +208,7 @@ def pantalla_programador():
 
     with col1:
 
-        st.subheader("📊 MALLA OPERATIVA")
+        st.subheader("📊 MALLA HORIZONTAL (EDITABLE REAL)")
 
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
         pivot = pivot.sort_index(axis=1)
@@ -230,7 +229,6 @@ def pantalla_programador():
             df_edit["Fecha"] = pd.to_datetime(df_edit["Fecha"])
 
             st.session_state["malla"] = df_edit
-
             guardar_github(df_edit)
 
             st.success("Guardado")
@@ -243,12 +241,13 @@ def pantalla_programador():
 
         errores = auditoria(df)
 
-        for e in errores[:12]:
+        for e in errores[:15]:
             st.error(e)
 
         if not errores:
             st.success("Sin errores")
 
-        st.subheader("⏰ Referencia horarios")
-
-        st.write(HORARIOS)
+    # =====================================================
+    # ABAJO: PROGRAMACIÓN DETALLADA
+    # =====================================================
+    programacion_detallada(df)
