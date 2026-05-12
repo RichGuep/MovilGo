@@ -1,11 +1,11 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE vFINAL EDITOR
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - VERSION ESTABLE
 # =========================================================
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta, date
+from datetime import date, timedelta
 import holidays
 
 # =========================================================
@@ -24,37 +24,17 @@ festivos_co = holidays.Colombia()
 # =========================================================
 def color_cell(v):
 
-    estilos = {
-        "T1": "background-color:#AED6F1;color:#154360;font-weight:600;",
-        "T2": "background-color:#A9DFBF;color:#145A32;font-weight:600;",
-        "T3": "background-color:#F5B7B1;color:#641E16;font-weight:600;",
+    return {
+        "T1": "background-color:#D6EAF8;",
+        "T2": "background-color:#D5F5E3;",
+        "T3": "background-color:#FADBD8;",
 
-        "T1 APOYO": "background-color:#D6EAF8;",
-        "T2 APOYO": "background-color:#D5F5E3;",
+        "T1 APOYO": "background-color:#EBF5FB;",
+        "T2 APOYO": "background-color:#EAF2F8;",
 
-        "DESCANSO": "background-color:#1C2833;color:#F9E79F;font-weight:800;",
-
-        "COMPENSADO": "background-color:#FDEBD0;color:#7E5109;font-weight:700;"
-    }
-
-    return estilos.get(v, "")
-
-# =========================================================
-# PARAMETRIZADOR SIMPLE
-# =========================================================
-def parametrizador():
-
-    st.header("🧩 Parametrizador")
-
-    df = pd.DataFrame({
-        "Empleado": ["A","B","C","D"],
-        "Grupo": ["","","",""]
-    })
-
-    st.dataframe(df, use_container_width=True)
-
-    if st.button("Asignar grupos"):
-        st.success("Grupos asignados (demo)")
+        "DESCANSO": "background-color:#2C3E50;color:#F9E79F;font-weight:700;",
+        "COMPENSADO": "background-color:#FDEBD0;font-weight:600;"
+    }.get(v, "")
 
 # =========================================================
 # GENERADOR
@@ -63,10 +43,10 @@ def generar_malla():
 
     st.header("🚀 OPTIMIZADOR PRO ENTERPRISE")
 
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    inicio = c1.date_input("Inicio", date.today())
-    fin = c2.date_input("Fin", date.today()+timedelta(days=30))
+    inicio = c1.date_input("Fecha inicio", date.today())
+    fin = c2.date_input("Fecha fin", date.today() + timedelta(days=30))
 
     # =====================================================
     # DESCANSO DE LEY
@@ -76,195 +56,189 @@ def generar_malla():
     descanso_actual = {}
     cols = st.columns(len(GRUPOS))
 
-    for i,g in enumerate(GRUPOS):
-        descanso_actual[g] = cols[i].selectbox(g, DIAS_ES, index=i)
+    for i, g in enumerate(GRUPOS):
+        descanso_actual[g] = cols[i].selectbox(
+            g,
+            DIAS_ES,
+            index=i,
+            key=f"desc_{g}"
+        )
 
     # =====================================================
     # ESTADO
     # =====================================================
-    carga = {g:0 for g in GRUPOS}
-    conteo = {g:{"T1":0,"T2":0,"T3":0} for g in GRUPOS}
-    compensado = {g:0 for g in GRUPOS}
-    sacrificio = {g:0 for g in GRUPOS}
-
-    filas = []
+    carga = {g: 0 for g in GRUPOS}
+    conteo = {g: {"T1":0,"T2":0,"T3":0} for g in GRUPOS}
+    compensado = {g: 0 for g in GRUPOS}
+    sacrificio = {g: 0 for g in GRUPOS}
 
     # =====================================================
-    # GENERAR MALLA
+    # GENERAR
     # =====================================================
-    if st.button("Generar malla"):
+    if st.button("🚀 Generar malla"):
 
+        filas = []
         fechas = pd.date_range(inicio, fin)
 
-        for fecha in fechas:
+        for f in fechas:
 
-            dia = DIAS_ES[fecha.weekday()]
-            festivo = fecha.date() in festivos_co
+            dia = DIAS_ES[f.weekday()]
+            festivo = f.date() in festivos_co
 
             asignados = {}
 
-            # ================================
-            # DESCANSO DE LEY
-            # ================================
-            descanso = [g for g in GRUPOS if descanso_actual[g]==dia]
+            descanso = [g for g in GRUPOS if descanso_actual[g] == dia]
             activos = [g for g in GRUPOS if g not in descanso]
 
-            # ================================
-            # COBERTURA MÍNIMA T1/T2/T3
-            # ================================
+            # =========================================
+            # COBERTURA MÍNIMA 3 TURNOS
+            # =========================================
             while len(activos) < 3:
 
                 mov = sorted(descanso, key=lambda g:(sacrificio[g], carga[g]))[0]
                 descanso.remove(mov)
                 activos.append(mov)
 
-                sacrificio[mov]+=1
-                compensado[mov]+=1
+                sacrificio[mov] += 1
+                compensado[mov] += 1
 
-            # ================================
+            # =========================================
             # DESCANSOS
-            # ================================
+            # =========================================
             for g in descanso:
                 asignados[g] = "DESCANSO"
 
-            # ================================
-            # TURNOS PRINCIPALES
-            # ================================
-            for turno in ["T1","T2","T3"]:
+            # =========================================
+            # TURNOS OBLIGATORIOS
+            # =========================================
+            for t in ["T1","T2","T3"]:
 
-                candidatos = sorted(
-                    activos,
-                    key=lambda g:(carga[g], conteo[g][turno])
-                )
+                sel = sorted(activos, key=lambda g:(carga[g], conteo[g][t]))[0]
 
-                sel = candidatos[0]
-                asignados[sel]=turno
-
-                carga[sel]+=1
-                conteo[sel][turno]+=1
-
+                asignados[sel] = t
+                carga[sel] += 1
+                conteo[sel][t] += 1
                 activos.remove(sel)
 
-            # ================================
+            # =========================================
             # COMPENSADOS
-            # ================================
-            for g in sorted(GRUPOS, key=lambda x:compensado[x]):
-
+            # =========================================
+            for g in GRUPOS:
                 if compensado[g] > 0 and g not in asignados:
-                    asignados[g]="COMPENSADO"
-                    compensado[g]-=1
-                    break
+                    asignados[g] = "COMPENSADO"
+                    compensado[g] -= 1
 
-            # ================================
-            # APOYOS SIN SALTOS
-            # ================================
+            # =========================================
+            # APOYO (SIN SALTOS PROHIBIDOS)
+            # =========================================
             for g in GRUPOS:
 
                 if g not in asignados:
 
+                    # BLOQUEO SALTOS:
                     if conteo[g]["T3"] > 0:
-                        asignados[g]="T2 APOYO"
+                        asignados[g] = "T2 APOYO"
                     elif conteo[g]["T2"] > conteo[g]["T1"]:
-                        asignados[g]="T2 APOYO"
+                        asignados[g] = "T2 APOYO"
                     else:
-                        asignados[g]="T1 APOYO"
+                        asignados[g] = "T1 APOYO"
 
-            # ================================
+            # =========================================
             # GUARDAR
-            # ================================
+            # =========================================
             for g in GRUPOS:
 
                 filas.append({
-                    "Fecha": fecha,
-                    "Día": dia,
                     "Grupo": g,
+                    "Fecha": f,
+                    "Día": dia,
                     "Turno": asignados[g],
                     "Festivo": "SI" if festivo else "NO"
                 })
 
-        st.session_state["malla"]=pd.DataFrame(filas)
-        st.success("Malla generada correctamente")
+        st.session_state["df"] = pd.DataFrame(filas)
 
     # =====================================================
-    # VISUALIZACIÓN + EDICIÓN
+    # MALLA ÚNICA EDITABLE
     # =====================================================
-    if "malla" in st.session_state:
+    if "df" in st.session_state:
 
-        df = st.session_state["malla"]
+        df = st.session_state["df"]
 
-        # ================================
-        # MALLA HORIZONTAL
-        # ================================
-        st.subheader("📊 Malla horizontal")
+        pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
-        pivot = df.pivot(index="Grupo",columns="Fecha",values="Turno")
+        pivot.columns = [
+            f"{c.strftime('%d-%m')}\n{DIAS_ES[c.weekday()]}"
+            for c in pivot.columns
+        ]
 
-        rename = {}
-        for c in pivot.columns:
-            rename[c]=f"{c.strftime('%d-%m')}\n{DIAS_ES[c.weekday()]}"
+        st.subheader("📊 MALLA ÚNICA EDITABLE")
 
-        pivot.rename(columns=rename,inplace=True)
+        edited = st.data_editor(
+            pivot,
+            use_container_width=True,
+            key="malla_editor"
+        )
 
+        # =========================================
+        # GUARDAR CAMBIOS
+        # =========================================
+        if st.button("💾 Guardar cambios"):
+
+            tmp = edited.copy().reset_index()
+
+            long = tmp.melt(
+                id_vars=["Grupo"],
+                var_name="Fecha",
+                value_name="Turno"
+            )
+
+            st.session_state["df"] = long
+
+            st.success("Malla actualizada")
+
+        # =========================================
+        # VISTA COLOREADA
+        # =========================================
         st.dataframe(
-            pivot.style.map(color_cell),
+            edited.style.map(color_cell),
             use_container_width=True
         )
 
-        # ================================
-        # EDITOR TIPO EXCEL REAL
-        # ================================
-        st.subheader("✏️ Editor tipo Excel (clic en celda)")
+        # =========================================
+        # AUDITORÍA SALTOS
+        # =========================================
+        st.subheader("🚨 Auditoría de saltos")
 
-        edit_df = st.data_editor(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Turno": st.column_config.SelectboxColumn(
-                    "Turno",
-                    options=TURNOS
-                )
-            }
-        )
-
-        if st.button("💾 Guardar edición"):
-            st.session_state["malla"]=edit_df
-            st.success("Cambios guardados")
-
-        # ================================
-        # AUDITORÍA
-        # ================================
-        st.subheader("🚨 Auditoría")
-
-        errores=[]
+        errores = []
 
         for g in GRUPOS:
 
-            prev=None
-            gdf=df[df["Grupo"]==g]
+            prev = None
+            gdf = df[df["Grupo"] == g]
 
-            for _,r in gdf.iterrows():
+            for _, r in gdf.iterrows():
 
-                if prev=="T2" and r["Turno"]=="T1":
-                    errores.append(f"{g} salto T2→T1 {r['Fecha']}")
+                if prev == "T3" and r["Turno"] in ["T1","T2"]:
+                    errores.append(f"{g}: T3 → {r['Turno']} ({r['Fecha']})")
 
-                if prev=="T3" and r["Turno"] in ["T1","T2"]:
-                    errores.append(f"{g} salto T3 inválido {r['Fecha']}")
+                if prev == "T2" and r["Turno"] == "T1":
+                    errores.append(f"{g}: T2 → T1 ({r['Fecha']})")
 
-                prev=r["Turno"]
+                prev = r["Turno"]
 
         if errores:
-            st.error("Saltos indebidos")
+            st.error("Saltos indebidos detectados")
             st.write(errores)
         else:
             st.success("Sin saltos indebidos")
 
-        # ================================
+        # =========================================
         # COBERTURA
-        # ================================
-        st.subheader("📈 Cobertura")
+        # =========================================
+        st.subheader("📈 Cobertura T1/T2/T3")
 
-        cov=df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
+        cov = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
 
         st.line_chart(cov)
 
@@ -273,9 +247,9 @@ def generar_malla():
 # =========================================================
 def pantalla_programador():
 
-    op = st.radio("Módulo",["Programador","Parametrizador"],horizontal=True)
+    op = st.radio("Módulo", ["Programador","Parametrizador"], horizontal=True)
 
-    if op=="Programador":
+    if op == "Programador":
         generar_malla()
     else:
-        parametrizador()
+        st.write("Parametrizador activo")
