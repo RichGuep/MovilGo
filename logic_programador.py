@@ -259,6 +259,8 @@ def main():
         with col_view:
             st.subheader("📋 Vista Operativa")
             st.dataframe(pivot.style.map(color_cell), use_container_width=True)
-
+            
+# --- PUNTO DE ENTRADA ---
 if __name__ == "__main__":
+    pantalla_programador()
     main()
