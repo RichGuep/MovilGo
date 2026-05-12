@@ -14,7 +14,6 @@ DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
 festivos_co = holidays.Colombia()
 
-# Estructuras de Personal
 GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 GRUPOS_ABO = ["Abordaje G1", "Abordaje G2", "Abordaje G3", "Abordaje G4", "Abordaje G5"]
 PERSONAL_ABO = {g: [f"Abordaje {g[-2:]}-{i+1:02d}" for i in range(5)] for g in GRUPOS_ABO}
@@ -32,9 +31,7 @@ def conectar_github():
 
 def guardar_github(df, nombre_archivo):
     repo = conectar_github()
-    if not repo:
-        st.warning("⚠️ GitHub no configurado.")
-        return
+    if not repo: return
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
@@ -55,7 +52,6 @@ def style_malla(df_pivot):
         bg = COLORES_MAP.get(val, "")
         txt = "white" if val == "DESCANSO" else "black"
         return f'background-color: {bg}; color: {txt}' if bg else ''
-
     def highlight_special_days(col):
         try:
             fecha_str = col.name.split(" - ")[1]
@@ -64,7 +60,6 @@ def style_malla(df_pivot):
                 return ['background-color: #FEF5E7; border-bottom: 2px solid #E67E22;' for _ in col]
         except: pass
         return ['' for _ in col]
-
     return df_pivot.style.map(apply_styles).apply(highlight_special_days, axis=0)
 
 # =========================================================
@@ -79,17 +74,16 @@ def ejecutar_auditoria(df, tipo):
         cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
         for f, c in cobertura.items():
             if c < 3: errores.append(f"❌ Cobertura Técnica insuficiente {f.date()} ({c}/3)")
-        
         ausentes = df[df["Turno"].isin(["DESCANSO", "COMPENSADO"])].groupby("Fecha").size()
         for f, c in ausentes.items():
-            if c > 1: errores.append(f"🚨 Exclusión Crítica: {c} grupos fuera el {f.date()}.")
+            if c > 1: errores.append(f"🚨 Exclusión: {c} grupos fuera el {f.date()}. Máx 1.")
     else:
         t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
         t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
         cobertura = t1 + t2
         for f in t1.index:
-            if t1.get(f,0) < 10: errores.append(f"⚠️ {f.date()}: Faltan T1 ({t1.get(f,0)}/10)")
-            if t2.get(f,0) < 10: errores.append(f"⚠️ {f.date()}: Faltan T2 ({t2.get(f,0)}/10)")
+            if t1.get(f,0) < 10: errores.append(f"⚠️ {f.date()}: Falta T1")
+            if t2.get(f,0) < 10: errores.append(f"⚠️ {f.date()}: Falta T2")
             
     return errores, cobertura
 
@@ -146,59 +140,53 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
 
 def generar_malla_abordaje(inicio, fin, desc_cfg, ciclo):
     filas = []
-    todos = [p for sub in PERSONAL_ABO.values() for p in sub]
-    carga = {p: 0 for p in todos}
     for fecha in pd.date_range(inicio, fin):
         dia_nombre = DIAS_ES[fecha.weekday()]
-        descansan = [p for g in GRUPOS_ABO if desc_cfg.get(g) == dia_nombre for p in PERSONAL_ABO[g]]
-        activos = [p for p in todos if p not in descansan]
-        while len(activos) < 21:
-            if descansan:
-                mov = descansan.pop(0); activos.append(mov)
-            else: break
+        gps_descansan = [g for g in GRUPOS_ABO if desc_cfg.get(g) == dia_nombre]
+        gps_activos = [g for g in GRUPOS_ABO if g not in gps_descansan]
+        while len(gps_activos) < 4 and gps_descansan: gps_activos.append(gps_descansan.pop(0))
+
+        if ciclo == "Diario": seed = (fecha - pd.to_datetime(inicio)).days
+        elif ciclo == "Quincenal": seed = (fecha.day-1)//15 + (fecha.month*10)
+        else: seed = fecha.month + (fecha.year*12)
         
-        asig = {p: "DESCANSO" for p in descansan}
-        seed = (fecha - pd.to_datetime(inicio)).days if ciclo == "Diario" else (fecha.day-1)//15 + (fecha.month*10) if ciclo == "Quincenal" else fecha.month + (fecha.year*12)
+        gps_ord = sorted(gps_activos, key=lambda g: (hash(g) + seed) % 100)
+        asig_gps = {}
+        for _ in range(min(2, len(gps_ord))): asig_gps[gps_ord.pop(0)] = "T1"
+        for _ in range(min(2, len(gps_ord))): asig_gps[gps_ord.pop(0)] = "T2"
+        gp_sobrante = gps_ord[0] if gps_ord else None
         
-        # CORRECCIÓN DEL ERROR: Módulo aplicado correctamente al valor individual, no a la tupla
-        act_ord = sorted(activos, key=lambda p: (carga[p], (hash(p) + seed) % 100))
-        
-        for _ in range(min(10, len(act_ord))): p = act_ord.pop(0); asig[p] = "T1"; carga[p] += 1
-        for _ in range(min(10, len(act_ord))): p = act_ord.pop(0); asig[p] = "T2"; carga[p] += 1
-        if act_ord: p = act_ord.pop(0); asig[p] = "RELEVO"; carga[p] += 0.5
-        for p in act_ord: asig[p] = "DISPONIBLE"
-        
-        for p in todos:
-            filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "DESCANSO")})
+        for g in GRUPOS_ABO:
+            turno_gp = asig_gps.get(g, "DESCANSO")
+            for i, p in enumerate(PERSONAL_ABO[g]):
+                ft = turno_gp
+                if g == gp_sobrante: ft = "RELEVO" if i == 0 else "DISPONIBLE"
+                elif g in gps_descansan: ft = "DESCANSO"
+                filas.append({"Fecha": fecha, "Sujeto": p, "Turno": ft})
     return pd.DataFrame(filas)
 
 # =========================================================
-# PANTALLA PRINCIPAL
+# INTERFAZ
 # =========================================================
 def pantalla_programador():
     st.sidebar.title("MovilGo Pro Enterprise")
     tipo = st.sidebar.radio("Sección", ["Técnicos", "Abordaje"])
     
-    st.header(f"📅 Planificación: {tipo}")
+    st.header(f"📅 Gestión: {tipo}")
     c1, c2 = st.columns(2)
-    inicio = c1.date_input("Desde", date.today(), key=f"in_{tipo}")
-    fin = c2.date_input("Hasta", date.today() + timedelta(days=30), key=f"fi_{tipo}")
+    inicio = c1.date_input("Desde", date.today())
+    fin = c2.date_input("Hasta", date.today() + timedelta(days=30))
 
     descansos = {}
     ciclo = "Diario"
-    
     if tipo == "Técnicos":
-        st.subheader("⚙️ Configuración Técnicos")
         cols = st.columns(4)
-        for i, g in enumerate(GRUPOS_TEC):
-            descansos[g] = cols[i].selectbox(f"{g}", DIAS_ES, index=(5 if i<2 else 6), key=f"dt_{g}")
+        for i, g in enumerate(GRUPOS_TEC): descansos[g] = cols[i].selectbox(f"{g}", DIAS_ES, index=(5 if i<2 else 6))
     else:
-        st.subheader("⚙️ Configuración Abordaje")
         cr, cd = st.columns([1,3])
-        ciclo = cr.selectbox("Rotación", ["Diario", "Quincenal", "Mensual"])
+        ciclo = cr.selectbox("Rotación de Bloques", ["Diario", "Quincenal", "Mensual"])
         cols_a = cd.columns(5)
-        for i, g in enumerate(GRUPOS_ABO):
-            descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i, key=f"da_{g}")
+        for i, g in enumerate(GRUPOS_ABO): descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
 
     if st.button(f"🚀 Generar Malla {tipo}"):
         df = generar_malla_tecnicos(inicio, fin, descansos) if tipo == "Técnicos" else generar_malla_abordaje(inicio, fin, descansos, ciclo)
@@ -223,15 +211,17 @@ def pantalla_programador():
             guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
             st.toast("✅ Sincronizado")
 
+        # PANEL DE ALERTAS Y MÉTRICAS
         st.divider()
         errs, cob = ejecutar_auditoria(st.session_state[key], tipo)
-        col_err, col_graf = st.columns([1, 2])
-        with col_err:
-            st.subheader("🚨 Alertas")
-            if errs:
-                for e in errs: st.error(e)
-            else: st.success("✅ Malla perfecta.")
-        with col_graf:
+        a1, a2 = st.columns([1, 2])
+        with a1:
+            st.metric("Alertas de Revisión", len(errs))
+            with st.container(height=300):
+                if errs:
+                    for e in errs: st.error(e)
+                else: st.success("✅ Malla sin conflictos.")
+        with a2:
             st.subheader("📈 Cobertura")
             st.line_chart(cob)
 
