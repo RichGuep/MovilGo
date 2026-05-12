@@ -1,13 +1,12 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - STABLE BUILD
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - FIXED BUILD
 # =========================================================
 
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, date
 import holidays
-import io
 
 # =========================================================
 # CONFIG
@@ -28,7 +27,7 @@ DIAS_ES = [
 festivos_co = holidays.Colombia()
 
 # =========================================================
-# EXCEL LOCAL
+# EXCEL
 # =========================================================
 def cargar_excel(nombre):
     try:
@@ -40,35 +39,9 @@ def guardar_excel(df, nombre):
     df.to_excel(nombre, index=False)
 
 # =========================================================
-# PARAMETRIZADOR
+# COLORES (FONDO PRO)
 # =========================================================
-def parametrizador():
-    st.header("🧩 Parametrizador de Grupos")
-
-    df = cargar_excel("empleados.xlsx")
-
-    if df.empty:
-        df = pd.DataFrame({
-            "Empleado": ["A","B","C","D"],
-            "Grupo": ["","","",""]
-        })
-
-    st.dataframe(df, use_container_width=True)
-
-    if st.button("🎲 Asignar grupos aleatoriamente"):
-        import random
-        grupos = GRUPOS * 100
-        random.shuffle(grupos)
-
-        df["Grupo"] = [grupos[i] for i in range(len(df))]
-        guardar_excel(df, "empleados.xlsx")
-        st.success("Grupos asignados")
-        st.dataframe(df)
-
-# =========================================================
-# COLORES FUERTES (FONDO)
-# =========================================================
-def color_cell(val):
+def color_cell(v):
 
     estilos = {
         "T1": "background-color:#1E90FF;color:white;font-weight:bold;",
@@ -80,10 +53,37 @@ def color_cell(val):
         "COMPENSADO": "background-color:#FF8C00;color:black;font-weight:bold;"
     }
 
-    return estilos.get(val,"")
+    return estilos.get(v, "")
 
 # =========================================================
-# GENERADOR PRINCIPAL
+# PARAMETRIZADOR
+# =========================================================
+def parametrizador():
+
+    st.header("🧩 Parametrizador")
+
+    df = cargar_excel("empleados.xlsx")
+
+    if df.empty:
+        df = pd.DataFrame({
+            "Empleado": ["A","B","C","D"],
+            "Grupo": ["","","",""]
+        })
+
+    st.dataframe(df, use_container_width=True)
+
+    if st.button("🎲 Asignar grupos"):
+        import random
+        grupos = GRUPOS * 50
+        random.shuffle(grupos)
+
+        df["Grupo"] = [grupos[i] for i in range(len(df))]
+        guardar_excel(df, "empleados.xlsx")
+
+        st.success("Grupos asignados")
+
+# =========================================================
+# GENERADOR
 # =========================================================
 def generar_malla():
 
@@ -95,9 +95,9 @@ def generar_malla():
     fin = c2.date_input("Fin", date.today()+timedelta(days=30))
 
     # =====================================================
-    # DESCANSO DE LEY
+    # DESCANSOS
     # =====================================================
-    st.subheader("⚖️ Descanso de Ley")
+    st.subheader("⚖️ Descanso de ley")
 
     descanso_actual = {}
 
@@ -105,7 +105,7 @@ def generar_malla():
 
     for i,g in enumerate(GRUPOS):
         descanso_actual[g] = cols[i].selectbox(
-            f"{g}",
+            g,
             DIAS_ES,
             index=i
         )
@@ -133,43 +133,58 @@ def generar_malla():
             descanso = [g for g in GRUPOS if descanso_actual[g]==dia]
             activos = [g for g in GRUPOS if g not in descanso]
 
-            # =================================================
-            # ASEGURAR COBERTURA 3 TURNOS
-            # =================================================
-            if len(activos) < 3:
-                faltan = 3 - len(activos)
-                movidos = descanso[:faltan]
-                for m in movidos:
-                    activos.append(m)
-                    descanso.remove(m)
-                    compensado[m] += 1
+            # ============================================
+            # GARANTIZAR COBERTURA
+            # ============================================
+            while len(activos) < 3:
+                movido = descanso.pop(0)
+                activos.append(movido)
+                compensado[movido] += 1
 
+            # ============================================
             # DESCANSO
+            # ============================================
             for g in descanso:
                 asignados[g] = "DESCANSO"
 
-            # TURNOS BASE
+            # ============================================
+            # TURNOS PRINCIPALES
+            # ============================================
             for turno in ["T1","T2","T3"]:
 
-                candidatos = sorted(activos, key=lambda g:(carga[g], conteo[g][turno]))
+                candidatos = sorted(
+                    activos,
+                    key=lambda g:(carga[g], conteo[g][turno])
+                )
 
                 if candidatos:
                     sel = candidatos[0]
+
                     asignados[sel] = turno
                     carga[sel]+=1
                     conteo[sel][turno]+=1
                     activos.remove(sel)
 
-            # APOYO + COMPENSADO
+            # ============================================
+            # APOYOS + COMPENSADOS (REGLA FIX T3)
+            # ============================================
             for g in activos:
 
-                if compensado[g]>0:
-                    asignados[g]="COMPENSADO"
+                if compensado[g] > 0:
+                    asignados[g] = "COMPENSADO"
                     compensado[g]-=1
-                else:
-                    asignados[g]="T1 APOYO"
 
-            # GUARDAR
+                else:
+                    # 🚨 REGLA CRÍTICA:
+                    # T3 NO puede caer directo a apoyo
+                    if conteo[g]["T3"] > conteo[g]["T1"]:
+                        asignados[g] = "T1 APOYO"
+                    else:
+                        asignados[g] = "T2 APOYO"
+
+            # ============================================
+            # GUARDADO
+            # ============================================
             for g in GRUPOS:
                 filas.append({
                     "Fecha": fecha,
@@ -194,17 +209,22 @@ def generar_malla():
 
         st.subheader("📊 Malla horizontal")
 
-        pivot = df.pivot(index="Grupo",columns="Fecha",values="Turno")
+        pivot = df.pivot(
+            index="Grupo",
+            columns="Fecha",
+            values="Turno"
+        )
 
-        # nombres días
         rename = {}
         for c in pivot.columns:
             rename[c]=f"{c.strftime('%d-%m')}\n{DIAS_ES[c.weekday()]}"
 
         pivot.rename(columns=rename,inplace=True)
 
-        # EDITOR MANUAL
-        st.subheader("✏️ Editor Manual")
+        # =================================================
+        # EDITOR
+        # =================================================
+        st.subheader("✏️ Editor manual")
 
         edit = st.data_editor(
             df,
@@ -222,30 +242,32 @@ def generar_malla():
             guardar_excel(edit,"malla.xlsx")
             st.success("Guardado")
 
-        # MALLA COLORES
+        # =================================================
+        # MALLA COLORES (FIX APPLYMAP)
+        # =================================================
         st.dataframe(
-            pivot.style.applymap(color_cell),
+            pivot.style.map(color_cell),
             use_container_width=True
         )
 
         # =================================================
         # AUDITORÍA
         # =================================================
-        st.subheader("🚨 Auditoría")
+        st.subheader("🚨 Auditoría saltos")
 
-        errores = []
+        errores=[]
 
         for g in GRUPOS:
             prev=None
             gdf=df[df["Grupo"]==g]
 
             for _,r in gdf.iterrows():
-                if prev=="T3" and r["Turno"]=="T1":
-                    errores.append(f"{g} salto T3→T1 {r['Fecha']}")
+                if prev=="T3" and r["Turno"] in ["T1","T2"]:
+                    errores.append(f"{g} salto T3→{r['Turno']} {r['Fecha']}")
                 prev=r["Turno"]
 
         if errores:
-            st.error("Saltos indebidos detectados")
+            st.error("Saltos detectados")
             st.write(errores)
         else:
             st.success("Sin saltos indebidos")
@@ -253,11 +275,11 @@ def generar_malla():
         # =================================================
         # COBERTURA
         # =================================================
-        st.subheader("📊 Cobertura")
+        st.subheader("📊 Cobertura T1/T2/T3")
 
-        cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
+        cov = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
 
-        st.line_chart(cobertura)
+        st.line_chart(cov)
 
 # =========================================================
 # MENU
