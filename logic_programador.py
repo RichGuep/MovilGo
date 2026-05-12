@@ -1,6 +1,6 @@
 # =========================================================
 # OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL REAL
-# + PARAMETRIZADOR CORREGIDO (SOLO CARGO)
+# + PARAMETRIZADOR DE GRUPOS DESDE GITHUB
 # =========================================================
 
 import streamlit as st
@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, date
 import holidays
 import io
 import base64
+import random
 from github import Github
 
 # =========================================================
@@ -85,8 +86,46 @@ def guardar_github(df):
         repo.create_file("malla_historica.xlsx", "create", data)
 
 # =========================================================
-# PARAMETRIZADOR (CORREGIDO SOLO CARGO)
+# PARAMETRIZADOR (NUEVO)
 # =========================================================
+
+def asignar_grupos_tecnicos(df):
+
+    df = df.copy()
+
+    tecnicos = df[df["Area"] == "Tecnicos"].copy()
+
+    masters = tecnicos[tecnicos["Cargo"] == "Master"].sample(frac=1).reset_index(drop=True)
+    a = tecnicos[tecnicos["Cargo"] == "Tecnico A"].sample(frac=1).reset_index(drop=True)
+    b = tecnicos[tecnicos["Cargo"] == "Tecnico B"].sample(frac=1).reset_index(drop=True)
+
+    grupos = {f"Grupo {i+1}": [] for i in range(4)}
+
+    for i in range(4):
+
+        grupos[f"Grupo {i+1}"].extend(masters.iloc[i*2:(i+1)*2]["Nombre"].tolist())
+        grupos[f"Grupo {i+1}"].extend(a.iloc[i*7:(i+1)*7]["Nombre"].tolist())
+        grupos[f"Grupo {i+1}"].extend(b.iloc[i*3:(i+1)*3]["Nombre"].tolist())
+
+    return grupos
+
+
+def asignar_grupos_abordaje(df):
+
+    df = df.copy()
+
+    abordaje = df[df["Cargo"] == "Auxiliar de Abordaje y Atención al Público"].sample(frac=1)
+
+    grupos = {f"Abordaje {i+1}": [] for i in range(5)}
+
+    idx = 0
+    for i in range(len(abordaje)):
+
+        grupo = f"Abordaje {(i % 5)+1}"
+        grupos[grupo].append(abordaje.iloc[i]["Nombre"])
+
+    return grupos
+
 
 def pantalla_parametrizador():
 
@@ -101,81 +140,32 @@ def pantalla_parametrizador():
     st.subheader("📄 Vista empleados")
     st.dataframe(df)
 
-    if "Cargo" not in df.columns:
-        st.error("❌ Falta la columna 'Cargo' en empleados.xlsx")
-        return
-
-    if "Nombre" not in df.columns:
-        st.error("❌ Falta la columna 'Nombre' en empleados.xlsx")
-        return
-
     if st.button("🚀 Asignar grupos automáticamente"):
 
-        # =====================================================
-        # TECNICOS (4 GRUPOS)
-        # =====================================================
+        if "Area" not in df.columns or "Cargo" not in df.columns:
+            st.error("Faltan columnas: Area y Cargo")
+            return
 
-        tecnicos = df[df["Cargo"].isin(["Master", "Tecnico A", "Tecnico B"])].copy()
-        tecnicos = tecnicos.sample(frac=1).reset_index(drop=True)
-
-        masters = tecnicos[tecnicos["Cargo"] == "Master"]
-        a = tecnicos[tecnicos["Cargo"] == "Tecnico A"]
-        b = tecnicos[tecnicos["Cargo"] == "Tecnico B"]
-
-        grupos_tecnicos = {f"Grupo {i+1}": [] for i in range(4)}
-
-        for i in range(4):
-
-            grupos_tecnicos[f"Grupo {i+1}"].extend(
-                masters.iloc[i*2:(i+1)*2]["Nombre"].tolist()
-            )
-
-            grupos_tecnicos[f"Grupo {i+1}"].extend(
-                a.iloc[i*7:(i+1)*7]["Nombre"].tolist()
-            )
-
-            grupos_tecnicos[f"Grupo {i+1}"].extend(
-                b.iloc[i*3:(i+1)*3]["Nombre"].tolist()
-            )
-
-        # =====================================================
-        # ABORDAJE (5 GRUPOS DE 5 PERSONAS)
-        # =====================================================
-
-        abordaje = df[df["Cargo"] == "Auxiliar de Abordaje y Atención al Público"].copy()
-        abordaje = abordaje.sample(frac=1).reset_index(drop=True)
-
-        grupos_abordaje = {f"Abordaje {i+1}": [] for i in range(5)}
-
-        for i, nombre in enumerate(abordaje["Nombre"]):
-            grupo = f"Abordaje {(i % 5) + 1}"
-            grupos_abordaje[grupo].append(nombre)
-
-        # =====================================================
-        # RESULTADO
-        # =====================================================
+        tecnicos = asignar_grupos_tecnicos(df)
+        abordaje = asignar_grupos_abordaje(df)
 
         st.subheader("🧠 Grupos Técnicos")
-        st.json(grupos_tecnicos)
+        st.json(tecnicos)
 
         st.subheader("🚌 Grupos Abordaje")
-        st.json(grupos_abordaje)
-
-        # =====================================================
-        # GUARDAR
-        # =====================================================
+        st.json(abordaje)
 
         df["GrupoAsignado"] = ""
 
-        for g, lista in grupos_tecnicos.items():
+        for g, lista in tecnicos.items():
             df.loc[df["Nombre"].isin(lista), "GrupoAsignado"] = g
 
-        for g, lista in grupos_abordaje.items():
+        for g, lista in abordaje.items():
             df.loc[df["Nombre"].isin(lista), "GrupoAsignado"] = g
 
         guardar_empleados(df)
 
-        st.success("✅ Grupos asignados y guardados en GitHub")
+        st.success("Grupos asignados y guardados en GitHub")
 
 # =========================================================
 # COLORES
@@ -211,7 +201,7 @@ def auditoria(df):
     return errores, cobertura
 
 # =========================================================
-# GENERADOR MALLA
+# GENERADOR (SIN CAMBIOS ESTRUCTURALES)
 # =========================================================
 
 def generar_malla():
