@@ -12,7 +12,6 @@ st.set_page_config(page_title="MovilGo Optimizer Enterprise", layout="wide")
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
-
 festivos_co = holidays.Colombia()
 
 # Estructuras de Personal
@@ -34,55 +33,71 @@ def conectar_github():
 def guardar_github(df, nombre_archivo):
     repo = conectar_github()
     if not repo:
-        st.warning("⚠️ No se pudo conectar a GitHub (Token ausente)")
+        st.warning("⚠️ GitHub no conectado.")
         return
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
-    data = buffer.getvalue()
     try:
         file = repo.get_contents(nombre_archivo)
-        repo.update_file(nombre_archivo, f"Update {datetime.now()}", data, file.sha)
+        repo.update_file(nombre_archivo, f"Update {datetime.now()}", buffer.getvalue(), file.sha)
     except:
-        repo.create_file(nombre_archivo, "Create", data)
+        repo.create_file(nombre_archivo, "Create", buffer.getvalue())
 
 COLORES_MAP = {
-    "T1": "#D6EAF8",
-    "T2": "#D5F5E3",
-    "T3": "#FADBD8",
-    "RELEVO": "#E8DAEF",
-    "DISPONIBLE": "#EAEDED",
-    "T1 APOYO": "#EBF5FB",
-    "DESCANSO": "#2C3E50",
-    "COMPENSADO": "#FDEBD0"
+    "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
+    "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
+    "T1 APOYO": "#EBF5FB", "DESCANSO": "#2C3E50", "COMPENSADO": "#FDEBD0"
 }
 
 def style_malla(df_pivot):
-    # Estilo para los turnos
     def apply_styles(val):
         bg = COLORES_MAP.get(val, "")
         txt = "white" if val == "DESCANSO" else "black"
         return f'background-color: {bg}; color: {txt}' if bg else ''
 
-    # Resaltado de Sábados, Domingos y Festivos
     def highlight_special_days(col):
         try:
-            # Extraer fecha del label "X - YYYY-MM-DD"
             fecha_str = col.name.split(" - ")[1]
             fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
-            is_weekend = fecha_obj.weekday() >= 5
-            is_holiday = fecha_obj in festivos_co
-            
-            if is_weekend or is_holiday:
-                return ['background-color: #F2F3F4; border-left: 2px solid #E67E22; border-right: 2px solid #E67E22;' for _ in col]
-        except:
-            pass
+            if fecha_obj.weekday() >= 5 or fecha_obj in festivos_co:
+                return ['background-color: #FDF2E9; border: 1px solid #E67E22;' for _ in col]
+        except: pass
         return ['' for _ in col]
 
     return df_pivot.style.map(apply_styles).apply(highlight_special_days, axis=0)
 
 # =========================================================
-# LÓGICAS DE GENERACIÓN
+# AUDITORÍA Y MÉTRICAS
+# =========================================================
+def ejecutar_auditoria(df, tipo):
+    errores = []
+    df = df.copy()
+    df["Fecha"] = pd.to_datetime(df["Fecha"])
+    
+    if tipo == "Técnicos":
+        cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
+        for f, c in cobertura.items():
+            if c < 3: errores.append(f"❌ Cobertura insuficiente {f.date()} ({c}/3)")
+        
+        for g in GRUPOS_TEC:
+            gdf = df[df["Sujeto"] == g].sort_values("Fecha")
+            prev = None
+            for _, r in gdf.iterrows():
+                if prev == "T3" and r["Turno"] in ["T1", "T2", "T1 APOYO"]:
+                    errores.append(f"🚨 {g}: Salto T3 ➔ {r['Turno']} el {r['Fecha'].date()}")
+                prev = r["Turno"]
+    else:
+        t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
+        t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
+        for f in t1.index:
+            if t1.get(f,0) < 10 or t2.get(f,0) < 10:
+                errores.append(f"⚠️ {f.date()}: T1({t1.get(f,0)}/10) T2({t2.get(f,0)}/10)")
+        cobertura = t1 + t2
+    return errores, cobertura
+
+# =========================================================
+# LÓGICAS DE GENERACIÓN (MEJORADAS)
 # =========================================================
 def generar_malla_tecnicos(inicio, fin, descansos):
     carga, comp, sacr = {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}
@@ -151,7 +166,7 @@ def pantalla_programador():
         for i, g in enumerate(GRUPOS_TEC): descansos[g] = cols[i].selectbox(f"Descanso {g}", DIAS_ES, index=i)
     else:
         c_rot, c_des = st.columns([1,3])
-        ciclo = c_rot.selectbox("Ciclo Rotación", ["Diario", "Quincenal", "Mensual"])
+        ciclo = c_rot.selectbox("Rotación", ["Diario", "Quincenal", "Mensual"])
         cols_a = c_des.columns(5)
         for i, g in enumerate(GRUPOS_ABO): descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
 
@@ -162,44 +177,44 @@ def pantalla_programador():
     key = f"malla_{tipo}"
     if key in st.session_state:
         df_actual = st.session_state[key].copy()
+        df_actual = df_actual.sort_values(by=["Fecha", "Sujeto"]) # Orden cronológico garantizado
         
-        # Generar etiquetas de fecha con inicial del día
-        df_actual["Fecha_Label"] = df_actual["Fecha"].apply(
-            lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}"
-        )
+        # Etiquetas
+        df_actual["Label"] = df_actual["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}")
         
-        pivot = df_actual.pivot(index="Sujeto", columns="Fecha_Label", values="Turno").sort_index(axis=1)
+        # Pivot ordenado por fecha real
+        pivot = df_actual.pivot(index="Sujeto", columns="Label", values="Turno")
+        # Re-ordenar columnas del pivot para que sigan el calendario
+        sorted_cols = sorted(pivot.columns, key=lambda x: x.split(" - ")[1])
+        pivot = pivot[sorted_cols]
+
+        st.subheader("📝 Editor de Malla")
+        config_cols = {str(c): st.column_config.SelectboxColumn(options=OPCIONES_TURNOS, width="small") for c in pivot.columns}
         
-        st.subheader("📝 Editor con Iniciales de Día y Resaltado de Festivos")
-        st.caption("Días en gris con borde naranja indican Fines de Semana o Festivos.")
+        df_editado = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols)
 
-        config_cols = {
-            str(col): st.column_config.SelectboxColumn(
-                label=str(col),
-                options=OPCIONES_TURNOS,
-                width="small"
-            ) for col in pivot.columns
-        }
-
-        # Aplicar el mapa de colores y el resaltado de días especiales
-        df_estilizado = style_malla(pivot)
-
-        df_editado = st.data_editor(
-            df_estilizado, 
-            use_container_width=True, 
-            key=f"editor_{tipo}",
-            column_config=config_cols
-        )
-
-        if st.button("💾 Guardar y Sincronizar GitHub"):
-            df_final = df_editado.reset_index().melt(id_vars="Sujeto", var_name="Fecha_Label", value_name="Turno")
-            # Reconstruir la fecha pura
-            df_final["Fecha"] = df_final["Fecha_Label"].apply(lambda x: datetime.strptime(x.split(" - ")[1], '%Y-%m-%d'))
-            df_final = df_final.drop(columns=["Fecha_Label"])
-            
+        if st.button("💾 Guardar y Auditar"):
+            df_final = df_editado.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
+            df_final["Fecha"] = pd.to_datetime(df_final["Label"].apply(lambda x: x.split(" - ")[1]))
             st.session_state[key] = df_final
             guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
-            st.toast("✅ Malla guardada en el repositorio.")
+            st.success("✅ Guardado.")
+
+        # PANEL DE CONTROL (MÉTRICAS Y ALERTAS)
+        st.divider()
+        errores, cobertura = ejecutar_auditoria(st.session_state[key], tipo)
+        col_m1, col_m2 = st.columns([1, 2])
+        
+        with col_m1:
+            st.metric("Total Alertas", len(errores), delta_color="inverse")
+            st.subheader("🚨 Detalle de Alertas")
+            if errores:
+                for e in errores: st.error(e)
+            else: st.success("Malla limpia")
+        
+        with col_m2:
+            st.subheader("📈 Cobertura Diaria")
+            st.line_chart(cobertura)
 
 if __name__ == "__main__":
     pantalla_programador()
