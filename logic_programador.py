@@ -1,7 +1,7 @@
-# logic_programador.py
 # =========================================================
+# LOGIC_PROGRAMADOR.PY
 # OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL REAL
-# + REFUERZO BLOQUES DE ESTABILIDAD
+# + BLOQUES ESTABILIDAD + COMPENSACIÓN SEMANAL CORREGIDA
 # =========================================================
 
 import streamlit as st
@@ -15,11 +15,8 @@ from github import Github
 # CONFIG
 # =========================================================
 TURNOS = ["T1","T2","T3","T1 APOYO","T2 APOYO","DESCANSO","COMPENSADO"]
-
 GRUPOS = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
-
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
-
 festivos_co = holidays.Colombia()
 
 # =========================================================
@@ -52,7 +49,7 @@ def guardar_github(df):
         repo.create_file("malla_historica.xlsx", "create", data)
 
 # =========================================================
-# COLORES SUAVES
+# COLORES
 # =========================================================
 def color_cell(v):
     return {
@@ -81,9 +78,7 @@ def auditoria(df):
             errores.append(f"❌ Cobertura incompleta {f.date()} ({c}/3)")
 
     for g in GRUPOS:
-
         gdf = df[df["Grupo"] == g].sort_values("Fecha")
-
         prev = None
 
         for _, r in gdf.iterrows():
@@ -99,7 +94,7 @@ def auditoria(df):
     return errores, cobertura
 
 # =========================================================
-# GENERADOR (REFORZADO CON BLOQUES)
+# GENERADOR
 # =========================================================
 def generar_malla():
 
@@ -127,9 +122,13 @@ def generar_malla():
     compensado = {g:0 for g in GRUPOS}
     sacrificio = {g:0 for g in GRUPOS}
 
-    # 🔥 CONTROL DE BLOQUES (NUEVO)
     last_turn = {g: None for g in GRUPOS}
     streak = {g: 0 for g in GRUPOS}
+
+    # 🔥 CONTROL SEMANAL DE DESCANSO
+    descanso_ok_semana = {g: False for g in GRUPOS}
+    pendiente_comp = {g: False for g in GRUPOS}
+    prev_week = None
 
     filas = []
 
@@ -142,6 +141,23 @@ def generar_malla():
 
         for fecha in fechas:
 
+            week = fecha.isocalendar().week
+            year = fecha.isocalendar().year
+            week_id = (year, week)
+
+            # =================================================
+            # CAMBIO DE SEMANA → validar incumplidos
+            # =================================================
+            if prev_week and week_id != prev_week:
+
+                for g in GRUPOS:
+                    if not descanso_ok_semana[g]:
+                        pendiente_comp[g] = True
+
+                descanso_ok_semana = {g: False for g in GRUPOS}
+
+            prev_week = week_id
+
             dia = DIAS_ES[fecha.weekday()]
             festivo = fecha.date() in festivos_co
 
@@ -150,42 +166,52 @@ def generar_malla():
             descanso_dia = [g for g in GRUPOS if descanso[g]==dia]
             activos = [g for g in GRUPOS if g not in descanso_dia]
 
-            # asegurar cobertura mínima
-            while len(activos) < 3:
+            # =================================================
+            # 🔥 COMPENSACIÓN FORZADA (REGLA CRÍTICA)
+            # =================================================
+            for g in list(activos):
+                if pendiente_comp[g]:
+                    asignados[g] = "DESCANSO"
+                    pendiente_comp[g] = False
+                    descanso_ok_semana[g] = True
+                    activos.remove(g)
+                    last_turn[g] = "DESCANSO"
+                    streak[g] = 0
 
-                mov = sorted(descanso_dia, key=lambda g:(sacrificio[g],carga[g]))[0]
-
-                descanso_dia.remove(mov)
-                activos.append(mov)
-
-                sacrificio[mov]+=1
-                compensado[mov]+=1
-
-            # =====================================================
-            # DESCANSO
-            # =====================================================
+            # =================================================
+            # DESCANSO PROGRAMADO
+            # =================================================
             for g in descanso_dia:
-                asignados[g]="DESCANSO"
+                asignados[g] = "DESCANSO"
+                descanso_ok_semana[g] = True
                 last_turn[g] = "DESCANSO"
                 streak[g] = 0
 
-            # =====================================================
+            # =================================================
+            # ASEGURAR COBERTURA
+            # =================================================
+            while len(activos) < 3:
+                mov = sorted(descanso_dia, key=lambda g:(sacrificio[g],carga[g]))[0]
+                descanso_dia.remove(mov)
+                activos.append(mov)
+                sacrificio[mov]+=1
+                compensado[mov]+=1
+
+            # =================================================
             # TURNOS PRINCIPALES (BLOQUES 4 DÍAS)
-            # =====================================================
+            # =================================================
             for turno in ["T1","T2","T3"]:
 
                 def score(g):
-
                     base = carga[g] + conteo[g][turno]
 
-                    # 🔥 BLOQUE MÍNIMO 4 DÍAS
                     if last_turn[g] != turno:
                         if streak[g] < 4:
-                            base += 1000  # bloqueo fuerte
+                            base += 1000
                         else:
-                            base += 10    # cambio permitido
+                            base += 10
                     else:
-                        base -= 5  # continuidad
+                        base -= 5
 
                     return base
 
@@ -204,9 +230,9 @@ def generar_malla():
 
                 activos.remove(sel)
 
-            # =====================================================
+            # =================================================
             # APOYO / COMPENSADO
-            # =====================================================
+            # =================================================
             for g in activos:
 
                 if compensado[g] > 0:
@@ -215,22 +241,19 @@ def generar_malla():
                 else:
                     asignados[g] = "T1 APOYO"
 
-                if last_turn[g] == asignados[g]:
-                    streak[g] += 1
-                else:
-                    streak[g] = 1
-                    last_turn[g] = asignados[g]
+                last_turn[g] = asignados[g]
+                streak[g] = 1
 
-            # =====================================================
-            # GUARDADO
-            # =====================================================
+            # =================================================
+            # GUARDAR
+            # =================================================
             for g in GRUPOS:
 
                 filas.append({
                     "Fecha": fecha,
                     "Día": dia,
                     "Grupo": g,
-                    "Turno": asignados[g],
+                    "Turno": asignados.get(g, "T1 APOYO"),
                     "Festivo": "SI" if festivo else "NO"
                 })
 
@@ -239,7 +262,7 @@ def generar_malla():
 
         guardar_github(df)
 
-        st.success("Malla generada con estabilidad por bloques")
+        st.success("Malla generada con compensación semanal corregida")
 
 # =========================================================
 # INTERFAZ
@@ -259,15 +282,12 @@ def pantalla_programador():
 
     df = st.session_state["malla"]
 
-    st.subheader("📊 MALLA HORIZONTAL REAL (EDITABLE)")
+    st.subheader("📊 MALLA HORIZONTAL REAL")
 
     pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
     pivot = pivot.sort_index(axis=1)
 
-    edit = st.data_editor(
-        pivot,
-        use_container_width=True
-    )
+    edit = st.data_editor(pivot, use_container_width=True)
 
     if st.button("💾 Guardar cambios"):
 
@@ -299,7 +319,6 @@ def pantalla_programador():
             st.success("Sin errores")
 
         st.subheader("📈 Cobertura")
-
         st.line_chart(cobertura)
 
     with col1:
