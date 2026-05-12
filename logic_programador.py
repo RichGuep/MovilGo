@@ -11,6 +11,8 @@ from github import Github
 st.set_page_config(page_title="MovilGo Optimizer Enterprise", layout="wide")
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
+
 festivos_co = holidays.Colombia()
 
 # Estructuras de Personal
@@ -18,7 +20,6 @@ GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 GRUPOS_ABO = ["Abordaje G1", "Abordaje G2", "Abordaje G3", "Abordaje G4", "Abordaje G5"]
 PERSONAL_ABO = {g: [f"Personal {g[-2:]}-{i+1:02d}" for i in range(5)] for g in GRUPOS_ABO}
 
-# Opciones para el menú desplegable en el editor
 OPCIONES_TURNOS = ["T1", "T2", "T3", "RELEVO", "DISPONIBLE", "T1 APOYO", "DESCANSO", "COMPENSADO"]
 
 # =========================================================
@@ -33,7 +34,7 @@ def conectar_github():
 def guardar_github(df, nombre_archivo):
     repo = conectar_github()
     if not repo:
-        st.warning("⚠️ No se pudo conectar a GitHub (revisar Token)")
+        st.warning("⚠️ No se pudo conectar a GitHub (Token ausente)")
         return
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -56,41 +57,32 @@ COLORES_MAP = {
     "COMPENSADO": "#FDEBD0"
 }
 
-def color_cells_df(val):
-    bg_color = COLORES_MAP.get(val, "")
-    text_color = "white" if val == "DESCANSO" else "black"
-    if bg_color:
-        return f'background-color: {bg_color}; color: {text_color}'
-    return ''
+def style_malla(df_pivot):
+    # Estilo para los turnos
+    def apply_styles(val):
+        bg = COLORES_MAP.get(val, "")
+        txt = "white" if val == "DESCANSO" else "black"
+        return f'background-color: {bg}; color: {txt}' if bg else ''
+
+    # Resaltado de Sábados, Domingos y Festivos
+    def highlight_special_days(col):
+        try:
+            # Extraer fecha del label "X - YYYY-MM-DD"
+            fecha_str = col.name.split(" - ")[1]
+            fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+            is_weekend = fecha_obj.weekday() >= 5
+            is_holiday = fecha_obj in festivos_co
+            
+            if is_weekend or is_holiday:
+                return ['background-color: #F2F3F4; border-left: 2px solid #E67E22; border-right: 2px solid #E67E22;' for _ in col]
+        except:
+            pass
+        return ['' for _ in col]
+
+    return df_pivot.style.map(apply_styles).apply(highlight_special_days, axis=0)
 
 # =========================================================
-# AUDITORÍA
-# =========================================================
-def ejecutar_auditoria(df, tipo):
-    errores = []
-    df = df.copy()
-    df["Fecha"] = pd.to_datetime(df["Fecha"])
-    
-    if tipo == "Técnicos":
-        cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
-        for f, c in cobertura.items():
-            if c < 3: errores.append(f"❌ Cobertura insuficiente el {f.date()} ({c}/3)")
-        
-        for g in GRUPOS_TEC:
-            gdf = df[df["Sujeto"] == g].sort_values("Fecha")
-            prev = None
-            for _, r in gdf.iterrows():
-                if prev == "T3" and r["Turno"] in ["T1", "T2", "T1 APOYO"]:
-                    errores.append(f"🚨 {g}: Salto ilegal T3 ➔ {r['Turno']} el {r['Fecha'].date()}")
-                prev = r["Turno"]
-    else:
-        t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
-        t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
-        cobertura = t1 + t2
-    return errores, cobertura
-
-# =========================================================
-# GENERADORES
+# LÓGICAS DE GENERACIÓN
 # =========================================================
 def generar_malla_tecnicos(inicio, fin, descansos):
     carga, comp, sacr = {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}
@@ -146,7 +138,7 @@ def generar_malla_abordaje(inicio, fin, desc_grupos, ciclo):
 # INTERFAZ
 # =========================================================
 def pantalla_programador():
-    st.sidebar.title("MovilGo Enterprise")
+    st.sidebar.title("MovilGo Pro Enterprise")
     tipo = st.sidebar.radio("Personal", ["Técnicos", "Abordaje"])
     
     st.header(f"📅 Gestión de Malla: {tipo}")
@@ -163,7 +155,7 @@ def pantalla_programador():
         cols_a = c_des.columns(5)
         for i, g in enumerate(GRUPOS_ABO): descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
 
-    if st.button(f"🚀 Generar Nueva Malla {tipo}"):
+    if st.button(f"🚀 Generar Malla {tipo}"):
         df = generar_malla_tecnicos(inicio, fin, descansos) if tipo == "Técnicos" else generar_malla_abordaje(inicio, fin, descansos, ciclo)
         st.session_state[f"malla_{tipo}"] = df
 
@@ -171,13 +163,16 @@ def pantalla_programador():
     if key in st.session_state:
         df_actual = st.session_state[key].copy()
         
-        # Convertimos las fechas a string antes del pivot para evitar errores de JSON
-        df_actual["Fecha"] = df_actual["Fecha"].dt.strftime('%Y-%m-%d')
-        pivot = df_actual.pivot(index="Sujeto", columns="Fecha", values="Turno").sort_index(axis=1)
+        # Generar etiquetas de fecha con inicial del día
+        df_actual["Fecha_Label"] = df_actual["Fecha"].apply(
+            lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}"
+        )
         
-        st.subheader("📝 Editor Manual (Dropdown + Colores)")
+        pivot = df_actual.pivot(index="Sujeto", columns="Fecha_Label", values="Turno").sort_index(axis=1)
+        
+        st.subheader("📝 Editor con Iniciales de Día y Resaltado de Festivos")
+        st.caption("Días en gris con borde naranja indican Fines de Semana o Festivos.")
 
-        # CRÍTICO: Las claves de config_cols DEBEN ser strings que coincidan con las columnas del pivot
         config_cols = {
             str(col): st.column_config.SelectboxColumn(
                 label=str(col),
@@ -186,30 +181,25 @@ def pantalla_programador():
             ) for col in pivot.columns
         }
 
+        # Aplicar el mapa de colores y el resaltado de días especiales
+        df_estilizado = style_malla(pivot)
+
         df_editado = st.data_editor(
-            pivot.style.map(color_cells_df), 
+            df_estilizado, 
             use_container_width=True, 
             key=f"editor_{tipo}",
             column_config=config_cols
         )
 
-        if st.button("💾 Guardar Cambios"):
-            df_final = df_editado.reset_index().melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
-            df_final["Fecha"] = pd.to_datetime(df_final["Fecha"])
+        if st.button("💾 Guardar y Sincronizar GitHub"):
+            df_final = df_editado.reset_index().melt(id_vars="Sujeto", var_name="Fecha_Label", value_name="Turno")
+            # Reconstruir la fecha pura
+            df_final["Fecha"] = df_final["Fecha_Label"].apply(lambda x: datetime.strptime(x.split(" - ")[1], '%Y-%m-%d'))
+            df_final = df_final.drop(columns=["Fecha_Label"])
+            
             st.session_state[key] = df_final
             guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
-            st.toast("✅ Guardado en GitHub")
-
-        err, cob = ejecutar_auditoria(st.session_state[key], tipo)
-        col_err, col_graf = st.columns([1, 1])
-        with col_err:
-            st.subheader("🚨 Auditoría")
-            if err: 
-                for e in err[:15]: st.error(e)
-            else: st.success("✅ Sin errores.")
-        with col_graf:
-            st.subheader("📈 Cobertura")
-            st.line_chart(cob)
+            st.toast("✅ Malla guardada en el repositorio.")
 
 if __name__ == "__main__":
     pantalla_programador()
