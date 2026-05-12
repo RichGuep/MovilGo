@@ -182,7 +182,7 @@ def pantalla_programador():
         lista_g = GRUPOS_TEC if tipo == "Técnicos" else GRUPOS_ABO
         cols = st.columns(len(lista_g))
         for i, g in enumerate(lista_g):
-            desc_input[g] = cols[i].selectbox(f"Libra {g}", DIAS_ES, index=(5 if i<2 else 6) if tipo == "Técnicos" else i%7)
+            desc_input[g] = cols[i].selectbox(f"Descanso {g}", DIAS_ES, index=(5 if i<2 else 6) if tipo == "Técnicos" else i%7)
         
         ciclo = "Fijo"
         if tipo == "Abordaje":
