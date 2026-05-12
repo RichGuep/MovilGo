@@ -203,7 +203,7 @@ def pantalla_abordaje():
     if df is None:
         return
 
-    ab = df[df["Cargo"]=="Auxiliar de Abordaje y Atención al Público"].copy()
+    ab = df[df["Cargo"]=="Auxiliar de Abordaje y Atención al Público "].copy()
 
     if len(ab) < 20:
         st.warning("Se recomienda mínimo 20 personas")
