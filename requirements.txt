@@ -7,3 +7,4 @@ PyGithub
 holidays
 openpyxl
 xlsxwriter
+matplotlib
