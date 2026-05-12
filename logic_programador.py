@@ -45,7 +45,7 @@ def guardar_github(df, nombre_archivo):
     except:
         repo.create_file(nombre_archivo, "Create", data)
 
-# Diccionario de colores para aplicar estilos
+# Diccionario de colores (CSS HEX)
 COLORES_MAP = {
     "T1": "#D6EAF8",
     "T2": "#D5F5E3",
@@ -82,14 +82,14 @@ def ejecutar_auditoria(df, tipo):
             prev = None
             for _, r in gdf.iterrows():
                 if prev == "T3" and r["Turno"] in ["T1", "T2", "T1 APOYO"]:
-                    errores.append(f"🚨 {g}: Salto ilegal T3 ➔ {r['Turno']} el {r['Fecha'].date()} (Falta descanso)")
+                    errores.append(f"🚨 {g}: Salto ilegal T3 ➔ {r['Turno']} el {r['Fecha'].date()}")
                 prev = r["Turno"]
     else:
         t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
         t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
         for f in t1.index:
             if t1.get(f,0) < 10 or t2.get(f,0) < 10:
-                errores.append(f"⚠️ Personal insuficiente {f.date()}: T1({t1.get(f,0)}/10), T2({t2.get(f,0)}/10)")
+                errores.append(f"⚠️ Personal insuficiente {f.date()}")
         cobertura = t1 + t2
     return errores, cobertura
 
@@ -97,163 +97,139 @@ def ejecutar_auditoria(df, tipo):
 # LÓGICAS DE GENERACIÓN
 # =========================================================
 def generar_malla_tecnicos(inicio, fin, descansos):
-    carga = {g:0 for g in GRUPOS_TEC}
-    compensado = {g:0 for g in GRUPOS_TEC}
-    sacrificio = {g:0 for g in GRUPOS_TEC}
-    ultimo_turno = {g: "DESCANSO" for g in GRUPOS_TEC}
-    conteo_bloque = {g: 0 for g in GRUPOS_TEC}
-    
+    carga, comp, sacr = {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}
+    u_turno, c_bloque = {g: "DESCANSO" for g in GRUPOS_TEC}, {g: 0 for g in GRUPOS_TEC}
     filas = []
     for fecha in pd.date_range(inicio, fin):
         dia = DIAS_ES[fecha.weekday()]
-        descanso_dia = [g for g in GRUPOS_TEC if descansos.get(g) == dia]
-        activos = [g for g in GRUPOS_TEC if g not in descanso_dia]
-
+        desc_dia = [g for g in GRUPOS_TEC if descansos.get(g) == dia]
+        activos = [g for g in GRUPOS_TEC if g not in desc_dia]
         while len(activos) < 3:
-            mov = sorted(descanso_dia, key=lambda g:(sacrificio[g], carga[g]))[0]
-            descanso_dia.remove(mov); activos.append(mov)
-            sacrificio[mov]+=1; compensado[mov]+=1
-
-        asignados = {g: "DESCANSO" for g in descanso_dia}
-        for g in descanso_dia:
-            ultimo_turno[g] = "DESCANSO"
-            conteo_bloque[g] = 0
-
-        for t_obj in ["T3", "T2", "T1"]:
-            candidatos = [g for g in activos if ultimo_turno[g] == t_obj and conteo_bloque[g] < 4]
-            for g in candidatos:
-                if g in activos:
-                    asignados[g] = t_obj; carga[g] += 1; conteo_bloque[g] += 1; activos.remove(g)
-
-        for t_obj in ["T3", "T2", "T1"]:
-            if t_obj not in asignados.values():
-                posibles = [g for g in activos if not (t_obj in ["T1", "T2"] and ultimo_turno[g] == "T3")]
-                if posibles:
-                    sel = sorted(posibles, key=lambda x: carga[x])[0]
-                    asignados[sel] = t_obj; carga[sel] += 1; ultimo_turno[sel] = t_obj
-                    conteo_bloque[sel] = 1; activos.remove(sel)
-
+            mov = sorted(desc_dia, key=lambda g:(sacr[g], carga[g]))[0]
+            desc_dia.remove(mov); activos.append(mov); sacr[mov]+=1; comp[mov]+=1
+        asignados = {g: "DESCANSO" for g in desc_dia}
+        for g in desc_dia: u_turno[g], c_bloque[g] = "DESCANSO", 0
+        for t in ["T3", "T2", "T1"]:
+            cand = [g for g in activos if u_turno[g] == t and c_bloque[g] < 4]
+            for g in cand:
+                if g in activos: asignados[g], carga[g], c_bloque[g] = t, carga[g]+1, c_bloque[g]+1; activos.remove(g)
+        for t in ["T3", "T2", "T1"]:
+            if t not in asignados.values():
+                pos = [g for g in activos if not (t in ["T1", "T2"] and u_turno[g] == "T3")]
+                if pos:
+                    sel = sorted(pos, key=lambda x: carga[x])[0]
+                    asignados[sel], carga[sel], u_turno[sel], c_bloque[sel] = t, carga[sel]+1, t, 1; activos.remove(sel)
         for g in activos:
-            if compensado[g] > 0:
-                asignados[g] = "COMPENSADO"; compensado[g] -= 1; ultimo_turno[g] = "DESCANSO"
-            else:
-                asignados[g] = "T1 APOYO" if ultimo_turno[g] != "T3" else "DESCANSO"
-            conteo_bloque[g] = 0
-        
-        for g in GRUPOS_TEC:
-            filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asignados.get(g, "DESCANSO")})
+            if comp[g] > 0: asignados[g], comp[g], u_turno[g] = "COMPENSADO", comp[g]-1, "DESCANSO"
+            else: asignados[g] = "T1 APOYO" if u_turno[g] != "T3" else "DESCANSO"
+            c_bloque[g] = 0
+        for g in GRUPOS_TEC: filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asignados.get(g, "DESCANSO")})
     return pd.DataFrame(filas)
 
-def generar_malla_abordaje(inicio, fin, descansos_grupos, ciclo):
+def generar_malla_abordaje(inicio, fin, desc_grupos, ciclo):
     filas = []
     todos = [p for sub in PERSONAL_ABO.values() for p in sub]
     for fecha in pd.date_range(inicio, fin):
         dia = DIAS_ES[fecha.weekday()]
-        descansan = [p for g in GRUPOS_ABO if descansos_grupos.get(g) == dia for p in PERSONAL_ABO[g]]
-        activos = [p for p in todos if p not in descansan]
-        while len(activos) < 21:
-            if descansan:
-                mov = descansan.pop(0); activos.append(mov)
+        desc = [p for g in GRUPOS_ABO if desc_grupos.get(g) == dia for p in PERSONAL_ABO[g]]
+        act = [p for p in todos if p not in desc]
+        while len(act) < 21:
+            if desc: mov = desc.pop(0); act.append(mov)
             else: break
-            
-        asignados = {p: "DESCANSO" for p in descansan}
-        if ciclo == "Diario": seed = (fecha - pd.to_datetime(inicio)).days
-        elif ciclo == "Quincenal": seed = (fecha.day - 1) // 15 + (fecha.month * 10)
-        else: seed = fecha.month + (fecha.year * 12)
-        
-        act_ord = sorted(activos, key=lambda p: (hash(p) + seed) % 100)
-        for _ in range(min(10, len(act_ord))): p = act_ord.pop(0); asignados[p] = "T1"
-        for _ in range(min(10, len(act_ord))): p = act_ord.pop(0); asignados[p] = "T2"
-        if act_ord: p = act_ord.pop(0); asignados[p] = "RELEVO"
-        for p in act_ord: asignados[p] = "DISPONIBLE"
-        
-        for p in todos:
-            filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asignados.get(p, "DESCANSO")})
+        asig = {p: "DESCANSO" for p in desc}
+        seed = (fecha - pd.to_datetime(inicio)).days if ciclo == "Diario" else (fecha.day-1)//15 + (fecha.month*10) if ciclo == "Quincenal" else fecha.month + (fecha.year*12)
+        act_ord = sorted(act, key=lambda p: (hash(p) + seed) % 100)
+        for _ in range(min(10, len(act_ord))): asig[act_ord.pop(0)] = "T1"
+        for _ in range(min(10, len(act_ord))): asig[act_ord.pop(0)] = "T2"
+        if act_ord: asig[act_ord.pop(0)] = "RELEVO"
+        for p in act_ord: asig[p] = "DISPONIBLE"
+        for p in todos: filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "DESCANSO")})
     return pd.DataFrame(filas)
 
 # =========================================================
-# INTERFAZ DE USUARIO (PANTALLA_PROGRAMADOR)
+# INTERFAZ PRINCIPAL
 # =========================================================
 def pantalla_programador():
     st.sidebar.title("MovilGo Enterprise")
     tipo = st.sidebar.radio("Personal", ["Técnicos", "Abordaje"])
     
-    st.header(f"📅 Optimización de {tipo}")
+    st.header(f"📅 Gestión de Malla: {tipo}")
+    
+    # Rango de fechas
     c1, c2 = st.columns(2)
-    inicio = c1.date_input("Desde", date.today())
-    fin = c2.date_input("Hasta", date.today() + timedelta(days=30))
+    inicio = c1.date_input("Fecha Inicio", date.today())
+    fin = c2.date_input("Fecha Fin", date.today() + timedelta(days=30))
 
-    descansos = {}
-    ciclo = "Diario"
+    # Parámetros de descanso y rotación
+    descansos, ciclo = {}, "Diario"
     if tipo == "Técnicos":
-        st.info("💡 Bloques de 4 días y prohibición T3 ➔ T1/T2 activos.")
+        st.info("💡 Lógica activa: Bloques de 4 días y prohibición de salto T3 ➔ T1/T2.")
         cols = st.columns(4)
         for i, g in enumerate(GRUPOS_TEC):
             descansos[g] = cols[i].selectbox(f"Descanso {g}", DIAS_ES, index=i)
     else:
-        st.subheader("Configuración Grupos de Abordaje")
+        st.subheader("Configuración Grupos Abordaje")
         c_rot, c_des = st.columns([1,3])
         ciclo = c_rot.selectbox("Ciclo Rotación", ["Diario", "Quincenal", "Mensual"])
         cols_a = c_des.columns(5)
         for i, g in enumerate(GRUPOS_ABO):
             descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
 
-    if st.button(f"🚀 Generar Nueva Malla {tipo}"):
+    # Botón Generar
+    if st.button(f"🚀 Generar Malla {tipo}"):
         df = generar_malla_tecnicos(inicio, fin, descansos) if tipo == "Técnicos" else generar_malla_abordaje(inicio, fin, descansos, ciclo)
         st.session_state[f"malla_{tipo}"] = df
-        st.success("Malla generada con éxito.")
+        st.success("Malla generada. Revise el editor abajo.")
 
+    # Módulo de Edición
     key = f"malla_{tipo}"
     if key in st.session_state:
         df_actual = st.session_state[key]
-        # Pivotar para el editor
         pivot = df_actual.pivot(index="Sujeto", columns="Fecha", values="Turno").sort_index(axis=1)
         
-        st.subheader("📝 Editor Manual de Malla")
-        st.markdown("💡 *Haz doble clic en una celda para cambiar el turno usando la lista desplegable.*")
+        st.subheader("📝 Editor con Menú Desplegable y Colores")
+        st.markdown("👉 *Doble clic para editar. Selecciona el turno de la lista.*")
 
-        # Configuración de columnas para el Dropdown (Lista desplegable)
-        # Creamos un diccionario donde cada columna de fecha es de tipo "Selectbox"
-        config_columnas = {
+        # Corrección técnica para Pandas 2.1+ y Streamlit
+        # Usamos .map() en lugar de .applymap() para los colores
+        df_estilizado = pivot.style.map(color_cells_df)
+
+        # Configuración de columnas para Dropdown dinámico
+        config_cols = {
             col: st.column_config.SelectboxColumn(
-                col.strftime('%Y-%m-%d') if isinstance(col, datetime) else str(col),
+                str(col.date()) if hasattr(col, 'date') else str(col),
                 options=OPCIONES_TURNOS,
-                required=True,
                 width="small"
             ) for col in pivot.columns
         }
 
-        # Aplicamos estilo de colores al DataFrame para la visualización del editor
-        df_estilizado = pivot.style.applymap(color_cells_df)
-
-        # DATA EDITOR con colores y lista desplegable
+        # Renderizado del EDITOR
         df_editado = st.data_editor(
             df_estilizado, 
             use_container_width=True, 
-            key=f"ed_{tipo}",
-            column_config=config_columnas
+            key=f"editor_{tipo}",
+            column_config=config_cols
         )
 
-        if st.button("💾 Guardar Cambios y Auditoría"):
-            # Convertir de vuelta de pivot a tabla larga para procesar y guardar
-            # Nota: Usamos el df_editado que devuelve el widget
+        # Botón Guardar
+        if st.button("💾 Guardar Cambios"):
+            # Revertir pivot a formato largo
             df_final = df_editado.reset_index().melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
             st.session_state[key] = df_final
             guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
-            st.toast("Cambios guardados en GitHub")
+            st.toast("✅ Sincronizado con GitHub")
 
-        # Panel de Auditoría
-        errores, cobertura = ejecutar_auditoria(st.session_state[key], tipo)
+        # Sección de Auditoría
+        err, cob = ejecutar_auditoria(st.session_state[key], tipo)
         col_err, col_graf = st.columns([1, 1])
         with col_err:
-            st.subheader("🚨 Auditoría de Salud y Ley")
-            if errores:
-                for e in errores[:15]: st.error(e)
-            else:
-                st.success("✅ Malla cumple con todas las normativas de salud laboral.")
+            st.subheader("🚨 Auditoría de Salud")
+            if err: 
+                for e in err[:15]: st.error(e)
+            else: st.success("✅ Malla sin infracciones detectadas.")
         with col_graf:
-            st.subheader("📈 Gráfico de Cobertura")
-            st.line_chart(cobertura)
+            st.subheader("📈 Cobertura Diaria")
+            st.line_chart(cob)
 
 if __name__ == "__main__":
     pantalla_programador()
