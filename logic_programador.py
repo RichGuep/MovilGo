@@ -19,7 +19,7 @@ PERSONAL_ABO = {g: [f"Abordaje {g[-2:]}-{i+1:02d}" for i in range(5)] for g in G
 COLORES_MAP = {
     "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
     "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
-    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#FDEBD0"
+    "T1 APOYO": "#EBF5FB", "DESCANSO": "#145a4f", "COMPENSADO": "#FDEBD0"
 }
 
 # =========================================================
