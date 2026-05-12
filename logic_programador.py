@@ -337,22 +337,4 @@ def pantalla_parametrizador():
     st.header("⚙️ Parametrizador")
 
 
-    def main():
-
-    import streamlit as st
-
-    menu = st.radio(
-        "Módulos",
-        ["Personal Técnico", "Personal de Abordaje", "Parametrizador"],
-        horizontal=True
-    )
-
-    if menu == "Personal Técnico":
-        pantalla_tecnico()
-
-    elif menu == "Personal de Abordaje":
-        pantalla_abordaje()
-
-    elif menu == "Parametrizador":
-        pantalla_parametrizador()
-    st.info("Aquí conectarás empleados.xlsx y asignación de grupos")
+  
