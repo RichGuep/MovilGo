@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR PRO ENTERPRISE + EDITOR + ALERTAS VISUALES
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - FINAL STABLE
 # =========================================================
 
 import streamlit as st
@@ -20,11 +20,10 @@ DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 festivos_co = holidays.Colombia()
 
 # =========================================================
-# COLORES (SUAVES + ALERTAS)
+# COLORES SUAVES PROFESIONALES
 # =========================================================
 def color_cell(v):
-
-    base = {
+    return {
         "T1":"background-color:#D6EAF8;",
         "T2":"background-color:#D5F5E3;",
         "T3":"background-color:#FADBD8;",
@@ -34,42 +33,39 @@ def color_cell(v):
 
         "DESCANSO":"background-color:#1C2833;color:#F9E79F;font-weight:700;",
         "COMPENSADO":"background-color:#FDEBD0;font-weight:600;"
-    }
-
-    # resaltado de error dentro del valor
-    if isinstance(v,str) and "⚠️" in v:
-        return "background-color:#FF6B6B;color:white;font-weight:800;"
-
-    return base.get(v,"")
+    }.get(v,"")
 
 # =========================================================
 # PARAMETRIZADOR
 # =========================================================
 def parametrizador():
 
-    st.header("🧩 Parametrizador")
+    st.header("🧩 Parametrizador de grupos")
 
     df = pd.DataFrame({
         "Empleado":["A","B","C","D"],
         "Grupo":["","","",""]
     })
 
-    st.dataframe(df)
+    st.dataframe(df, use_container_width=True)
 
 # =========================================================
-# GENERADOR
+# GENERADOR PRINCIPAL
 # =========================================================
 def generar_malla():
 
-    st.header("🚀 OPTIMIZADOR PRO ENTERPRISE")
-
-    c1,c2 = st.columns(2)
-
-    inicio = c1.date_input("Inicio", date.today())
-    fin = c2.date_input("Fin", date.today()+timedelta(days=30))
+    st.header("🚀 OPTIMIZADOR INTELIGENTE PRO")
 
     # =====================================================
-    # DESCANSO DE LEY
+    # FECHAS
+    # =====================================================
+    c1,c2 = st.columns(2)
+
+    inicio = c1.date_input("Fecha inicio", date.today())
+    fin = c2.date_input("Fecha fin", date.today()+timedelta(days=30))
+
+    # =====================================================
+    # DESCANSOS
     # =====================================================
     st.subheader("⚖️ Descanso de ley")
 
@@ -88,7 +84,7 @@ def generar_malla():
     sacrificio = {g:0 for g in GRUPOS}
 
     # =====================================================
-    # GENERAR
+    # GENERAR MALLA
     # =====================================================
     if st.button("🚀 Generar malla"):
 
@@ -102,6 +98,7 @@ def generar_malla():
 
             asignados = {}
 
+            # DESCANSOS
             descanso_grupos = [g for g in GRUPOS if descanso[g]==dia]
             activos = [g for g in GRUPOS if g not in descanso_grupos]
 
@@ -117,7 +114,7 @@ def generar_malla():
             for g in descanso_grupos:
                 asignados[g]="DESCANSO"
 
-            # TURNOS
+            # TURNOS BASE
             for t in ["T1","T2","T3"]:
                 sel = sorted(activos, key=lambda g:(carga[g],conteo[g][t]))[0]
                 asignados[sel]=t
@@ -149,7 +146,7 @@ def generar_malla():
         st.session_state["df"]=pd.DataFrame(filas)
 
     # =====================================================
-    # VISUALIZACIÓN ÚNICA (HORIZONTAL + EDITOR REAL)
+    # VISUALIZACIÓN PRINCIPAL
     # =====================================================
     if "df" in st.session_state:
 
@@ -162,33 +159,9 @@ def generar_malla():
             for c in pivot.columns
         ]
 
-        st.subheader("✏️ MALLA EDITABLE (EXCEL REAL)")
-
-        edited = st.data_editor(
-            pivot,
-            use_container_width=True,
-            key="editor",
-            column_config={
-                col: st.column_config.SelectboxColumn(
-                    col,
-                    options=TURNOS
-                )
-                for col in pivot.columns
-            }
-        )
-
-        # guardar cambios
-        if st.button("💾 Guardar cambios"):
-            tmp = edited.reset_index()
-            long = tmp.melt(id_vars=["Grupo"], var_name="Fecha", value_name="Turno")
-            st.session_state["df"]=long
-            st.success("Guardado")
-
         # =====================================================
-        # DETECCIÓN DE ERRORES VISUALES
+        # AUDITORÍA
         # =====================================================
-        st.subheader("🚨 ALERTAS VISUALES")
-
         errores = []
 
         for g in GRUPOS:
@@ -199,44 +172,78 @@ def generar_malla():
             for _,r in gdf.iterrows():
 
                 if prev=="T2" and r["Turno"]=="T1":
-                    errores.append((g,r["Fecha"],"⚠️ T2→T1"))
+                    errores.append(f"{g} T2→T1 {r['Fecha'].date()}")
 
                 if prev=="T3" and r["Turno"] in ["T1","T2"]:
-                    errores.append((g,r["Fecha"],"⚠️ T3 salto crítico"))
+                    errores.append(f"{g} T3→salto {r['Fecha'].date()}")
 
                 prev=r["Turno"]
 
-        if errores:
-            for e in errores:
-                st.warning(f"{e[0]} | {e[1]} | {e[2]}")
-
         # =====================================================
-        # MALLA COLOREADA
+        # LAYOUT: MALLA + ALERTAS
         # =====================================================
-        def paint(v):
+        col1,col2 = st.columns([3,1])
 
-            for e in errores:
-                if str(v)==str(e[2]):
-                    return "background-color:#FF6B6B;color:white;font-weight:800;"
+        with col1:
 
-            return color_cell(v)
+            st.subheader("📊 Malla editable")
 
-        st.dataframe(
-            edited.style.map(color_cell),
-            use_container_width=True
-        )
+            edited = st.data_editor(
+                pivot,
+                use_container_width=True,
+                key="editor",
+                column_config={
+                    c: st.column_config.SelectboxColumn(
+                        c,
+                        options=TURNOS
+                    )
+                    for c in pivot.columns
+                }
+            )
+
+            if st.button("💾 Guardar cambios"):
+
+                tmp = edited.reset_index()
+
+                long = tmp.melt(
+                    id_vars=["Grupo"],
+                    var_name="Fecha",
+                    value_name="Turno"
+                )
+
+                st.session_state["df"]=long
+
+                st.success("Guardado correctamente")
+
+            st.dataframe(
+                edited.style.map(color_cell),
+                use_container_width=True
+            )
+
+        with col2:
+
+            st.subheader("🚨 Alertas")
+
+            if len(errores)==0:
+                st.success("Sin errores")
+
+            else:
+                st.warning(f"{len(errores)} alertas")
+
+                for e in errores[:10]:
+                    st.error(e)
 
         # =====================================================
         # COBERTURA
         # =====================================================
-        st.subheader("📊 Cobertura diaria")
+        st.subheader("📈 Cobertura T1/T2/T3")
 
         cov = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
 
         st.line_chart(cov)
 
         # =====================================================
-        # BALANCE
+        # BALANCE POR GRUPO
         # =====================================================
         st.subheader("⚖️ Balance por grupo")
 
