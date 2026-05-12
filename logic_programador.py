@@ -4,21 +4,86 @@ import numpy as np
 from datetime import datetime, timedelta, date, time
 import io
 from github import Github
+import holidays
 
-# =========================================================
-# 1. CONFIGURACIÓN Y CONSTANTES
-# =========================================================
-DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
-INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
+## Constantes de festivos
+festivos_co = holidays.Colombia()
 
-GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
-GRUPOS_ABO = ["Abordaje G1", "Abordaje G2", "Abordaje G3", "Abordaje G4", "Abordaje G5"]
+# --- FUNCION PARA IDENTIFICAR EL TIPO DE DIA ---
+def obtener_tipo_dia(fecha):
+    if fecha in festivos_co:
+        return "Festivo"
+    elif fecha.weekday() == 5: # Sábado
+        return "Sábado"
+    elif fecha.weekday() == 6: # Domingo
+        return "Domingo"
+    else:
+        return "Hábil"
 
-COLORES_MAP = {
-    "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
-    "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
-    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"
-}
+# --- FUNCION PARA CALCULAR DURACION DEL TURNO ---
+def calcular_horas(row):
+    try:
+        if row['Hora Inicio'] == "OFF" or row['Hora Fin'] == "OFF":
+            return 0
+        
+        formato = "%H:%M"
+        h_ini = datetime.strptime(row['Hora Inicio'], formato)
+        h_fin = datetime.strptime(row['Hora Fin'], formato)
+        
+        # Si la hora fin es menor a inicio, es un turno que cruza medianoche (T3)
+        if h_fin <= h_ini:
+            h_fin += timedelta(days=1)
+            
+        duracion = h_fin - h_ini
+        return round(duracion.total_seconds() / 3600, 2)
+    except:
+        return 0
+
+# --- MALLA DETALLADA POR PERSONA REHECHA ---
+def generar_malla_transaccional(df_final, tipo, config_horas):
+    # 1. Cargar la base de empleados asignados a grupos
+    df_empleados = cargar_excel("empleados_grupos.xlsx")
+    
+    if df_empleados.empty:
+        st.warning("⚠️ No se encontró 'empleados_grupos.xlsx'. Asigne los grupos en la pestaña Personal primero.")
+        # Retorno de emergencia si no hay archivo de empleados
+        detallada = df_final.copy()
+        detallada["Nombre"] = detallada["Sujeto"]
+        detallada["Grupo"] = detallada["Sujeto"]
+    else:
+        # 2. Hacer el cruce para traer a las personas reales de cada grupo
+        # df_final tiene la columna 'Sujeto' que contiene el nombre del Grupo (Grupo 1, etc.)
+        detallada = pd.merge(
+            df_final, 
+            df_empleados, 
+            left_on="Sujeto", 
+            right_on="Grupo", 
+            how="inner"
+        )
+        # Limpiar nombres de columnas tras el merge
+        detallada = detallada.drop(columns=["Sujeto"])
+        # Suponiendo que tu Excel tiene columna 'Nombre' y 'Cedula'
+        detallada = detallada.rename(columns={"Nombre": "Persona"})
+
+    # 3. Asignar Horas y Metadatos de Fecha
+    detallada["Hora Inicio"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Inicio", "OFF"))
+    detallada["Hora Fin"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Fin", "OFF"))
+    
+    # Cálculos adicionales
+    detallada["Horas Programadas"] = detallada.apply(calcular_horas, axis=1)
+    detallada["Tipo Día"] = detallada["Fecha"].apply(obtener_tipo_dia)
+    
+    # 4. Organizar columnas finales
+    cols_finales = [
+        "Fecha", "Tipo Día", "Persona", "Grupo", 
+        "Turno", "Hora Inicio", "Hora Fin", "Horas Programadas"
+    ]
+    
+    # Verificar que las columnas existan antes de filtrar
+    cols_existentes = [c for c in cols_finales if c in detallada.columns]
+    detallada = detallada[cols_existentes]
+    
+    return detallada
 
 # =========================================================
 # 2. CONECTIVIDAD GITHUB
