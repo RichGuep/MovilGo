@@ -8,17 +8,13 @@ from github import Github
 # =========================================================
 # CONFIGURACIÓN Y CONSTANTES
 # =========================================================
-st.set_page_config(page_title="MovilGo Optimizer Enterprise", layout="wide")
+st.set_page_config(page_title="MovilGo Pro Enterprise v3.5", layout="wide")
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
 festivos_co = holidays.Colombia()
 
-# Estructuras de Personal
 GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
-GRUPOS_ABO = ["Abordaje G1", "Abordaje G2", "Abordaje G3", "Abordaje G4", "Abordaje G5"]
-PERSONAL_ABO = {g: [f"Personal {g[-2:]}-{i+1:02d}" for i in range(5)] for g in GRUPOS_ABO}
-
 OPCIONES_TURNOS = ["T1", "T2", "T3", "RELEVO", "DISPONIBLE", "T1 APOYO", "DESCANSO", "COMPENSADO"]
 
 # =========================================================
@@ -33,7 +29,7 @@ def conectar_github():
 def guardar_github(df, nombre_archivo):
     repo = conectar_github()
     if not repo:
-        st.warning("⚠️ GitHub no conectado.")
+        st.warning("⚠️ GitHub no configurado.")
         return
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -61,161 +57,174 @@ def style_malla(df_pivot):
             fecha_str = col.name.split(" - ")[1]
             fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
             if fecha_obj.weekday() >= 5 or fecha_obj in festivos_co:
-                return ['background-color: #FDF2E9; border-bottom: 2px solid #E67E22;' for _ in col]
+                return ['background-color: #FDF2E9; border-bottom: 3px solid #E67E22;' for _ in col]
         except: pass
         return ['' for _ in col]
 
     return df_pivot.style.map(apply_styles).apply(highlight_special_days, axis=0)
 
 # =========================================================
-# AUDITORÍA Y MÉTRICAS
+# LÓGICA DE AUDITORÍA
 # =========================================================
-def ejecutar_auditoria(df, tipo, descansos_config):
+def ejecutar_auditoria(df):
     errores = []
     df = df.copy()
     df["Fecha"] = pd.to_datetime(df["Fecha"])
     
-    # Validar si hay duplicidad de descansos en la configuración (exclusión mutua)
-    dias_seleccionados = list(descansos_config.values())
-    for d in DIAS_ES:
-        if dias_seleccionados.count(d) > 1:
-            grupos_conflicto = [g for g, die in descansos_config.items() if die == d]
-            errores.append(f"⚠️ Conflicto: Los grupos {grupos_conflicto} tienen el mismo día de descanso ({d}).")
-
-    if tipo == "Técnicos":
-        cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
-        for f, c in cobertura.items():
-            if c < 3: errores.append(f"❌ Cobertura insuficiente {f.date()} ({c}/3)")
+    # 1. Cobertura
+    cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
+    for f, c in cobertura.items():
+        if c < 3: errores.append(f"❌ Cobertura insuficiente el {f.date()} ({c}/3)")
     
-    return errores, (cobertura if tipo == "Técnicos" else None)
+    # 2. Saltos y Compensados
+    for g in GRUPOS_TEC:
+        gdf = df[df["Sujeto"] == g].sort_values("Fecha")
+        prev = None
+        for _, r in gdf.iterrows():
+            if prev == "T3" and r["Turno"] in ["T1", "T2"]:
+                errores.append(f"🚨 {g}: Salto ilegal T3 ➔ {r['Turno']} el {r['Fecha'].date()}")
+            if r["Turno"] == "COMPENSADO" and r["Fecha"].weekday() >= 5:
+                errores.append(f"⚠️ {g}: Compensado en Fin de Semana ({r['Fecha'].date()})")
+            prev = r["Turno"]
+            
+    return errores, cobertura
 
 # =========================================================
-# LÓGICA DE GENERACIÓN - TÉCNICOS
+# LÓGICA DE GENERACIÓN (TECNICOS)
 # =========================================================
-def generar_malla_tecnicos(inicio, fin, descansos):
-    carga, comp, sacr = {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}
-    u_turno, c_bloque = {g: "DESCANSO" for g in GRUPOS_TEC}, {g: 0 for g in GRUPOS_TEC}
+def generar_malla_tecnicos(inicio, fin, descansos_ley):
     filas = []
+    deudas_compensado = {g: 0 for g in GRUPOS_TEC}
+    grupos_por_dia = {dia: [g for g, d in descansos_ley.items() if d == dia] for dia in ["Sábado", "Domingo"]}
+    
+    u_turno = {g: "DESCANSO" for g in GRUPOS_TEC}
+    c_bloque = {g: 0 for g in GRUPOS_TEC}
+
     for fecha in pd.date_range(inicio, fin):
         dia_idx = fecha.weekday()
         dia_nombre = DIAS_ES[dia_idx]
-        desc_dia = [g for g in GRUPOS_TEC if descansos.get(g) == dia_nombre]
-        activos = [g for g in GRUPOS_TEC if g not in desc_dia]
+        asignaciones_hoy = {}
         
-        # REGLA: Si hay más de un grupo descansando o faltan activos, forzar trabajo
-        while len(activos) < 3:
-            mov = sorted(desc_dia, key=lambda g:(sacr[g], carga[g]))[0]
-            desc_dia.remove(mov); activos.append(mov); sacr[mov]+=1; comp[mov]+=1
-
-        asignados = {g: "DESCANSO" for g in desc_dia}
-        for g in desc_dia: u_turno[g], c_bloque[g] = "DESCANSO", 0
-
-        # Bloques y Turnos base
-        for t in ["T3", "T2", "T1"]:
-            cand = [g for g in activos if u_turno[g] == t and c_bloque[g] < 4]
-            for g in cand:
-                if g in activos: asignados[g], carga[g], c_bloque[g] = t, carga[g]+1, c_bloque[g]+1; activos.remove(g)
-
-        for t in ["T3", "T2", "T1"]:
-            if t not in asignados.values():
-                pos = [g for g in activos if not (t in ["T1", "T2"] and u_turno[g] == "T3")]
-                if pos:
-                    sel = sorted(pos, key=lambda x: carga[x])[0]
-                    asignados[sel], carga[sel], u_turno[sel], c_bloque[sel] = t, carga[sel]+1, t, 1; activos.remove(sel)
-
-        # Apoyos y Compensados (L-V)
-        for g in activos[:]:
-            if comp[g] > 0 and dia_idx < 5:
-                asignados[g] = "COMPENSADO"; comp[g] -= 1; u_turno[g] = "DESCANSO"
+        # 1. GESTIÓN DE DESCANSOS DE LEY Y VICEVERSA (SÁB/DOM)
+        if dia_nombre in ["Sábado", "Domingo"]:
+            g_en_conflicto = grupos_por_dia[dia_nombre]
+            if len(g_en_conflicto) > 1:
+                # Alternancia por semana del año
+                semana_par = (fecha.isocalendar()[1] % 2 == 0)
+                descansa_hoy = g_en_conflicto[0] if semana_par else g_en_conflicto[1]
+                trabaja_hoy = g_en_conflicto[1] if semana_par else g_en_conflicto[0]
+                
+                asignaciones_hoy[descansa_hoy] = "DESCANSO"
+                deudas_compensado[trabaja_hoy] += 1
             else:
-                asignados[g] = "T1 APOYO" if u_turno[g] != "T3" else "DESCANSO"
-            c_bloque[g] = 0; activos.remove(g)
+                for g in g_en_conflicto: asignaciones_hoy[g] = "DESCANSO"
         
-        for g in GRUPOS_TEC: filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asignados.get(g, "DESCANSO")})
-    return pd.DataFrame(filas)
+        # 2. ASIGNAR COMPENSADOS (L-V)
+        activos = [g for g in GRUPOS_TEC if g not in asignaciones_hoy]
+        if 0 <= dia_idx <= 4:
+            for g in activos[:]:
+                if deudas_compensado[g] > 0:
+                    asignaciones_hoy[g] = "COMPENSADO"
+                    deudas_compensado[g] -= 1
+                    activos.remove(g)
 
-def generar_malla_abordaje(inicio, fin, desc_grupos, ciclo):
-    filas = []
-    todos = [p for sub in PERSONAL_ABO.values() for p in sub]
-    for fecha in pd.date_range(inicio, fin):
-        dia_idx = fecha.weekday()
-        desc = [p for g in GRUPOS_ABO if desc_grupos.get(g) == DIAS_ES[dia_idx] for p in PERSONAL_ABO[g]]
-        act = [p for p in todos if p not in desc]
-        while len(act) < 21:
-            if desc: mov = desc.pop(0); act.append(mov)
-            else: break
-        asig = {p: "DESCANSO" for p in desc}
-        seed = (fecha - pd.to_datetime(inicio)).days if ciclo == "Diario" else (fecha.day-1)//15 + (fecha.month*10) if ciclo == "Quincenal" else fecha.month + (fecha.year*12)
-        act_ord = sorted(act, key=lambda p: (hash(p) + seed) % 100)
-        for _ in range(min(10, len(act_ord))): asig[act_ord.pop(0)] = "T1"
-        for _ in range(min(10, len(act_ord))): asig[act_ord.pop(0)] = "T2"
-        if act_ord: asig[act_ord.pop(0)] = "RELEVO"
-        for p in act_ord: asig[p] = "DISPONIBLE"
-        for p in todos: filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "DESCANSO")})
+        # 3. TURNOS BASE (T3, T2, T1)
+        for t in ["T3", "T2", "T1"]:
+            # Continuidad de bloque
+            for g in activos[:]:
+                if u_turno[g] == t and c_bloque[g] < 4:
+                    asignaciones_hoy[g] = t
+                    c_bloque[g] += 1
+                    activos.remove(g)
+            # Nuevas asignaciones
+            if t not in asignaciones_hoy.values() and activos:
+                cands = [g for g in activos if not (t in ["T1", "T2"] and u_turno[g] == "T3")]
+                if cands:
+                    sel = cands[0]
+                    asignaciones_hoy[sel] = t
+                    u_turno[sel] = t
+                    c_bloque[sel] = 1
+                    activos.remove(sel)
+
+        # 4. LIMPIEZA DE ACTIVOS
+        for g in activos:
+            asignaciones_hoy[g] = "DESCANSO" if u_turno[g] == "T3" else "T1 APOYO"
+            c_bloque[g] = 0
+
+        for g in GRUPOS_TEC:
+            u_turno[g] = asignaciones_hoy[g]
+            filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asignaciones_hoy[g]})
+
     return pd.DataFrame(filas)
 
 # =========================================================
-# INTERFAZ
+# INTERFAZ PRINCIPAL
 # =========================================================
 def pantalla_programador():
-    st.sidebar.title("MovilGo Pro Enterprise")
-    tipo = st.sidebar.radio("Personal", ["Técnicos", "Abordaje"])
+    st.sidebar.title("🛠️ MovilGo Pro Enterprise")
+    st.header("📅 Planificación de Malla: Técnicos")
     
-    st.header(f"📅 Gestión de Malla: {tipo}")
+    # Filtros de fecha
     c1, c2 = st.columns(2)
-    inicio, fin = c1.date_input("Desde", date.today()), c2.date_input("Hasta", date.today() + timedelta(days=30))
+    inicio = c1.date_input("Fecha Inicio", date(2026, 7, 1))
+    fin = c2.date_input("Fecha Fin", date(2026, 12, 31))
 
-    descansos, ciclo = {}, "Diario"
-    if tipo == "Técnicos":
-        cols = st.columns(4)
-        for i, g in enumerate(GRUPOS_TEC): 
-            descansos[g] = cols[i].selectbox(f"Descanso {g}", DIAS_ES, index=i)
-    else:
-        c_rot, c_des = st.columns([1,3])
-        ciclo = c_rot.selectbox("Ciclo Rotación", ["Diario", "Quincenal", "Mensual"])
-        cols_a = c_des.columns(5)
-        for i, g in enumerate(GRUPOS_ABO): 
-            descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
+    # Configuración de Descansos
+    st.subheader("⚙️ Configuración de Descansos de Ley")
+    cols_d = st.columns(4)
+    desc_cfg = {}
+    for i, g in enumerate(GRUPOS_TEC):
+        # Default G1/G3 Sáb, G2/G4 Dom
+        d_idx = 5 if i % 2 == 0 else 6
+        desc_cfg[g] = cols_d[i].selectbox(f"Ley {g}", DIAS_ES, index=d_idx)
 
-    if st.button(f"🚀 Generar Malla {tipo}"):
-        df = generar_malla_tecnicos(inicio, fin, descansos) if tipo == "Técnicos" else generar_malla_abordaje(inicio, fin, descansos, ciclo)
-        st.session_state[f"malla_{tipo}"] = df
-        st.session_state[f"desc_cfg_{tipo}"] = descansos
+    if st.button("🚀 Generar Malla Optimizada"):
+        df = generar_malla_tecnicos(inicio, fin, desc_cfg)
+        st.session_state["malla_main"] = df
+        st.session_state["config_ley"] = desc_cfg
 
-    key = f"malla_{tipo}"
-    if key in st.session_state:
-        df_actual = st.session_state[key].copy()
-        df_actual = df_actual.sort_values(by=["Fecha", "Sujeto"])
-        df_actual["Label"] = df_actual["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}")
+    if "malla_main" in st.session_state:
+        # Preparación para el Editor
+        df_edit = st.session_state["malla_main"].copy()
+        df_edit["Label"] = df_edit["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}")
         
-        pivot = df_actual.pivot(index="Sujeto", columns="Label", values="Turno")
+        pivot = df_edit.pivot(index="Sujeto", columns="Label", values="Turno")
         sorted_cols = sorted(pivot.columns, key=lambda x: x.split(" - ")[1])
         pivot = pivot[sorted_cols]
 
-        st.subheader("📝 Editor de Malla")
+        st.subheader("📝 Editor de Turnos (Dropdown + Colores)")
+        st.caption("Los bordes naranjas indican días Sábado, Domingo o Festivos.")
+        
         config_cols = {str(c): st.column_config.SelectboxColumn(options=OPCIONES_TURNOS, width="small") for c in pivot.columns}
-        df_editado = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols)
+        
+        df_final_edit = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols)
 
-        if st.button("💾 Guardar y Auditar"):
-            df_final = df_editado.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
-            df_final["Fecha"] = pd.to_datetime(df_final["Label"].apply(lambda x: x.split(" - ")[1]))
-            st.session_state[key] = df_final
-            guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
-            st.success("✅ Guardado.")
+        if st.button("💾 Guardar Cambios y Ejecutar Auditoría"):
+            # Procesar guardado
+            df_save = df_final_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
+            df_save["Fecha"] = pd.to_datetime(df_save["Label"].apply(lambda x: x.split(" - ")[1]))
+            st.session_state["malla_main"] = df_save
+            guardar_github(df_save, "malla_tecnicos_v3.xlsx")
+            st.toast("Guardado exitoso")
 
+        # PANEL DE MÉTRICAS Y ALERTAS
         st.divider()
-        errores, cobertura = ejecutar_auditoria(st.session_state[key], tipo, st.session_state.get(f"desc_cfg_{tipo}", {}))
-        col_m1, col_m2 = st.columns([1, 2])
-        with col_m1:
-            st.metric("Alertas Activas", len(errores))
-            if errores:
-                for e in errores: st.error(e)
-            else: st.success("Malla sin conflictos de descanso ni cobertura.")
-        with col_m2:
-            if cobertura is not None:
-                st.subheader("📈 Cobertura")
-                st.line_chart(cobertura)
+        st.subheader("📊 Auditoría y Métricas de Cobertura")
+        
+        errs, cob = ejecutar_auditoria(st.session_state["malla_main"])
+        
+        m1, m2 = st.columns([1, 2])
+        with m1:
+            st.metric("Alertas Activas", len(errs), delta_color="inverse")
+            with st.container(height=300):
+                if errs:
+                    for e in errs: st.error(e)
+                else:
+                    st.success("✅ Malla sin conflictos detectados.")
+        
+        with m2:
+            st.line_chart(cob)
+            st.caption("Promedio de técnicos activos por día (Objetivo: 3)")
 
 if __name__ == "__main__":
-    pantalla_programador()
     pantalla_programador()
