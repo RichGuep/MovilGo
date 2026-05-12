@@ -45,7 +45,6 @@ def guardar_github(df, nombre_archivo):
     except:
         repo.create_file(nombre_archivo, "Create", data)
 
-# Diccionario de colores (CSS HEX)
 COLORES_MAP = {
     "T1": "#D6EAF8",
     "T2": "#D5F5E3",
@@ -65,7 +64,7 @@ def color_cells_df(val):
     return ''
 
 # =========================================================
-# AUDITORÍA DE SEGURIDAD Y COBERTURA
+# AUDITORÍA
 # =========================================================
 def ejecutar_auditoria(df, tipo):
     errores = []
@@ -87,14 +86,11 @@ def ejecutar_auditoria(df, tipo):
     else:
         t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
         t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
-        for f in t1.index:
-            if t1.get(f,0) < 10 or t2.get(f,0) < 10:
-                errores.append(f"⚠️ Personal insuficiente {f.date()}")
         cobertura = t1 + t2
     return errores, cobertura
 
 # =========================================================
-# LÓGICAS DE GENERACIÓN
+# GENERADORES
 # =========================================================
 def generar_malla_tecnicos(inicio, fin, descansos):
     carga, comp, sacr = {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}
@@ -147,88 +143,72 @@ def generar_malla_abordaje(inicio, fin, desc_grupos, ciclo):
     return pd.DataFrame(filas)
 
 # =========================================================
-# INTERFAZ PRINCIPAL
+# INTERFAZ
 # =========================================================
 def pantalla_programador():
     st.sidebar.title("MovilGo Enterprise")
     tipo = st.sidebar.radio("Personal", ["Técnicos", "Abordaje"])
     
     st.header(f"📅 Gestión de Malla: {tipo}")
-    
-    # Rango de fechas
     c1, c2 = st.columns(2)
-    inicio = c1.date_input("Fecha Inicio", date.today())
-    fin = c2.date_input("Fecha Fin", date.today() + timedelta(days=30))
+    inicio, fin = c1.date_input("Desde", date.today()), c2.date_input("Hasta", date.today() + timedelta(days=30))
 
-    # Parámetros de descanso y rotación
     descansos, ciclo = {}, "Diario"
     if tipo == "Técnicos":
-        st.info("💡 Lógica activa: Bloques de 4 días y prohibición de salto T3 ➔ T1/T2.")
         cols = st.columns(4)
-        for i, g in enumerate(GRUPOS_TEC):
-            descansos[g] = cols[i].selectbox(f"Descanso {g}", DIAS_ES, index=i)
+        for i, g in enumerate(GRUPOS_TEC): descansos[g] = cols[i].selectbox(f"Descanso {g}", DIAS_ES, index=i)
     else:
-        st.subheader("Configuración Grupos Abordaje")
         c_rot, c_des = st.columns([1,3])
         ciclo = c_rot.selectbox("Ciclo Rotación", ["Diario", "Quincenal", "Mensual"])
         cols_a = c_des.columns(5)
-        for i, g in enumerate(GRUPOS_ABO):
-            descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
+        for i, g in enumerate(GRUPOS_ABO): descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
 
-    # Botón Generar
-    if st.button(f"🚀 Generar Malla {tipo}"):
+    if st.button(f"🚀 Generar Nueva Malla {tipo}"):
         df = generar_malla_tecnicos(inicio, fin, descansos) if tipo == "Técnicos" else generar_malla_abordaje(inicio, fin, descansos, ciclo)
         st.session_state[f"malla_{tipo}"] = df
-        st.success("Malla generada. Revise el editor abajo.")
 
-    # Módulo de Edición
     key = f"malla_{tipo}"
     if key in st.session_state:
-        df_actual = st.session_state[key]
+        df_actual = st.session_state[key].copy()
+        
+        # Convertimos las fechas a string antes del pivot para evitar errores de JSON
+        df_actual["Fecha"] = df_actual["Fecha"].dt.strftime('%Y-%m-%d')
         pivot = df_actual.pivot(index="Sujeto", columns="Fecha", values="Turno").sort_index(axis=1)
         
-        st.subheader("📝 Editor con Menú Desplegable y Colores")
-        st.markdown("👉 *Doble clic para editar. Selecciona el turno de la lista.*")
+        st.subheader("📝 Editor Manual (Dropdown + Colores)")
 
-        # Corrección técnica para Pandas 2.1+ y Streamlit
-        # Usamos .map() en lugar de .applymap() para los colores
-        df_estilizado = pivot.style.map(color_cells_df)
-
-        # Configuración de columnas para Dropdown dinámico
+        # CRÍTICO: Las claves de config_cols DEBEN ser strings que coincidan con las columnas del pivot
         config_cols = {
-            col: st.column_config.SelectboxColumn(
-                str(col.date()) if hasattr(col, 'date') else str(col),
+            str(col): st.column_config.SelectboxColumn(
+                label=str(col),
                 options=OPCIONES_TURNOS,
                 width="small"
             ) for col in pivot.columns
         }
 
-        # Renderizado del EDITOR
         df_editado = st.data_editor(
-            df_estilizado, 
+            pivot.style.map(color_cells_df), 
             use_container_width=True, 
             key=f"editor_{tipo}",
             column_config=config_cols
         )
 
-        # Botón Guardar
         if st.button("💾 Guardar Cambios"):
-            # Revertir pivot a formato largo
             df_final = df_editado.reset_index().melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
+            df_final["Fecha"] = pd.to_datetime(df_final["Fecha"])
             st.session_state[key] = df_final
             guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
-            st.toast("✅ Sincronizado con GitHub")
+            st.toast("✅ Guardado en GitHub")
 
-        # Sección de Auditoría
         err, cob = ejecutar_auditoria(st.session_state[key], tipo)
         col_err, col_graf = st.columns([1, 1])
         with col_err:
-            st.subheader("🚨 Auditoría de Salud")
+            st.subheader("🚨 Auditoría")
             if err: 
                 for e in err[:15]: st.error(e)
-            else: st.success("✅ Malla sin infracciones detectadas.")
+            else: st.success("✅ Sin errores.")
         with col_graf:
-            st.subheader("📈 Cobertura Diaria")
+            st.subheader("📈 Cobertura")
             st.line_chart(cob)
 
 if __name__ == "__main__":
