@@ -7,7 +7,7 @@ import io
 from github import Github
 
 # =========================================================
-# 1. CONFIGURACIÓN, CONSTANTES Y FESTIVOS
+# 1. CONFIGURACIÓN, CONSTANTES Y ESTILOS
 # =========================================================
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
@@ -22,8 +22,18 @@ COLORES_MAP = {
     "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"
 }
 
+# --- ESTA FUNCIÓN DEBE ESTAR AQUÍ ARRIBA ---
+def style_malla(df_pivot):
+    """Aplica colores a la tabla del editor de turnos."""
+    def apply_styles(val):
+        key = val if val and str(val).strip() != "" else "DESCANSO"
+        bg = COLORES_MAP.get(key, "#1B2631")
+        txt = "white" if key in ["DESCANSO", "COMPENSADO"] else "#17202A"
+        return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB'
+    return df_pivot.style.map(apply_styles)
+
 # =========================================================
-# 2. FUNCIONES DE APOYO (FECHAS Y CÁLCULOS)
+# 2. FUNCIONES DE APOYO Y CÁLCULOS
 # =========================================================
 def obtener_tipo_dia(fecha):
     if fecha in festivos_co: return "Festivo"
@@ -73,7 +83,7 @@ def guardar_github(df, nombre_archivo):
         st.toast(f"🆕 {nombre_archivo} creado.")
 
 # =========================================================
-# 4. GESTIÓN DE PERSONAL (ASIGNACIÓN POR CUOTAS)
+# 4. GESTIÓN DE PERSONAL (CUOTAS)
 # =========================================================
 def asignar_grupos_automatico(df):
     df = df.copy()
@@ -90,11 +100,9 @@ def asignar_grupos_automatico(df):
         temp_ta = ta.iloc[i*7:(i+1)*7].copy(); temp_ta['GrupoAsignado'] = g
         temp_tb = tb.iloc[i*3:(i+1)*3].copy(); temp_tb['GrupoAsignado'] = g
         res.extend([temp_m, temp_ta, temp_tb])
-    
     for i, g in enumerate(GRUPOS_ABO):
         temp_abo = abo.iloc[i*5:(i+1)*5].copy(); temp_abo['GrupoAsignado'] = g
         res.append(temp_abo)
-        
     return pd.concat(res).reset_index(drop=True)
 
 def pantalla_personal():
@@ -105,7 +113,7 @@ def pantalla_personal():
             st.session_state.df_pers = df
             st.success("Personal cargado.")
     if 'df_pers' in st.session_state:
-        if st.button("🎲 Asignar Grupos (2 Master, 7 Tec A, 3 Tec B)"):
+        if st.button("🎲 Asignar Grupos Aleatorios"):
             st.session_state.df_pers_ready = asignar_grupos_automatico(st.session_state.df_pers)
             st.balloons()
         if 'df_pers_ready' in st.session_state:
@@ -114,71 +122,11 @@ def pantalla_personal():
                 guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 5. MOTOR DE MALLAS (CON LÓGICA DE COMPENSATORIO L-V)
-# =========================================================
-def generar_malla_tecnicos(inicio, fin, descansos_ley):
-    filas = []
-    deudas_compensatorio = {g: 0 for g in GRUPOS_TEC}
-    
-    for fecha in pd.date_range(inicio, fin):
-        dia_n = DIAS_ES[fecha.weekday()]; sem = fecha.isocalendar()[1]
-        asig = {}
-        
-        gps_que_deben_descansar = [g for g, d in descansos_ley.items() if d == dia_n]
-        if len(gps_que_deben_descansar) > 1:
-            idx = sem % len(gps_que_deben_descansar)
-            g_descansa = gps_que_deben_descansar[idx]
-            asig[g_descansa] = "DESCANSO"
-            for g in gps_que_deben_descansar:
-                if g != g_descansa: deudas_compensatorio[g] += 1 
-        elif len(gps_que_deben_descansar) == 1:
-            asig[gps_que_deben_descansar[0]] = "DESCANSO"
-
-        if 0 <= fecha.weekday() <= 4:
-            gps_con_deuda = [g for g, d in deudas_compensatorio.items() if d > 0 and g not in asig]
-            if gps_con_deuda:
-                g_comp = sorted(gps_con_deuda, key=lambda x: deudas_compensatorio[x], reverse=True)[0]
-                asig[g_comp] = "COMPENSADO"
-                deudas_compensatorio[g_comp] -= 1
-
-        activos = [g for g in GRUPOS_TEC if g not in asig]
-        off = sem % 4
-        act_r = sorted(activos, key=lambda x: (GRUPOS_TEC.index(x) + off) % 4)
-        
-        turnos_op = ["T3", "T2", "T1", "T1 APOYO"]
-        for g in act_r:
-            for t in turnos_op:
-                if t not in asig.values():
-                    asig[g] = t; break
-            if g not in asig: asig[g] = "T1 APOYO"
-            
-        for g in GRUPOS_TEC:
-            filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asig.get(g, "DESCANSO")})
-    return pd.DataFrame(filas)
-
-def generar_malla_transaccional(df_final, tipo, config_horas):
-    df_empleados = cargar_excel("empleados_grupos.xlsx")
-    if df_empleados.empty: return pd.DataFrame()
-    
-    detallada = pd.merge(df_final, df_empleados[['Nombre', 'Cargo', 'GrupoAsignado']], 
-                         left_on="Sujeto", right_on="GrupoAsignado", how="inner")
-    
-    detallada["Hora Inicio"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Inicio", "OFF"))
-    detallada["Hora Fin"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Fin", "OFF"))
-    detallada["Horas Prog."] = detallada.apply(calcular_horas_turno, axis=1)
-    detallada["Tipo Día"] = detallada["Fecha"].apply(obtener_tipo_dia)
-    
-    res = detallada[["Fecha", "Tipo Día", "Nombre", "GrupoAsignado", "Cargo", "Turno", "Hora Inicio", "Hora Fin", "Horas Prog."]]
-    return res.rename(columns={"GrupoAsignado": "Grupo"}).sort_values(["Fecha", "Grupo"])
-
-# =========================================================
-# 6. MÉTRICAS DE EQUILIBRIO Y AUDITORÍA
+# 5. MOTORES DE MALLAS Y AUDITORÍA
 # =========================================================
 def ejecutar_auditoria(df, tipo):
     df = df.copy(); df["Fecha"] = pd.to_datetime(df["Fecha"])
     errores = []
-    
-    # Cobertura
     t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
     t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
     if tipo == "Técnicos":
@@ -188,15 +136,57 @@ def ejecutar_auditoria(df, tipo):
             if c < 3: errores.append(f"❌ Cobertura insuficiente {f.date()}")
     else: cob = t1 + t2
     
-    # MÉTRICA DE EQUILIBRIO DE TURNOS
     equidad = df.groupby(["Sujeto", "Turno"]).size().unstack(fill_value=0)
     for c in ["T1", "T2", "T3", "DESCANSO", "COMPENSADO"]:
         if c not in equidad.columns: equidad[c] = 0
-        
     return errores, cob, equidad
 
+def generar_malla_tecnicos(inicio, fin, descansos_ley):
+    filas = []
+    deudas_comp = {g: 0 for g in GRUPOS_TEC}
+    for fecha in pd.date_range(inicio, fin):
+        dia_n = DIAS_ES[fecha.weekday()]; sem = fecha.isocalendar()[1]
+        asig = {}
+        gps_h = [g for g, d in descansos_ley.items() if d == dia_n]
+        
+        if len(gps_h) > 1:
+            idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
+            for g in gps_h: 
+                if g != d_r: deudas_comp[g] += 1
+        elif len(gps_h) == 1:
+            asig[gps_h[0]] = "DESCANSO"
+
+        if 0 <= fecha.weekday() <= 4: # Lógica de Compensatorios L-V
+            gps_con_deuda = [g for g, d in deudas_comp.items() if d > 0 and g not in asig]
+            if gps_con_deuda:
+                g_c = sorted(gps_con_deuda, key=lambda x: deudas_comp[x], reverse=True)[0]
+                asig[g_c] = "COMPENSADO"; deudas_comp[g_c] -= 1
+
+        activos = [g for g in GRUPOS_TEC if g not in asig]
+        off = sem % 4
+        act_r = sorted(activos, key=lambda x: (GRUPOS_TEC.index(x) + off) % 4)
+        turnos_op = ["T3", "T2", "T1", "T1 APOYO"]
+        for g in act_r:
+            for t in turnos_op:
+                if t not in asig.values(): asig[g] = t; break
+            if g not in asig: asig[g] = "T1 APOYO"
+        for g in GRUPOS_TEC: filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asig.get(g, "DESCANSO")})
+    return pd.DataFrame(filas)
+
+def generar_malla_transaccional(df_final, tipo, config_horas):
+    df_empleados = cargar_excel("empleados_grupos.xlsx")
+    if df_empleados.empty: return pd.DataFrame()
+    detallada = pd.merge(df_final, df_empleados[['Nombre', 'Cargo', 'GrupoAsignado']], 
+                         left_on="Sujeto", right_on="GrupoAsignado", how="inner")
+    detallada["Hora Inicio"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Inicio", "OFF"))
+    detallada["Hora Fin"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Fin", "OFF"))
+    detallada["Horas Prog."] = detallada.apply(calcular_horas_turno, axis=1)
+    detallada["Tipo Día"] = detallada["Fecha"].apply(obtener_tipo_dia)
+    res = detallada[["Fecha", "Tipo Día", "Nombre", "GrupoAsignado", "Cargo", "Turno", "Hora Inicio", "Hora Fin", "Horas Prog."]]
+    return res.rename(columns={"GrupoAsignado": "Grupo"}).sort_values(["Fecha", "Grupo"])
+
 # =========================================================
-# 7. INTERFAZ PROGRAMADOR
+# 6. PANTALLA PRINCIPAL
 # =========================================================
 def pantalla_programador():
     tipo = st.sidebar.radio("Módulo", ["Técnicos", "Abordaje"])
@@ -204,7 +194,8 @@ def pantalla_programador():
     with st.expander("⏰ Configuración de Horas"):
         config_h = {}
         t_l = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
-        def_h = {"T1": [time(6,0), time(14,0)], "T2": [time(14,0), time(22,0)], "T3": [time(22,0), time(6,0)], "RELEVO": [time(8,0), time(16,0)], "T1 APOYO": [time(7,0), time(15,0)], "DISPONIBLE": [time(0,0), time(0,0)]}
+        def_h = {"T1": [time(6,0), time(14,0)], "T2": [time(14,0), time(22,0)], "T3": [time(22,0), time(6,0)], 
+                 "RELEVO": [time(8,0), time(16,0)], "T1 APOYO": [time(7,0), time(15,0)], "DISPONIBLE": [time(0,0), time(0,0)]}
         cols = st.columns(3)
         for i, t in enumerate(t_l):
             with cols[i%3]:
@@ -233,6 +224,7 @@ def pantalla_programador():
         sorted_cols = sorted(pivot.columns, key=lambda x: datetime.strptime(x.split(" ")[1] + "/2026", '%d/%m/%Y'))
         
         st.subheader("📝 Editor Maestro")
+        # --- AQUÍ SE LLAMA A style_malla ---
         df_edit = st.data_editor(style_malla(pivot[sorted_cols]), use_container_width=True)
         
         df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
@@ -241,17 +233,13 @@ def pantalla_programador():
         malla_det = generar_malla_transaccional(df_final, tipo, config_h)
         errs, cob, equidad = ejecutar_auditoria(df_final, tipo)
         
-        st.subheader("📋 Malla Detallada por Persona")
+        st.subheader("📋 Malla Detallada")
         st.dataframe(malla_det, use_container_width=True)
-        
-        st.subheader("📊 Métrica de Equilibrio de Turnos")
-        st.markdown("Esta tabla permite verificar que la carga de turnos sea equitativa entre todos los grupos.")
-        st.dataframe(equidad.style.background_gradient(cmap="Blues"), use_container_width=True)
-        
-        st.subheader("📈 Gráfico de Cobertura Diaria")
-        st.area_chart(cob)
-        
-        if not errs: st.success("✅ Escenario Validado 2026")
+        st.subheader("📊 Métricas de Equilibrio y Cobertura")
+        a1, a2 = st.columns(2)
+        with a1: st.dataframe(equidad.style.background_gradient(cmap="Blues"), use_container_width=True)
+        with a2: st.area_chart(cob)
+        if not errs: st.success("✅ Escenario Validado")
         else:
             for e in errs: st.error(e)
 
