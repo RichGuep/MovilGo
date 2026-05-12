@@ -61,7 +61,7 @@ def style_malla(df_pivot):
             fecha_str = col.name.split(" - ")[1]
             fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
             if fecha_obj.weekday() >= 5 or fecha_obj in festivos_co:
-                return ['background-color: #FDF2E9; border: 1px solid #E67E22;' for _ in col]
+                return ['background-color: #FDF2E9; border-bottom: 2px solid #E67E22;' for _ in col]
         except: pass
         return ['' for _ in col]
 
@@ -86,46 +86,57 @@ def ejecutar_auditoria(df, tipo):
             for _, r in gdf.iterrows():
                 if prev == "T3" and r["Turno"] in ["T1", "T2", "T1 APOYO"]:
                     errores.append(f"🚨 {g}: Salto T3 ➔ {r['Turno']} el {r['Fecha'].date()}")
+                if r["Turno"] == "COMPENSADO" and r["Fecha"].weekday() >= 5:
+                    errores.append(f"⚠️ {g}: Compensado en fin de semana el {r['Fecha'].date()}")
                 prev = r["Turno"]
     else:
         t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
         t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
-        for f in t1.index:
-            if t1.get(f,0) < 10 or t2.get(f,0) < 10:
-                errores.append(f"⚠️ {f.date()}: T1({t1.get(f,0)}/10) T2({t2.get(f,0)}/10)")
         cobertura = t1 + t2
     return errores, cobertura
 
 # =========================================================
-# LÓGICAS DE GENERACIÓN (MEJORADAS)
+# LÓGICAS DE GENERACIÓN
 # =========================================================
 def generar_malla_tecnicos(inicio, fin, descansos):
     carga, comp, sacr = {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}, {g:0 for g in GRUPOS_TEC}
     u_turno, c_bloque = {g: "DESCANSO" for g in GRUPOS_TEC}, {g: 0 for g in GRUPOS_TEC}
     filas = []
     for fecha in pd.date_range(inicio, fin):
-        dia = DIAS_ES[fecha.weekday()]
-        desc_dia = [g for g in GRUPOS_TEC if descansos.get(g) == dia]
+        dia_semana_idx = fecha.weekday()
+        dia_nombre = DIAS_ES[dia_semana_idx]
+        desc_dia = [g for g in GRUPOS_TEC if descansos.get(g) == dia_nombre]
         activos = [g for g in GRUPOS_TEC if g not in desc_dia]
+        
         while len(activos) < 3:
             mov = sorted(desc_dia, key=lambda g:(sacr[g], carga[g]))[0]
             desc_dia.remove(mov); activos.append(mov); sacr[mov]+=1; comp[mov]+=1
+
         asignados = {g: "DESCANSO" for g in desc_dia}
         for g in desc_dia: u_turno[g], c_bloque[g] = "DESCANSO", 0
+
+        # Asignación por bloques
         for t in ["T3", "T2", "T1"]:
             cand = [g for g in activos if u_turno[g] == t and c_bloque[g] < 4]
             for g in cand:
                 if g in activos: asignados[g], carga[g], c_bloque[g] = t, carga[g]+1, c_bloque[g]+1; activos.remove(g)
+
         for t in ["T3", "T2", "T1"]:
             if t not in asignados.values():
                 pos = [g for g in activos if not (t in ["T1", "T2"] and u_turno[g] == "T3")]
                 if pos:
                     sel = sorted(pos, key=lambda x: carga[x])[0]
                     asignados[sel], carga[sel], u_turno[sel], c_bloque[sel] = t, carga[sel]+1, t, 1; activos.remove(sel)
-        for g in activos:
-            if comp[g] > 0: asignados[g], comp[g], u_turno[g] = "COMPENSADO", comp[g]-1, "DESCANSO"
-            else: asignados[g] = "T1 APOYO" if u_turno[g] != "T3" else "DESCANSO"
-            c_bloque[g] = 0
+
+        # APOYOS Y COMPENSADOS (Solo Lunes a Viernes)
+        for g in activos[:]:
+            # Restricción: Solo compensar si es día laboral (0=Lunes, 4=Viernes)
+            if comp[g] > 0 and dia_semana_idx < 5:
+                asignados[g] = "COMPENSADO"; comp[g] -= 1; u_turno[g] = "DESCANSO"
+            else:
+                asignados[g] = "T1 APOYO" if u_turno[g] != "T3" else "DESCANSO"
+            c_bloque[g] = 0; activos.remove(g)
+        
         for g in GRUPOS_TEC: filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asignados.get(g, "DESCANSO")})
     return pd.DataFrame(filas)
 
@@ -133,8 +144,8 @@ def generar_malla_abordaje(inicio, fin, desc_grupos, ciclo):
     filas = []
     todos = [p for sub in PERSONAL_ABO.values() for p in sub]
     for fecha in pd.date_range(inicio, fin):
-        dia = DIAS_ES[fecha.weekday()]
-        desc = [p for g in GRUPOS_ABO if desc_grupos.get(g) == dia for p in PERSONAL_ABO[g]]
+        dia_idx = fecha.weekday()
+        desc = [p for g in GRUPOS_ABO if desc_grupos.get(g) == DIAS_ES[dia_idx] for p in PERSONAL_ABO[g]]
         act = [p for p in todos if p not in desc]
         while len(act) < 21:
             if desc: mov = desc.pop(0); act.append(mov)
@@ -166,7 +177,7 @@ def pantalla_programador():
         for i, g in enumerate(GRUPOS_TEC): descansos[g] = cols[i].selectbox(f"Descanso {g}", DIAS_ES, index=i)
     else:
         c_rot, c_des = st.columns([1,3])
-        ciclo = c_rot.selectbox("Rotación", ["Diario", "Quincenal", "Mensual"])
+        ciclo = c_rot.selectbox("Ciclo Rotación", ["Diario", "Quincenal", "Mensual"])
         cols_a = c_des.columns(5)
         for i, g in enumerate(GRUPOS_ABO): descansos[g] = cols_a[i].selectbox(g, DIAS_ES, index=i)
 
@@ -177,20 +188,15 @@ def pantalla_programador():
     key = f"malla_{tipo}"
     if key in st.session_state:
         df_actual = st.session_state[key].copy()
-        df_actual = df_actual.sort_values(by=["Fecha", "Sujeto"]) # Orden cronológico garantizado
-        
-        # Etiquetas
+        df_actual = df_actual.sort_values(by=["Fecha", "Sujeto"])
         df_actual["Label"] = df_actual["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}")
         
-        # Pivot ordenado por fecha real
         pivot = df_actual.pivot(index="Sujeto", columns="Label", values="Turno")
-        # Re-ordenar columnas del pivot para que sigan el calendario
         sorted_cols = sorted(pivot.columns, key=lambda x: x.split(" - ")[1])
         pivot = pivot[sorted_cols]
 
         st.subheader("📝 Editor de Malla")
         config_cols = {str(c): st.column_config.SelectboxColumn(options=OPCIONES_TURNOS, width="small") for c in pivot.columns}
-        
         df_editado = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols)
 
         if st.button("💾 Guardar y Auditar"):
@@ -200,20 +206,16 @@ def pantalla_programador():
             guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
             st.success("✅ Guardado.")
 
-        # PANEL DE CONTROL (MÉTRICAS Y ALERTAS)
         st.divider()
         errores, cobertura = ejecutar_auditoria(st.session_state[key], tipo)
         col_m1, col_m2 = st.columns([1, 2])
-        
         with col_m1:
-            st.metric("Total Alertas", len(errores), delta_color="inverse")
-            st.subheader("🚨 Detalle de Alertas")
+            st.metric("Alertas Activas", len(errores))
             if errores:
                 for e in errores: st.error(e)
-            else: st.success("Malla limpia")
-        
+            else: st.success("Malla perfecta")
         with col_m2:
-            st.subheader("📈 Cobertura Diaria")
+            st.subheader("📈 Cobertura")
             st.line_chart(cobertura)
 
 if __name__ == "__main__":
