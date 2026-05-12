@@ -142,7 +142,6 @@ def pantalla_tecnico():
     fin = st.date_input("Fin", date.today()+timedelta(days=30))
 
     descanso = {}
-
     cols = st.columns(4)
 
     for i,g in enumerate(GRUPOS_TEC):
@@ -177,6 +176,16 @@ def pantalla_tecnico():
                     if last[g] != t:
                         base += 1000 if streak[g] < 4 else 10
                     return base
+
+                # =====================================================
+                # 🔥 FIX CRÍTICO: PROTECCIÓN DE LISTA VACÍA
+                # =====================================================
+
+                if len(activos) == 0:
+                    activos = [g for g in GRUPOS_TEC if g not in descanso_dia]
+
+                if len(activos) == 0:
+                    activos = GRUPOS_TEC.copy()
 
                 sel = sorted(activos, key=score)[0]
 
@@ -239,14 +248,12 @@ def pantalla_abordaje():
     fin = st.date_input("Fin AB", date.today()+timedelta(days=30))
 
     descanso = {}
-
     cols = st.columns(len(GRUPOS_AB))
 
     for i,g in enumerate(GRUPOS_AB):
         descanso[g] = cols[i].selectbox(g, DIAS_ES, index=i)
 
     filas = []
-
     historial = {}
 
     if st.button("🚀 Generar Abordaje"):
@@ -258,7 +265,6 @@ def pantalla_abordaje():
 
             grupos_descanso = [g for g in GRUPOS_AB if descanso[g] == dia]
 
-            # DESCANSO TOTAL
             if grupos_descanso:
 
                 for g in GRUPOS_AB:
@@ -336,9 +342,13 @@ def pantalla_parametrizador():
 
     st.header("⚙️ Parametrizador")
 
-def main():
+    st.info("Base lista para conectar empleados.xlsx y reglas de negocio")
 
-    import streamlit as st
+# =========================================================
+# MAIN (IMPORTANTE)
+# =========================================================
+
+def main():
 
     menu = st.radio(
         "Módulos",
