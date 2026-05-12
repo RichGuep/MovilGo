@@ -1,7 +1,7 @@
 # =========================================================
 # LOGIC_PROGRAMADOR.PY
 # OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL REAL
-# + COMPENSACIÓN SEMANAL CORRECTA (SOLO SI INCUMPLE DESCANSO)
+# + COMPENSACIÓN SEMANAL CORRECTA + FIX CRASH LISTAS VACÍAS
 # =========================================================
 
 import streamlit as st
@@ -125,9 +125,9 @@ def generar_malla():
     last_turn = {g: None for g in GRUPOS}
     streak = {g: 0 for g in GRUPOS}
 
-    # 🔥 CONTROL DE DESCANSO SEMANAL
     descanso_ok_semana = {g: False for g in GRUPOS}
     pendiente_comp = {g: False for g in GRUPOS}
+
     prev_week = None
 
     filas = []
@@ -146,7 +146,7 @@ def generar_malla():
             week_id = (year, week)
 
             # =================================================
-            # CAMBIO DE SEMANA → marcar incumplimientos
+            # CAMBIO DE SEMANA
             # =================================================
             if prev_week and week_id != prev_week:
 
@@ -163,14 +163,10 @@ def generar_malla():
 
             asignados = {}
 
-            # =================================================
-            # TODOS INICIAN ACTIVOS (NO PREFILTRAR DESCANSO)
-            # =================================================
             activos = GRUPOS.copy()
-            descanso_dia = []
 
             # =================================================
-            # MARCAR DESCANSO PROGRAMADO (SI CUMPLE)
+            # DESCANSO PROGRAMADO (NORMAL)
             # =================================================
             for g in GRUPOS:
                 if descanso[g] == dia and not pendiente_comp[g]:
@@ -178,17 +174,18 @@ def generar_malla():
                     descanso_ok_semana[g] = True
                     last_turn[g] = "DESCANSO"
                     streak[g] = 0
-                    activos.remove(g)
+                    if g in activos:
+                        activos.remove(g)
 
             # =================================================
-            # 🔥 COMPENSACIÓN SOLO SI INCUMPLIÓ DESCANSO
+            # COMPENSACIÓN (SOLO SI INCUMPLIO)
             # =================================================
             for g in GRUPOS:
                 if pendiente_comp[g]:
 
                     asignados[g] = "DESCANSO"
-                    descanso_ok_semana[g] = True
                     pendiente_comp[g] = False
+                    descanso_ok_semana[g] = True
 
                     if g in activos:
                         activos.remove(g)
@@ -197,11 +194,18 @@ def generar_malla():
                     streak[g] = 0
 
             # =================================================
-            # ASEGURAR COBERTURA MÍNIMA
+            # ASEGURAR COBERTURA (FIX CRASH)
             # =================================================
             while len(activos) < 3:
-                mov = sorted(activos, key=lambda g:(sacrificio[g],carga[g]))[0]
-                activos.remove(mov)
+
+                candidatos = [g for g in GRUPOS if g not in activos]
+
+                if not candidatos:
+                    break
+
+                mov = sorted(candidatos, key=lambda g:(sacrificio[g], carga[g]))[0]
+
+                activos.append(mov)
                 sacrificio[mov] += 1
                 compensado[mov] += 1
 
@@ -210,14 +214,14 @@ def generar_malla():
             # =================================================
             for turno in ["T1","T2","T3"]:
 
+                if not activos:
+                    break
+
                 def score(g):
                     base = carga[g] + conteo[g][turno]
 
                     if last_turn[g] != turno:
-                        if streak[g] < 4:
-                            base += 1000
-                        else:
-                            base += 10
+                        base += 1000 if streak[g] < 4 else 10
                     else:
                         base -= 5
 
@@ -270,7 +274,7 @@ def generar_malla():
 
         guardar_github(df)
 
-        st.success("Malla generada con compensación correcta")
+        st.success("Malla generada correctamente y estable")
 
 # =========================================================
 # INTERFAZ
