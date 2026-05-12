@@ -1,7 +1,7 @@
 # =========================================================
 # LOGIC_PROGRAMADOR.PY
 # OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - HORIZONTAL REAL
-# + BLOQUES ESTABILIDAD + COMPENSACIÓN SEMANAL CORREGIDA
+# + COMPENSACIÓN SEMANAL CORRECTA (SOLO SI INCUMPLE DESCANSO)
 # =========================================================
 
 import streamlit as st
@@ -125,7 +125,7 @@ def generar_malla():
     last_turn = {g: None for g in GRUPOS}
     streak = {g: 0 for g in GRUPOS}
 
-    # 🔥 CONTROL SEMANAL DE DESCANSO
+    # 🔥 CONTROL DE DESCANSO SEMANAL
     descanso_ok_semana = {g: False for g in GRUPOS}
     pendiente_comp = {g: False for g in GRUPOS}
     prev_week = None
@@ -146,7 +146,7 @@ def generar_malla():
             week_id = (year, week)
 
             # =================================================
-            # CAMBIO DE SEMANA → validar incumplidos
+            # CAMBIO DE SEMANA → marcar incumplimientos
             # =================================================
             if prev_week and week_id != prev_week:
 
@@ -163,42 +163,50 @@ def generar_malla():
 
             asignados = {}
 
-            descanso_dia = [g for g in GRUPOS if descanso[g]==dia]
-            activos = [g for g in GRUPOS if g not in descanso_dia]
+            # =================================================
+            # TODOS INICIAN ACTIVOS (NO PREFILTRAR DESCANSO)
+            # =================================================
+            activos = GRUPOS.copy()
+            descanso_dia = []
 
             # =================================================
-            # 🔥 COMPENSACIÓN FORZADA (REGLA CRÍTICA)
+            # MARCAR DESCANSO PROGRAMADO (SI CUMPLE)
             # =================================================
-            for g in list(activos):
-                if pendiente_comp[g]:
+            for g in GRUPOS:
+                if descanso[g] == dia and not pendiente_comp[g]:
                     asignados[g] = "DESCANSO"
-                    pendiente_comp[g] = False
                     descanso_ok_semana[g] = True
+                    last_turn[g] = "DESCANSO"
+                    streak[g] = 0
                     activos.remove(g)
+
+            # =================================================
+            # 🔥 COMPENSACIÓN SOLO SI INCUMPLIÓ DESCANSO
+            # =================================================
+            for g in GRUPOS:
+                if pendiente_comp[g]:
+
+                    asignados[g] = "DESCANSO"
+                    descanso_ok_semana[g] = True
+                    pendiente_comp[g] = False
+
+                    if g in activos:
+                        activos.remove(g)
+
                     last_turn[g] = "DESCANSO"
                     streak[g] = 0
 
             # =================================================
-            # DESCANSO PROGRAMADO
-            # =================================================
-            for g in descanso_dia:
-                asignados[g] = "DESCANSO"
-                descanso_ok_semana[g] = True
-                last_turn[g] = "DESCANSO"
-                streak[g] = 0
-
-            # =================================================
-            # ASEGURAR COBERTURA
+            # ASEGURAR COBERTURA MÍNIMA
             # =================================================
             while len(activos) < 3:
-                mov = sorted(descanso_dia, key=lambda g:(sacrificio[g],carga[g]))[0]
-                descanso_dia.remove(mov)
-                activos.append(mov)
-                sacrificio[mov]+=1
-                compensado[mov]+=1
+                mov = sorted(activos, key=lambda g:(sacrificio[g],carga[g]))[0]
+                activos.remove(mov)
+                sacrificio[mov] += 1
+                compensado[mov] += 1
 
             # =================================================
-            # TURNOS PRINCIPALES (BLOQUES 4 DÍAS)
+            # TURNOS PRINCIPALES
             # =================================================
             for turno in ["T1","T2","T3"]:
 
@@ -262,7 +270,7 @@ def generar_malla():
 
         guardar_github(df)
 
-        st.success("Malla generada con compensación semanal corregida")
+        st.success("Malla generada con compensación correcta")
 
 # =========================================================
 # INTERFAZ
@@ -271,7 +279,7 @@ def pantalla_programador():
 
     op = st.radio("Módulo",["Programador","Parametrizador"],horizontal=True)
 
-    if op=="Parametrizador":
+    if op == "Parametrizador":
         st.write("OK")
         return
 
@@ -309,7 +317,6 @@ def pantalla_programador():
     with col2:
 
         st.subheader("🚨 Auditoría")
-
         errores, cobertura = auditoria(df)
 
         if errores:
