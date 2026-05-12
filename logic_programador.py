@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - REACTIVO
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - STABLE FIX
 # =========================================================
 
 import streamlit as st
@@ -27,10 +27,8 @@ def color_cell(v):
         "T1":"background-color:#D6EAF8;",
         "T2":"background-color:#D5F5E3;",
         "T3":"background-color:#FADBD8;",
-
         "T1 APOYO":"background-color:#EBF5FB;",
         "T2 APOYO":"background-color:#EAF2F8;",
-
         "DESCANSO":"background-color:#2C3E50;color:#F9E79F;font-weight:700;",
         "COMPENSADO":"background-color:#FDEBD0;font-weight:600;"
     }.get(v,"")
@@ -50,7 +48,7 @@ def parametrizador():
     st.dataframe(df, use_container_width=True)
 
 # =========================================================
-# AUDITORÍA REACTIVA
+# AUDITORÍA
 # =========================================================
 def auditoria(df):
 
@@ -74,7 +72,7 @@ def auditoria(df):
     return errores
 
 # =========================================================
-# GENERADOR + EDITOR
+# GENERADOR
 # =========================================================
 def generar_malla():
 
@@ -139,7 +137,7 @@ def generar_malla():
             for g in descanso_grupos:
                 asignados[g]="DESCANSO"
 
-            # TURNOS BASE
+            # TURNOS PRINCIPALES
             for t in ["T1","T2","T3"]:
 
                 sel = sorted(activos, key=lambda g:(carga[g],conteo[g][t]))[0]
@@ -159,6 +157,7 @@ def generar_malla():
                 if g not in asignados:
                     asignados[g]="T1 APOYO"
 
+            # GUARDAR
             for g in GRUPOS:
                 filas.append({
                     "Grupo":g,
@@ -171,19 +170,24 @@ def generar_malla():
         st.session_state["df"]=pd.DataFrame(filas)
 
     # =========================
-    # VISUAL + EDITOR + ALERTAS
+    # VISUALIZACIÓN
     # =========================
     if "df" in st.session_state:
 
         df = st.session_state["df"]
 
-        # ---------------------
-        # PIVOT HORIZONTAL
-        # ---------------------
-        pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
+        # 🔥 FIX CRÍTICO: asegurar datetime
+        df["Fecha"] = pd.to_datetime(df["Fecha"])
 
+        pivot = df.pivot(
+            index="Grupo",
+            columns="Fecha",
+            values="Turno"
+        )
+
+        # 🔥 FIX STRFTIME SEGURO
         pivot.columns = [
-            f"{c.strftime('%d-%m')}\n{DIAS_ES[c.weekday()]}"
+            f"{pd.to_datetime(c).strftime('%d-%m')}\n{DIAS_ES[pd.to_datetime(c).weekday()]}"
             for c in pivot.columns
         ]
 
@@ -228,9 +232,6 @@ def generar_malla():
                 use_container_width=True
             )
 
-        # =========================
-        # ALERTAS DINÁMICAS
-        # =========================
         with col2:
 
             st.subheader("🚨 Auditoría")
@@ -241,7 +242,7 @@ def generar_malla():
                 st.success("Sin errores")
 
             else:
-                st.warning(f"{len(errores)} alertas activas")
+                st.warning(f"{len(errores)} alertas")
 
                 for e in errores:
                     st.error(e)
