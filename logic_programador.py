@@ -1,6 +1,6 @@
 # logic_programador.py
 # =========================================================
-# OPTIMIZADOR PRO ENTERPRISE - VERSION OPERATIVA REAL
+# OPTIMIZADOR INTELIGENTE PRO ENTERPRISE - ESTABLE FINAL
 # =========================================================
 
 import streamlit as st
@@ -8,6 +8,7 @@ import pandas as pd
 from datetime import date, timedelta
 import holidays
 import io
+import base64
 from github import Github
 
 # =========================================================
@@ -22,18 +23,18 @@ DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 festivos_co = holidays.Colombia()
 
 # =========================================================
-# HORARIOS REALES
+# HORARIOS (REFERENCIA)
 # =========================================================
 HORARIOS = {
-    "T1":"05:30 - 12:50",
-    "T2":"13:30 - 20:50",
-    "T3":"21:30 - 04:50",
-    "T1 APOYO":"05:30 - 12:50",
-    "T2 APOYO":"13:30 - 20:50"
+    "T1": ("05:30","12:50"),
+    "T2": ("13:30","20:50"),
+    "T3": ("21:30","04:50"),
+    "T1 APOYO": ("05:30","12:50"),
+    "T2 APOYO": ("13:30","20:50")
 }
 
 # =========================================================
-# GITHUB
+# GITHUB (CORREGIDO)
 # =========================================================
 def conectar_github():
     try:
@@ -45,26 +46,45 @@ def conectar_github():
 
 
 def guardar_github(df):
+
     repo = conectar_github()
     if not repo:
         return
 
     buffer = io.BytesIO()
+
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
 
-    data = buffer.getvalue()
+    content = buffer.getvalue()
+
+    encoded = base64.b64encode(content).decode("utf-8")
+
+    path = "malla_historica.xlsx"
 
     try:
-        file = repo.get_contents("malla_historica.xlsx")
-        repo.update_file("malla_historica.xlsx", "update", data, file.sha)
+        file = repo.get_contents(path)
+
+        repo.update_file(
+            path,
+            "update malla",
+            encoded,
+            file.sha
+        )
+
     except:
-        repo.create_file("malla_historica.xlsx", "create", data)
+
+        repo.create_file(
+            path,
+            "create malla",
+            encoded
+        )
 
 # =========================================================
-# COLORES
+# COLORES SUAVES
 # =========================================================
 def color_cell(v):
+
     return {
         "T1":"background-color:#D6EAF8;",
         "T2":"background-color:#D5F5E3;",
@@ -76,22 +96,18 @@ def color_cell(v):
     }.get(v,"")
 
 # =========================================================
-# MODOS
-# =========================================================
-MODOS = ["Rotación","Fijo por grupo"]
-
-# =========================================================
-# AUDITORIA COMPLETA
+# AUDITORIA REAL
 # =========================================================
 def auditoria(df):
 
     errores = []
+
     df = df.copy()
     df["Fecha"] = pd.to_datetime(df["Fecha"])
 
-    # =========================
-    # COBERTURA REAL
-    # =========================
+    # ---------------------------
+    # COBERTURA
+    # ---------------------------
     for fecha, g in df.groupby("Fecha"):
 
         turnos = set(g["Turno"])
@@ -105,9 +121,9 @@ def auditoria(df):
         if "T3" not in turnos:
             errores.append(f"❌ Falta T3 {fecha.date()}")
 
-    # =========================
+    # ---------------------------
     # SALTOS
-    # =========================
+    # ---------------------------
     for grupo, gdf in df.groupby("Grupo"):
 
         gdf = gdf.sort_values("Fecha")
@@ -120,18 +136,18 @@ def auditoria(df):
                 errores.append(f"{grupo} salto T2→T1 {r['Fecha'].date()}")
 
             if prev == "T3" and r["Turno"] in ["T1","T2","T1 APOYO","T2 APOYO"]:
-                errores.append(f"{grupo} salto T3 incorrecto {r['Fecha'].date()}")
+                errores.append(f"{grupo} salto T3 inválido {r['Fecha'].date()}")
 
             prev = r["Turno"]
 
     return errores
 
 # =========================================================
-# GENERADOR CON MODOS
+# GENERADOR INTELIGENTE CON APOYO
 # =========================================================
 def generar_malla(modo, fijo):
 
-    st.header("🚀 OPTIMIZADOR PRO - OPERATIVO")
+    st.header("🚀 OPTIMIZADOR PRO ENTERPRISE")
 
     c1,c2 = st.columns(2)
 
@@ -148,9 +164,9 @@ def generar_malla(modo, fijo):
 
         fechas = pd.date_range(inicio, fin)
 
-        rotacion = ["T1","T2","T3"]
-
         filas = []
+
+        rotacion = ["T1","T2","T3"]
 
         for i,fecha in enumerate(fechas):
 
@@ -160,34 +176,52 @@ def generar_malla(modo, fijo):
             asignados = {}
             disponibles = GRUPOS.copy()
 
-            # descansos
+            # DESCANSOS
             desc = [g for g in GRUPOS if descanso[g]==dia]
 
             for g in desc:
-                asignados[g]="DESCANSO"
+                asignados[g] = "DESCANSO"
                 if g in disponibles:
                     disponibles.remove(g)
 
-            # =========================
-            # MODO FIJO
-            # =========================
+            # MODO FIJO / ROTACIÓN
             if modo == "Fijo por grupo":
 
                 for idx,g in enumerate(disponibles[:3]):
-
                     asignados[g] = fijo[g]
 
             else:
 
-                offset = (i//7)%3
+                offset = (i // 7) % 3
 
                 for j,g in enumerate(disponibles[:3]):
-
                     asignados[g] = rotacion[(offset+j)%3]
 
-            # APOYOS (correctos)
-            for g in disponibles[3:]:
+            # ---------------------------
+            # COBERTURA FALTANTE → APOYO
+            # ---------------------------
+            turnos_asignados = list(asignados.values())
 
+            faltantes = []
+
+            if "T1" not in turnos_asignados and "T1 APOYO" not in turnos_asignados:
+                faltantes.append("T1")
+
+            if "T2" not in turnos_asignados and "T2 APOYO" not in turnos_asignados:
+                faltantes.append("T2")
+
+            if "T3" not in turnos_asignados:
+                faltantes.append("T3")
+
+            sobrantes = disponibles[3:]
+
+            for f in faltantes:
+
+                if sobrantes:
+                    g = sobrantes.pop(0)
+                    asignados[g] = f
+
+            for g in sobrantes:
                 asignados[g] = "T1 APOYO"
 
             # guardar
@@ -207,29 +241,50 @@ def generar_malla(modo, fijo):
 
         guardar_github(df)
 
-        st.success("Malla generada")
+        st.success("Malla generada correctamente")
 
 # =========================================================
-# UI
+# PROGRAMACIÓN DETALLADA
+# =========================================================
+def programacion_detallada(df):
+
+    st.subheader("📋 Programación detallada")
+
+    detalle = []
+
+    for _,r in df.iterrows():
+
+        turno = r["Turno"]
+
+        inicio, fin = HORARIOS.get(turno, ("",""))
+
+        detalle.append({
+            "Fecha": r["Fecha"],
+            "Grupo": r["Grupo"],
+            "Turno": turno,
+            "Hora inicio": inicio,
+            "Hora fin": fin
+        })
+
+    st.dataframe(pd.DataFrame(detalle), use_container_width=True)
+
+# =========================================================
+# UI PRINCIPAL
 # =========================================================
 def pantalla_programador():
 
-    modo = st.radio("Modo", MODOS)
+    modo = st.radio("Modo", ["Rotación","Fijo por grupo"])
 
-    # FIXED MODE CONFIG
     fijo = {}
 
     if modo == "Fijo por grupo":
 
-        st.subheader("🔒 Turnos fijos por grupo")
+        st.subheader("🔒 Turnos fijos")
 
         cols = st.columns(len(GRUPOS))
 
         for i,g in enumerate(GRUPOS):
-            fijo[g] = cols[i].selectbox(
-                g,
-                ["T1","T2","T3"]
-            )
+            fijo[g] = cols[i].selectbox(g, ["T1","T2","T3"])
 
     generar_malla(modo, fijo)
 
@@ -242,7 +297,7 @@ def pantalla_programador():
 
     with col1:
 
-        st.subheader("📊 MALLA EDITABLE")
+        st.subheader("📊 MALLA HORIZONTAL EDITABLE")
 
         pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
@@ -280,3 +335,5 @@ def pantalla_programador():
 
         if not errores:
             st.success("OK")
+
+    programacion_detallada(df)
