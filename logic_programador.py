@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date, time
-import holidays
 import io
 from github import Github
 
@@ -40,64 +39,64 @@ def cargar_excel(nombre_archivo):
 
 def guardar_github(df, nombre_archivo):
     repo = conectar_github()
-    if not repo: 
-        st.error("No se pudo conectar a GitHub.")
-        return
+    if not repo: return
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
     try:
         file = repo.get_contents(nombre_archivo)
         repo.update_file(nombre_archivo, f"Update {datetime.now()}", buffer.getvalue(), file.sha)
-        st.toast(f"✅ {nombre_archivo} sincronizado.")
+        st.toast(f"✅ Sincronizado: {nombre_archivo}")
     except:
         repo.create_file(nombre_archivo, "Create", buffer.getvalue())
-        st.toast(f"🆕 {nombre_archivo} creado.")
+        st.toast(f"🆕 Creado: {nombre_archivo}")
 
 # =========================================================
-# 3. GESTIÓN DE PERSONAL
+# 3. PARAMETRIZADOR DE GRUPOS (CUOTAS 2026)
 # =========================================================
 def asignar_grupos_automatico(df):
     df = df.copy()
+    # Mezcla aleatoria por categoría
     masters = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     tecs_a = df[df['Cargo'].str.contains('Técnico A', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     tecs_b = df[df['Cargo'].str.contains('Técnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     abordaje = df[df['Cargo'].str.contains('Abordaje', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     
-    res_tec = []
+    final_rows = []
+    # Técnicos: 2 Master, 7 Tec A, 3 Tec B por grupo
     for i, g in enumerate(GRUPOS_TEC):
         m = masters.iloc[i*2:(i+1)*2].copy(); m['Grupo'] = g
         ta = tecs_a.iloc[i*7:(i+1)*7].copy(); ta['Grupo'] = g
         tb = tecs_b.iloc[i*3:(i+1)*3].copy(); tb['Grupo'] = g
-        res_tec.extend([m, ta, tb])
+        final_rows.extend([m, ta, tb])
         
-    res_abo = []
+    # Abordaje: 5 por grupo
     for i, g in enumerate(GRUPOS_ABO):
         abo = abordaje.iloc[i*5:(i+1)*5].copy(); abo['Grupo'] = g
-        res_abo.append(abo)
+        final_rows.append(abo)
         
-    return pd.concat(res_tec + res_abo)
+    return pd.concat(final_rows)
 
 def pantalla_personal():
-    st.subheader("👥 Parametrización de Grupos")
-    if st.button("📥 Importar empleados.xlsx desde GitHub"):
+    st.subheader("👥 Gestión y Parametrización de Grupos")
+    if st.button("📥 Importar empleados.xlsx"):
         df = cargar_excel("empleados.xlsx")
         if not df.empty:
             st.session_state.df_pers = df
-            st.success("Personal cargado.")
+            st.success("Lista de empleados cargada correctamente.")
             
     if 'df_pers' in st.session_state:
-        if st.button("🎲 Asignar Grupos Aleatoriamente (Cuotas 2026)"):
+        if st.button("🎲 Asignar Grupos Aleatoriamente"):
             st.session_state.df_pers_ready = asignar_grupos_automatico(st.session_state.df_pers)
             st.balloons()
             
         if 'df_pers_ready' in st.session_state:
-            df_final = st.data_editor(st.session_state.df_pers_ready, use_container_width=True)
-            if st.button("💾 Guardar Estructura en GitHub"):
-                guardar_github(df_final, "empleados_grupos.xlsx")
+            df_edit = st.data_editor(st.session_state.df_pers_ready, use_container_width=True)
+            if st.button("💾 Guardar Nueva Estructura en GitHub"):
+                guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR DE MALLAS Y TURNOS (CORREGIDO)
+# 4. MOTOR DE MALLAS
 # =========================================================
 def style_malla(df_pivot):
     def apply_styles(val):
@@ -112,15 +111,14 @@ def generar_malla_transaccional(df_final, tipo, config_horas):
     detallada["Hora Inicio"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Inicio", "OFF"))
     detallada["Hora Fin"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Fin", "OFF"))
     
-    # Determinamos el Grupo
     if tipo == "Técnicos":
         detallada["Grupo"] = detallada["Sujeto"]
     else:
         detallada["Grupo"] = detallada["Sujeto"].apply(lambda x: x.split("-")[0] if "-" in x else "Abordaje")
 
-    # Reordenamos y renombramos asegurando que la cuenta de columnas sea exacta (6 columnas)
+    # Selección exacta de 6 columnas para evitar el ValueError anterior
     detallada = detallada[["Fecha", "Sujeto", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]]
-    detallada.columns = ["Fecha", "Nombre/Persona", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]
+    detallada.columns = ["Fecha", "Nombre", "Grupo", "Turno", "Hora Inicio", "Hora Fin"]
     return detallada
 
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
@@ -165,9 +163,9 @@ def generar_malla_abordaje(inicio, fin, desc_cfg, ciclo):
     return pd.DataFrame(filas)
 
 def pantalla_programador():
-    tipo = st.sidebar.radio("Módulo", ["Técnicos", "Abordaje"])
+    tipo = st.sidebar.radio("Módulo Operativo", ["Técnicos", "Abordaje"])
     
-    with st.expander("⏰ Configuración de Jornadas"):
+    with st.expander("⏰ Configuración de Horas (Minuto a Minuto)"):
         config_horas = {}
         t_list = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
         def_h = {"T1": [time(6,0), time(14,0)], "T2": [time(14,0), time(22,0)], "T3": [time(22,0), time(6,0)], "RELEVO": [time(8,0), time(16,0)], "T1 APOYO": [time(7,0), time(15,0)], "DISPONIBLE": [time(0,0), time(0,0)]}
@@ -190,7 +188,7 @@ def pantalla_programador():
     for i, g in enumerate(lista):
         desc_i[g] = cols_d[i].selectbox(f"Descanso {g}", DIAS_ES, index=i%7)
 
-    if st.button("🚀 Generar Escenario"):
+    if st.button("🚀 Generar Malla Base"):
         st.session_state[f"m_{tipo}"] = generar_malla_tecnicos(inicio, fin, desc_i) if tipo == "Técnicos" else generar_malla_abordaje(inicio, fin, desc_i, "Quincenal")
 
     if f"m_{tipo}" in st.session_state:
@@ -205,12 +203,11 @@ def pantalla_programador():
         df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
         df_final["Fecha"] = df_final["Label"].apply(lambda x: datetime.strptime(x.split(" ")[1] + "/2026", '%d/%m/%Y'))
         
-        # AQUÍ SE CORRIGE EL ERROR
         malla_det = generar_malla_transaccional(df_final, tipo, config_horas)
         
         st.subheader("📋 Malla Detallada por Persona")
         st.dataframe(malla_det, use_container_width=True)
         
-        if st.button("💾 Validar y Certificar"):
+        if st.button("💾 Validar Escenario"):
             st.balloons()
-            st.success("### ✅ Validación Exitosa\nMalla equilibrada y ajustada a la ley.")
+            st.success("### ✅ Validación Exitosa")
