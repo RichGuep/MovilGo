@@ -160,11 +160,14 @@ def pantalla_programador():
         for i, t_n in enumerate(turnos_list):
             with cols_h[i%3]:
                 st.markdown(f"**{t_n}**")
-                h_i = st.time_input(f"Inicia", defaults.get(t_n)[0], key=f"i_{t_n}")
-                h_f = st.time_input(f"Fin", defaults.get(t_n)[1], key=f"f_{t_n}")
-                config_horas[t_n] = {"Inicio": h_i.strftime("%H:%M"), "Fin": h_f.strftime("%H:%M")}
-        config_horas["DESCANSO"] = {"Inicio": "OFF", "Fin": "OFF"}
-        config_horas["COMPENSADO"] = {"Inicio": "OFF", "Fin": "OFF"}
+                # Añadimos step=60 para permitir seleccionar minuto a minuto
+                h_i = st.time_input(f"Inicia", defaults.get(t_n)[0], key=f"i_{t_n}", step=60)
+                h_f = st.time_input(f"Fin", defaults.get(t_n)[1], key=f"f_{t_n}", step=60)
+                
+                config_horas[t_n] = {
+                    "Inicio": h_i.strftime("%H:%M"), 
+                    "Fin": h_f.strftime("%H:%M")
+                }
 
     # CONFIGURACIÓN GENERAL
     with st.container(border=True):
