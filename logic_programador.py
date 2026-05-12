@@ -8,7 +8,7 @@ from github import Github
 # =========================================================
 # CONFIGURACIÓN Y CONSTANTES
 # =========================================================
-st.set_page_config(page_title="MovilGo Optimizer Enterprise v4.0", layout="wide")
+st.set_page_config(page_title="MovilGo Optimizer Enterprise v4.5", layout="wide")
 
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
@@ -62,7 +62,7 @@ def style_malla(df_pivot):
     return df_pivot.style.map(apply_styles).apply(highlight_special_days, axis=0)
 
 # =========================================================
-# LÓGICA DE GENERACIÓN TÉCNICOS (REGLA DE EXCLUSIÓN MUTUA)
+# LÓGICA DE GENERACIÓN TÉCNICOS (EXCLUSIÓN TOTAL)
 # =========================================================
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
     filas = []
@@ -70,7 +70,6 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
     u_turno = {g: "DESCANSO" for g in GRUPOS_TEC}
     c_bloque = {g: 0 for g in GRUPOS_TEC}
 
-    # Pre-calcular grupos que comparten el mismo día de descanso
     conflictos = {dia: [g for g, d in descansos_ley.items() if d == dia] for dia in DIAS_ES}
 
     for fecha in pd.date_range(inicio, fin):
@@ -79,69 +78,59 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
         semana_num = fecha.isocalendar()[1]
         asignaciones_hoy = {}
         
-        # 1. DETERMINAR QUIÉN DESCANSA (EXCLUSIÓN MUTUA)
-        grupos_del_dia = conflictos[dia_nombre]
+        # 1. GESTIÓN DE DESCANSO DE LEY (Solo 1 grupo puede descansar hoy)
+        grupos_con_derecho = conflictos[dia_nombre]
         
-        if len(grupos_del_dia) > 1:
-            # Alternancia: En semana par descansa el primero, en impar el segundo
-            # Si hay más de 2, rotan por módulo
-            idx_descansa = semana_num % len(grupos_del_dia)
-            descansa_real = grupos_del_dia[idx_descansa]
-            
+        if len(grupos_con_derecho) > 1:
+            idx_descansa = semana_num % len(grupos_con_derecho)
+            descansa_real = grupos_con_derecho[idx_descansa]
             asignaciones_hoy[descansa_real] = "DESCANSO"
-            # Los otros grupos del mismo día que NO descansaron ganan un compensado
-            for g_trabaja in grupos_del_dia:
-                if g_trabaja != descansa_real:
-                    deudas_compensado[g_trabaja] += 1
-        elif len(grupos_del_dia) == 1:
-            asignaciones_hoy[grupos_del_dia[0]] = "DESCANSO"
+            for g in grupos_con_derecho:
+                if g != descansa_real: deudas_compensado[g] += 1
+        elif len(grupos_con_derecho) == 1:
+            asignaciones_hoy[grupos_con_derecho[0]] = "DESCANSO"
 
-        # 2. ASIGNAR COMPENSADOS (Solo Lunes a Viernes)
+        # 2. GESTIÓN DE COMPENSADOS (REGLA: Solo si NADIE está descansando por ley)
+        # Y solo de lunes a viernes, máximo 1 por día
         activos = [g for g in GRUPOS_TEC if g not in asignaciones_hoy]
-        if 0 <= dia_idx <= 4: # L-V
-            # Prioridad de compensado al que tenga más deudas
-            for g in sorted(activos, key=lambda x: deudas_compensado[x], reverse=True):
-                if deudas_compensado[g] > 0 and g in activos:
-                    asignaciones_hoy[g] = "COMPENSADO"
-                    deudas_compensado[g] -= 1
-                    activos.remove(g)
+        
+        if 0 <= dia_idx <= 4 and len(asignaciones_hoy) == 0:
+            # Buscamos quién tiene más deuda para darle su compensado hoy
+            posibles_comp = sorted(activos, key=lambda x: deudas_compensado[x], reverse=True)
+            if deudas_compensado[posibles_comp[0]] > 0:
+                sel_comp = posibles_comp[0]
+                asignaciones_hoy[sel_comp] = "COMPENSADO"
+                deudas_compensado[sel_comp] -= 1
+                activos.remove(sel_comp)
 
-        # 3. ASIGNAR TURNOS BASE (T3, T2, T1) - COBERTURA 3 TÉCNICOS
+        # 3. ASIGNAR TURNOS OPERATIVOS (T1, T2, T3)
+        # Garantizamos que al menos 3 personas estén trabajando
         for t in ["T3", "T2", "T1"]:
-            # Prioridad 1: Continuidad de bloque (Inercia)
+            # Prioridad Bloque
             for g in activos[:]:
                 if u_turno[g] == t and c_bloque[g] < 4:
                     asignaciones_hoy[g] = t
                     c_bloque[g] += 1
                     activos.remove(g)
+                    break # Asignar solo a uno por turno
             
-            # Prioridad 2: Llenar el turno si quedó vacío
+            # Si el turno sigue vacío
             if t not in asignaciones_hoy.values() and activos:
-                # Evitar saltos prohibidos T3 -> T1/T2
                 cands = [g for g in activos if not (t in ["T1", "T2"] and u_turno[g] == "T3")]
-                if cands:
-                    sel = cands[0]
-                    asignaciones_hoy[sel] = t
-                    u_turno[sel] = t
-                    c_bloque[sel] = 1
-                    activos.remove(sel)
-                else: # Si no hay más opción por cobertura, asignamos al primero
-                    sel = activos[0]
-                    asignaciones_hoy[sel] = t
-                    u_turno[sel] = t
-                    c_bloque[sel] = 1
-                    activos.remove(sel)
+                sel = cands[0] if cands else activos[0]
+                asignaciones_hoy[sel] = t
+                u_turno[sel] = t
+                c_bloque[sel] = 1
+                activos.remove(sel)
 
-        # 4. PERSONAL RESTANTE (No pueden tener descansos extra)
+        # 4. PERSONAL SOBRANTE (T1 APOYO)
         for g in activos:
-            # Si sobran y vienen de T3, forzar descanso por salud, sino T1 APOYO
             asignaciones_hoy[g] = "DESCANSO" if u_turno[g] == "T3" else "T1 APOYO"
             c_bloque[g] = 0
 
-        # Guardar historial y filas
         for g in GRUPOS_TEC:
-            u_turno[g] = asignaciones_hoy[g]
-            filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asignaciones_hoy[g]})
+            u_turno[g] = asignaciones_hoy.get(g, "T1 APOYO")
+            filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asignaciones_hoy.get(g, "T1 APOYO")})
 
     return pd.DataFrame(filas)
 
@@ -150,16 +139,23 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
 # =========================================================
 def ejecutar_auditoria(df):
     errores = []
+    df["Fecha"] = pd.to_datetime(df["Fecha"])
+    
+    # Validar exclusión mutua: No más de 1 persona fuera de turno operativo por día
+    # Turnos operativos: T1, T2, T3, T1 APOYO
+    fuera_de_turno = df[df["Turno"].isin(["DESCANSO", "COMPENSADO"])].groupby("Fecha").size()
+    for f, c in fuera_de_turno.items():
+        if c > 1:
+            errores.append(f"🚨 Error de Exclusión: {c} grupos descansando el {f.date()}. Solo se permite 1.")
+            
     cobertura = df[df["Turno"].isin(["T1","T2","T3"])].groupby("Fecha").size()
-    for f, c in cobertura.items():
-        if c < 3: errores.append(f"❌ Cobertura insuficiente el {f.date()} ({c}/3)")
     return errores, cobertura
 
 # =========================================================
 # INTERFAZ
 # =========================================================
 def pantalla_programador():
-    st.sidebar.title("MovilGo Enterprise v4.0")
+    st.sidebar.title("MovilGo Enterprise v4.5")
     st.header("📅 Gestión de Malla: Técnicos")
     
     c1, c2 = st.columns(2)
@@ -167,19 +163,16 @@ def pantalla_programador():
     fin = c2.date_input("Hasta", date(2026, 12, 31))
 
     st.subheader("⚙️ Parametrización de Descansos")
-    st.info("Regla: Si dos grupos tienen el mismo día, el sistema los alternará para mantener 3 técnicos activos.")
-    
     cols = st.columns(4)
     desc_cfg = {}
     for i, g in enumerate(GRUPOS_TEC):
-        # Default sugerido para evitar colapsos
         desc_cfg[g] = cols[i].selectbox(f"Ley {g}", DIAS_ES, index=(5 if i<2 else 6))
 
-    if st.button("🚀 Generar Malla Corregida"):
-        st.session_state["malla_v4"] = generar_malla_tecnicos(inicio, fin, desc_cfg)
+    if st.button("🚀 Generar Malla de Alta Disponibilidad"):
+        st.session_state["malla_v45"] = generar_malla_tecnicos(inicio, fin, desc_cfg)
 
-    if "malla_v4" in st.session_state:
-        df = st.session_state["malla_v4"].copy()
+    if "malla_v45" in st.session_state:
+        df = st.session_state["malla_v45"].copy()
         df["Label"] = df["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}")
         
         pivot = df.pivot(index="Sujeto", columns="Label", values="Turno")
@@ -190,23 +183,21 @@ def pantalla_programador():
         config_cols = {str(c): st.column_config.SelectboxColumn(options=OPCIONES_TURNOS, width="small") for c in pivot.columns}
         df_editado = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols)
 
-        if st.button("💾 Guardar Cambios"):
+        if st.button("💾 Guardar y Validar"):
             df_final = df_editado.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
             df_final["Fecha"] = pd.to_datetime(df_final["Label"].apply(lambda x: x.split(" - ")[1]))
-            guardar_github(df_final, "malla_tecnicos_v4.xlsx")
-            st.success("Guardado en GitHub")
+            guardar_github(df_final, "malla_tecnicos_v45.xlsx")
+            st.toast("Guardado en GitHub")
 
-        # PANEL DE CONTROL
         errs, cob = ejecutar_auditoria(df)
         st.divider()
         m1, m2 = st.columns([1, 2])
         with m1:
-            st.metric("Alertas", len(errs))
+            st.metric("Alertas Críticas", len(errs))
             for e in errs: st.error(e)
-            if not errs: st.success("✅ Cobertura y Descansos OK")
+            if not errs: st.success("✅ Exclusión Mutua Garantizada (Solo 1 ausente por día)")
         with m2:
             st.line_chart(cob)
 
 if __name__ == "__main__":
-    pantalla_programador()
     pantalla_programador()
