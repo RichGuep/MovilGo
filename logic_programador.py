@@ -332,27 +332,3 @@ def pantalla_programador():
     pivot = df.pivot(index="Grupo", columns="Fecha", values="Turno")
 
     st.data_editor(pivot, use_container_width=True)
-def main():
-
-    try:
-
-        st.title("🚀 Optimización Operativa 24/7")
-
-        modulo = st.radio(
-            "Módulos",
-            ["Personal Técnico", "Personal de Abordaje", "Parametrizador"],
-            horizontal=True
-        )
-
-        if modulo == "Personal Técnico":
-            pantalla_tecnico()
-
-        elif modulo == "Personal de Abordaje":
-            pantalla_abordaje()
-
-        elif modulo == "Parametrizador":
-            pantalla_parametrizador()
-
-    except Exception as e:
-        st.error("💥 Error crítico en main()")
-        st.exception(e)
