@@ -151,72 +151,63 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
         for g in GRUPOS_TEC: filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asig.get(g, "DESCANSO")})
     return pd.DataFrame(filas)
 
-def generar_malla_abordaje_individual(inicio, fin):
+def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
     df_emp = cargar_excel("empleados_grupos.xlsx")
-    if df_emp.empty: 
-        st.error("No se encontró el archivo empleados_grupos.xlsx")
-        return pd.DataFrame()
+    if df_emp.empty: return pd.DataFrame()
     
-    # Filtrar y limitar a 27 personas
+    # Filtrar personal de Abordaje
     personal = df_emp[df_emp['GrupoAsignado'] == "Abordaje"]['Nombre'].tolist()
-    if len(personal) < 27:
-        st.warning(f"Solo hay {len(personal)} personas en Abordaje. Se requieren 27.")
-    personal = personal[:27] 
+    personal = personal[:27] # Limitar a 27 personas
     
-    # Dividir en dos grupos para descansos de fin de semana
-    mitad = len(personal) // 2
-    grupo_a = personal[:mitad] # Descansa Sábados
-    grupo_b = personal[mitad:] # Descansa Domingos
+    # División de grupos
+    grupo_a = personal[:13]
+    grupo_b = personal[13:]
     
     filas = []
-    # Diccionario para rastrear compensatorios pendientes por persona
-    deudas_comp = {p: 0 for p in personal}
+    deudas_comp = {p: 0 for p in personal} # Rastreo de compensatorios
     
     for fecha in pd.date_range(inicio, fin):
         dia_n = DIAS_ES[fecha.weekday()]
-        es_fin_semana = fecha.weekday() in [5, 6]
         asig = {}
         
-        # 1. Asignar Descansos de Ley (Sábado/Domingo)
-        if dia_n == "Sábado":
-            for p in grupo_a: asig[p] = "DESCANSO"
-        elif dia_n == "Domingo":
-            for p in grupo_b: asig[p] = "DESCANSO"
-            
+        # 1. Asignar Descansos según selección de la UI
+        for p in grupo_a:
+            if dia_n == descansos_elegidos["A"]: asig[p] = "DESCANSO"
+        for p in grupo_b:
+            if dia_n == descansos_elegidos["B"]: asig[p] = "DESCANSO"
+
         # 2. Lógica de Compensados (Lunes a Viernes)
-        if not es_fin_semana:
-            # Ordenar personal por quien tiene más deudas de descanso
-            con_deuda = [p for p in personal if deudas_comp[p] > 0 and p not in asig]
-            for p in con_deuda:
-                # Solo damos un número limitado de compensados por día para no afectar la operación
-                # Si tenemos 27 personas y necesitamos 22 (11+11), máximo 5 pueden compensar
-                if list(asig.values()).count("COMPENSADO") < 5:
+        # Si no es un día de descanso principal, intentamos saldar deudas
+        if dia_n not in [descansos_elegidos["A"], descansos_elegidos["B"]]:
+            p_con_deuda = [p for p in personal if deudas_comp[p] > 0 and p not in asig]
+            for p in p_con_deuda:
+                if list(asig.values()).count("COMPENSADO") < 4: # Máximo 4 compensados por día
                     asig[p] = "COMPENSADO"
                     deudas_comp[p] -= 1
 
-        # 3. Asignar Turnos Operativos (Prioridad T1 y T2)
-        # Mezclamos el personal disponible para que la rotación sea justa
+        # 3. Asignación de Turnos (11 T1, 11 T2)
         disponibles = [p for p in personal if p not in asig]
-        np.random.seed(fecha.day) # Semilla para que no cambie al refrescar pero rote diario
-        np.random.shuffle(disponibles)
+        # Rotación diaria basada en la fecha para que sea equitativo
+        idx_rot = fecha.day % len(disponibles) if disponibles else 0
+        disponibles = disponibles[idx_rot:] + disponibles[:idx_rot]
         
         for p in disponibles:
-            cant_t1 = list(asig.values()).count("T1")
-            cant_t2 = list(asig.values()).count("T2")
+            t1_actual = list(asig.values()).count("T1")
+            t2_actual = list(asig.values()).count("T2")
             
-            if cant_t1 < 11:
+            if t1_actual < 11:
                 asig[p] = "T1"
-            elif cant_t2 < 11:
+            elif t2_actual < 11:
                 asig[p] = "T2"
             else:
                 asig[p] = "DISPONIBLE"
         
-        # 4. Auditoría de Deuda: Si trabajó un domingo (siendo de ley) o sábado
-        # (Esta lógica se puede ajustar según el contrato, aquí suma deuda si trabaja fin de semana)
-        if dia_n == "Domingo":
-            for p in grupo_a: # Grupo A debería descansar pero si trabajó...
-                if asig.get(p) in ["T1", "T2", "DISPONIBLE"]: deudas_comp[p] += 1
-        
+        # 4. Generar Deuda (Si trabaja un festivo o su día de descanso)
+        # Aquí puedes añadir lógica si quieres que acumulen compensatorios por trabajar domingos
+        if dia_n == "Domingo" or fecha in festivos_co:
+            for p, turno in asig.items():
+                if turno in ["T1", "T2"]: deudas_comp[p] += 1
+
         for p in personal:
             filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "DESCANSO")})
             
