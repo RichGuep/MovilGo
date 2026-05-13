@@ -60,8 +60,13 @@ def guardar_github(df, nombre_archivo):
         repo.create_file(nombre_archivo, "Create", buffer.getvalue())
 
 def calcular_horas_turno(turno_val):
-    """Retorna 7 horas para turnos operativos, 0 para descansos."""
-    if turno_val in ["DESCANSO", "COMPENSADO", "OFF", None, "DISPONIBLE"]: return 0.0
+    """
+    REGLA ACTUALIZADA:
+    Turnos de 7 horas: T1, T2, T3, RELEVO, T1 APOYO, DISPONIBLE.
+    Turnos de 0 horas: DESCANSO, COMPENSADO.
+    """
+    if turno_val in ["DESCANSO", "COMPENSADO", "OFF", None]: 
+        return 0.0
     return 7.0
 
 def obtener_tipo_dia(fecha):
@@ -103,7 +108,7 @@ def pantalla_personal():
                 guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR ABORDAJE (42H SEMANALES - COMPENSADO INMEDIATO)
+# 4. MOTOR ABORDAJE (DISPONIBLE = 7H | 42H SEMANALES)
 # =========================================================
 def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
     df_emp = cargar_excel("empleados_grupos.xlsx")
@@ -112,13 +117,13 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
     grupo_a, grupo_b = personal[:13], personal[13:]
     
     filas = []
-    cola_compensados_semanal = [] # Para pagar inmediatamente de L-V
+    cola_compensados_semanal = [] 
     desc_real_mes = {p: 0 for p in personal}
 
     for fecha in pd.date_range(inicio, fin):
         dia_n, asig, cupo_fuera = DIAS_ES[fecha.weekday()], {}, 5
         
-        # 1. Pago de Compensatorios Inmediatos (Prioridad L-V)
+        # 1. Pago de Compensatorios Inmediatos (L-V)
         if 0 <= fecha.weekday() <= 4:
             for p in list(cola_compensados_semanal):
                 if cupo_fuera > 0:
@@ -145,7 +150,7 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
         for p in dispos:
             if list(asig.values()).count("T1") < 11: asig[p] = "T1"
             elif list(asig.values()).count("T2") < 11: asig[p] = "T2"
-            else: asig[p] = "DISPONIBLE"
+            else: asig[p] = "DISPONIBLE" # DISPONIBLE AHORA SUMA HORAS
             
         for p in personal:
             filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "DESCANSO")})
@@ -181,15 +186,12 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
 # =========================================================
 def ejecutar_auditoria_completa(df, tipo):
     df_aud = df.copy(); df_aud["Fecha"] = pd.to_datetime(df_aud["Fecha"])
-    # 1. Cobertura
     cob = df_aud.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
-    for c in ["T1", "T2", "DESCANSO", "COMPENSADO"]:
+    for c in ["T1", "T2", "DESCANSO", "COMPENSADO", "DISPONIBLE"]:
         if c not in cob.columns: cob[c] = 0
-    # 2. Horas Semanales (Meta 42h)
     df_aud['Semana'] = df_aud['Fecha'].dt.isocalendar().week
     df_aud['Horas'] = df_aud['Turno'].apply(calcular_horas_turno)
     h_sem = df_aud.groupby(['Sujeto', 'Semana'])['Horas'].sum().unstack(fill_value=0)
-    # 3. Equidad de Descansos
     eq = df_aud.groupby(["Sujeto", "Turno"]).size().unstack(fill_value=0)
     return cob, h_sem, eq
 
@@ -212,7 +214,7 @@ def pantalla_programador():
     with st.expander("⏰ Horarios (Ref. 7 horas)"):
         config_h = {}
         t_l = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
-        def_h = {"T1": [time(6,0), time(13,0)], "T2": [time(13,0), time(20,0)], "T3": [time(22,0), time(5,0)], "RELEVO": [time(8,0), time(15,0)], "T1 APOYO": [time(7,0), time(14,0)], "DISPONIBLE": [time(0,0), time(0,0)]}
+        def_h = {"T1": [time(6,0), time(13,0)], "T2": [time(13,0), time(20,0)], "T3": [time(22,0), time(5,0)], "RELEVO": [time(8,0), time(15,0)], "T1 APOYO": [time(7,0), time(14,0)], "DISPONIBLE": [time(8,0), time(15,0)]}
         cols = st.columns(3)
         for i, t in enumerate(t_l):
             with cols[i%3]:
@@ -244,11 +246,11 @@ def pantalla_programador():
         df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
         cob, h_sem, eq = ejecutar_auditoria_completa(df_final, tipo)
         
-        t1, t2, t3 = st.tabs(["📊 Cobertura Diaria", "⚖️ Auditoría 42h Semanales", "📈 Equidad"])
+        t1, t2, t3 = st.tabs(["📊 Cobertura Diaria", "⚖️ Auditoría Horas Semanales", "📈 Equidad"])
         with t1:
             st.dataframe(cob.style.map(lambda v: 'background-color: #D5F5E3' if v==11 else ('background-color: #FADBD8' if v<11 else ''), subset=["T1", "T2"] if "T1" in cob.columns else []), use_container_width=True)
         with t2:
-            st.write("Celdas en rojo superan las 42 horas permitidas:")
+            st.write("Celdas en rojo superan las 42 horas permitidas (DISPONIBLE suma 7h):")
             st.dataframe(h_sem.style.highlight_between(left=42.1, right=100, color="#FADBD8"), use_container_width=True)
         with t3:
             st.dataframe(eq.style.background_gradient(cmap="Blues"), use_container_width=True)
