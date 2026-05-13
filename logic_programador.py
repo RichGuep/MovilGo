@@ -237,6 +237,20 @@ def generar_malla_transaccional(df_final, tipo, config_horas):
     detallada["Tipo Día"] = detallada["Fecha"].apply(obtener_tipo_dia)
     return detallada[["Fecha", "Tipo Día", "Nombre", "Cargo", "Turno", "Hora Inicio", "Hora Fin", "Horas Prog."]]
 
+    if tipo == "Abordaje":
+        st.write("⚓ **Parametrización de Descansos Abordaje**")
+        col_a, col_b = st.columns(2)
+        desc_a = col_a.selectbox("Descanso Grupo A (1-13)", DIAS_ES, index=5) # Sábado por defecto
+        desc_b = col_b.selectbox("Descanso Grupo B (14-27)", DIAS_ES, index=6) # Domingo por defecto
+        desc_abordaje = {"A": desc_a, "B": desc_b}
+
+    if st.button("🚀 Generar Malla y Auditoría"):
+        if tipo == "Técnicos":
+            st.session_state.m_tec = generar_malla_tecnicos(inicio, fin, desc_i)
+        else:
+            # Pasamos los días elegidos a la función
+            st.session_state.m_abo = generar_malla_abordaje_individual(inicio, fin, desc_abordaje)
+
 # =========================================================
 # 5. PANTALLA PRINCIPAL
 # =========================================================
