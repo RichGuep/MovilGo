@@ -4,6 +4,7 @@ import numpy as np
 from datetime import datetime, timedelta, date, time
 import holidays
 import io
+import random
 from github import Github
 
 # =========================================================
@@ -65,7 +66,7 @@ def guardar_github(df, nombre_archivo):
         st.toast(f"🆕 {nombre_archivo} creado.")
 
 # =========================================================
-# 3. MOTORES DE GENERACIÓN
+# 3. MOTORES DE GENERACIÓN (TECNICOS Y ABORDAJE)
 # =========================================================
 
 def generar_malla_tecnicos(inicio, fin, descansos_config):
@@ -76,6 +77,7 @@ def generar_malla_tecnicos(inicio, fin, descansos_config):
         dia_n = DIAS_ES[fecha.weekday()]; sem = fecha.isocalendar()[1]
         asig = {}
         
+        # 1. Pago de compensados L-V
         if 0 <= fecha.weekday() <= 4:
             con_deuda = [g for g, v in deudas.items() if v > 0]
             if con_deuda:
@@ -83,10 +85,12 @@ def generar_malla_tecnicos(inicio, fin, descansos_config):
                 asig[g_comp] = "COMPENSADO"
                 deudas[g_comp] -= 1
 
+        # 2. Asignar descansos por ley
         for g, d_pref in descansos_config.items():
             if dia_n == d_pref and g not in asig:
                 asig[g] = "DESCANSO"
 
+        # 3. Rotación operativa
         activos = [g for g in GRUPOS_TEC if g not in asig]
         off = sem % 4
         act_r = sorted(activos, key=lambda x: (GRUPOS_TEC.index(x) + off) % 4)
@@ -96,6 +100,7 @@ def generar_malla_tecnicos(inicio, fin, descansos_config):
                 if t not in asig.values(): asig[g] = t; break
             if g not in asig: asig[g] = "T1 APOYO"
         
+        # 4. Generar deuda si trabajó en su descanso
         for g, d_pref in descansos_config.items():
             if dia_n == d_pref and asig.get(g) in ["T1", "T2", "T3"]:
                 deudas[g] += 1
@@ -105,7 +110,6 @@ def generar_malla_tecnicos(inicio, fin, descansos_config):
 
 def generar_malla_abordaje_individual(inicio, fin, d_ba, d_bb):
     df_emp = cargar_excel("empleados_grupos.xlsx")
-    # Si no hay archivo en GitHub, creamos datos ficticios para evitar que falle
     if df_emp.empty:
         personal = [f"Asesor {i}" for i in range(1, 25)]
     else:
@@ -125,30 +129,39 @@ def generar_malla_abordaje_individual(inicio, fin, d_ba, d_bb):
         d_hoy_a = d_ba if not inv else d_bb
         d_hoy_b = d_bb if not inv else d_ba
 
+        # 1. Pago de compensados (Prioridad L-V)
         if 0 <= fecha.weekday() <= 4:
-            p_deuda = [p for p in personal if deudas_p[p] > 0]
+            p_deuda = sorted([p for p in personal if deudas_p[p] > 0], key=lambda x: deudas_p[x], reverse=True)
             for p in p_deuda:
                 if len(asig) < (len(personal) - 20):
                     asig[p] = "COMPENSADO"; deudas_p[p] -= 1
 
+        # 2. Descansos teóricos
         for p in bloque_a:
             if dia_n == d_hoy_a and p not in asig: asig[p] = "DESCANSO"
         for p in bloque_b:
             if dia_n == d_hoy_b and p not in asig: asig[p] = "DESCANSO"
 
+        # 3. LLAMADO DE EMERGENCIA (Equidad ante falta de cupo 10/10)
         libres = [p for p in personal if p not in asig]
+        if len(libres) < 20:
+            faltantes = 20 - len(libres)
+            # Traer a los que descansan hoy con MENOS deuda (para no recargar siempre al mismo)
+            candidatos = sorted([p for p in personal if asig.get(p) == "DESCANSO"], key=lambda x: deudas_p[x])
+            for i in range(min(faltantes, len(candidatos))):
+                p_extra = candidatos[i]
+                del asig[p_extra]
+                libres.append(p_extra)
+                deudas_p[p_extra] += 1 # Se le debe un día por trabajar en su libre
+
+        random.shuffle(libres)
         c1 = c2 = 0
         for p in libres:
             if c1 < 10: asig[p] = "T1"; c1 += 1
             elif c2 < 10: asig[p] = "T2"; c2 += 1
             else: asig[p] = "DISPONIBLE"
 
-        if dia_n in [d_ba, d_bb]:
-            for p in personal:
-                if ((p in bloque_a and dia_n == d_hoy_a) or (p in bloque_b and dia_n == d_hoy_b)) and asig[p] in ["T1", "T2"]:
-                    deudas_p[p] += 1
-
-        for p in personal: filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "T1")})
+        for p in personal: filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "DESCANSO")})
     return pd.DataFrame(filas)
 
 # =========================================================
@@ -199,7 +212,6 @@ def pantalla_programador():
         df["Label"] = df["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} {x.strftime('%d/%m')}")
         pivot = df.pivot(index="Sujeto", columns="Label", values="Turno").fillna("DESCANSO")
         
-        # Ordenar columnas por fecha real
         sorted_cols = sorted(pivot.columns, key=lambda x: datetime.strptime(x.split(" ")[1] + "/2026", '%d/%m/%Y'))
         
         st.subheader(f"📝 Editor Maestro: {tipo}")
@@ -222,19 +234,10 @@ def pantalla_programador():
 
 def pantalla_personal():
     st.title("👥 Gestión de Personal")
-    st.markdown("Administra los integrantes de los grupos técnicos y de abordaje.")
-    
     df_emp = cargar_excel("empleados_grupos.xlsx")
-    
     if df_emp.empty:
-        st.warning("No se encontró base de datos en GitHub. Mostrando plantilla de ejemplo.")
-        df_emp = pd.DataFrame({
-            "Nombre": ["Ejemplo 1", "Ejemplo 2"],
-            "GrupoAsignado": ["Grupo 1", "Abordaje"],
-            "Cargo": ["Técnico", "Asesor"]
-        })
-
-    df_editada = st.data_editor(df_emp, num_rows="dynamic", use_container_width=True)
+        df_emp = pd.DataFrame({"Nombre": [], "GrupoAsignado": [], "Cargo": []})
     
+    df_editada = st.data_editor(df_emp, num_rows="dynamic", use_container_width=True)
     if st.button("💾 Guardar Cambios en Personal"):
         guardar_github(df_editada, "empleados_grupos.xlsx")
