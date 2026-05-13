@@ -22,7 +22,7 @@ COLORES_MAP = {
 }
 
 def style_malla(df_pivot):
-    """Aplica colores a la tabla del editor de turnos."""
+    """Aplica el formato condicional de colores a la tabla."""
     def apply_styles(val):
         key = val if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
@@ -84,7 +84,7 @@ def asignar_grupos_automatico(df):
     df = df.copy()
     if 'GrupoAsignado' in df.columns: df = df.drop(columns=['GrupoAsignado'])
     
-    # Técnicos
+    # Técnicos: Cuotas específicas
     m = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     ta = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     tb = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
@@ -108,25 +108,29 @@ def pantalla_personal():
         df = cargar_excel("empleados.xlsx")
         if not df.empty: 
             st.session_state.df_pers = df
-            st.success("Lista cargada.")
+            st.success("Lista base cargada desde GitHub.")
+    
     if 'df_pers' in st.session_state:
-        if st.button("🎲 Asignar Grupos por Cargos"):
+        if st.button("🎲 Ejecutar Clasificación por Grupos"):
             st.session_state.df_pers_ready = asignar_grupos_automatico(st.session_state.df_pers)
             st.balloons()
+        
         if 'df_pers_ready' in st.session_state:
             df_edit = st.data_editor(st.session_state.df_pers_ready, use_container_width=True)
-            if st.button("💾 Guardar Estructura en GitHub"):
+            if st.button("💾 Guardar Estructura Final"):
                 guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
 # 4. MOTORES DE GENERACIÓN
 # =========================================================
+
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
     filas = []
     deudas_comp = {g: 0 for g in GRUPOS_TEC}
     for fecha in pd.date_range(inicio, fin):
-        dia_n = DIAS_ES[fecha.weekday()]; sem = fecha.isocalendar()[1]
-        asig = {}
+        dia_n = DIAS_ES[fecha.weekday()]; sem = fecha.isocalendar()[1]; asig = {}
+        
+        # Lógica de Descanso y Deuda (Heredada y perfecta)
         gps_h = [g for g, d in descansos_ley.items() if d == dia_n]
         if len(gps_h) > 1:
             idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
@@ -141,10 +145,8 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
                 asig[g_c] = "COMPENSADO"; deudas_comp[g_c] -= 1
 
         activos = [g for g in GRUPOS_TEC if g not in asig]
-        off = sem % 4
-        act_r = sorted(activos, key=lambda x: (GRUPOS_TEC.index(x) + off) % 4)
         turnos_op = ["T3", "T2", "T1", "T1 APOYO"]
-        for g in act_r:
+        for g in activos:
             for t in turnos_op:
                 if t not in asig.values(): asig[g] = t; break
             if g not in asig: asig[g] = "T1 APOYO"
@@ -160,42 +162,49 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
     grupo_b = personal[13:]
     
     filas = []
-    deudas_comp = {p: 0 for p in personal}
+    deudas_comp = {p: 0 for p in personal} # Rastreo de deuda de descanso
     
     for fecha in pd.date_range(inicio, fin):
-        dia_n = DIAS_ES[fecha.weekday()]
-        asig = {}
+        dia_n = DIAS_ES[fecha.weekday()]; asig = {}
         
-        # 1. Asignar Descansos fijos
+        # 1. Identificar quién debería descansar hoy
+        deben_descansar = []
         for p in grupo_a:
-            if dia_n == descansos_elegidos["A"]: asig[p] = "DESCANSO"
+            if dia_n == descansos_elegidos["A"]: deben_descansar.append(p)
         for p in grupo_b:
-            if dia_n == descansos_elegidos["B"]: asig[p] = "DESCANSO"
+            if dia_n == descansos_elegidos["B"]: deben_descansar.append(p)
+            
+        # Priorizar descanso real para máximo 5 personas (para asegurar 11 T1 y 11 T2)
+        np.random.shuffle(deben_descansar)
+        for i, p in enumerate(deben_descansar):
+            if i < 5: 
+                asig[p] = "DESCANSO"
+            else: 
+                # Si debe trabajar en su descanso por cobertura, gana deuda de compensatorio
+                deudas_comp[p] += 1 
 
-        # 2. Lógica de Compensados (Lunes a Viernes)
-        if dia_n not in [descansos_elegidos["A"], descansos_elegidos["B"]]:
+        # 2. Pagar compensatorios (L-V) si hay deuda y cupo (máx 5 total fuera)
+        if 0 <= fecha.weekday() <= 4:
             p_con_deuda = [p for p in personal if deudas_comp[p] > 0 and p not in asig]
+            p_con_deuda = sorted(p_con_deuda, key=lambda x: deudas_comp[x], reverse=True)
             for p in p_con_deuda:
-                if list(asig.values()).count("COMPENSADO") < 4:
-                    asig[p] = "COMPENSADO"; deudas_comp[p] -= 1
+                if (list(asig.values()).count("DESCANSO") + list(asig.values()).count("COMPENSADO")) < 5:
+                    asig[p] = "COMPENSADO"
+                    deudas_comp[p] -= 1
 
-        # 3. Cobertura 11 T1 y 11 T2
+        # 3. Cubrir 11 T1 y 11 T2 (Domingo a Domingo)
         disponibles = [p for p in personal if p not in asig]
-        np.random.seed(fecha.day) # Rotación diaria
+        np.random.seed(fecha.day)
         np.random.shuffle(disponibles)
         
         for p in disponibles:
             if list(asig.values()).count("T1") < 11: asig[p] = "T1"
             elif list(asig.values()).count("T2") < 11: asig[p] = "T2"
             else: asig[p] = "DISPONIBLE"
-        
-        # Generar deuda por Domingo o Festivo trabajado
-        if dia_n == "Domingo" or fecha in festivos_co:
-            for p, t in asig.items():
-                if t in ["T1", "T2"]: deudas_comp[p] += 1
-
+            
         for p in personal:
             filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "DESCANSO")})
+            
     return pd.DataFrame(filas)
 
 def ejecutar_auditoria(df, tipo):
@@ -223,12 +232,12 @@ def generar_malla_transaccional(df_final, tipo, config_horas):
     return detallada[["Fecha", "Tipo Día", "Nombre", "Cargo", "Turno", "Hora Inicio", "Hora Fin", "Horas Prog."]]
 
 # =========================================================
-# 5. PANTALLA PRINCIPAL
+# 5. INTERFAZ DE PROGRAMACIÓN
 # =========================================================
 def pantalla_programador():
-    tipo = st.sidebar.radio("Módulo", ["Técnicos", "Abordaje"])
+    tipo = st.sidebar.radio("Módulo de Trabajo", ["Técnicos", "Abordaje"])
     
-    with st.expander("⏰ Parametrizador de Horas"):
+    with st.expander("⏰ Configuración de Horarios"):
         config_h = {}
         t_l = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
         def_h = {"T1": [time(6,0), time(14,0)], "T2": [time(14,0), time(22,0)], "T3": [time(22,0), time(6,0)], "RELEVO": [time(8,0), time(16,0)], "T1 APOYO": [time(7,0), time(15,0)], "DISPONIBLE": [time(0,0), time(0,0)]}
@@ -241,20 +250,20 @@ def pantalla_programador():
         config_h["DESCANSO"] = config_h["COMPENSADO"] = {"Inicio": "OFF", "Fin": "OFF"}
 
     c1, c2 = st.columns(2)
-    inicio = c1.date_input("Inicio", date.today()); fin = c2.date_input("Fin", date.today() + timedelta(days=21))
+    inicio = c1.date_input("Fecha Inicio", date.today())
+    fin = c2.date_input("Fecha Fin", date.today() + timedelta(days=21))
     
     desc_data = {}
     if tipo == "Técnicos":
-        st.write("⚙️ **Parametrización Técnicos**")
+        st.write("⚙️ **Parametrización de Descansos Técnicos**")
         cols_d = st.columns(4)
         for i, g in enumerate(GRUPOS_TEC):
             desc_data[g] = cols_d[i].selectbox(f"Descanso {g}", DIAS_ES, index=(i+6)%7)
     else:
-        st.write("⚓ **Parametrización Abordaje**")
+        st.write("⚓ **Parametrización de Descansos Abordaje**")
         cola, colb = st.columns(2)
-        da = cola.selectbox("Descanso Grupo A (1-13)", DIAS_ES, index=5)
-        db = colb.selectbox("Descanso Grupo B (14-27)", DIAS_ES, index=6)
-        desc_data = {"A": da, "B": db}
+        desc_data["A"] = cola.selectbox("Día Descanso Grupo A (1-13)", DIAS_ES, index=5)
+        desc_data["B"] = colb.selectbox("Día Descanso Grupo B (14-27)", DIAS_ES, index=6)
 
     if st.button("🚀 Generar Malla y Auditoría"):
         if tipo == "Técnicos":
@@ -269,7 +278,7 @@ def pantalla_programador():
         pivot = df_base.pivot(index="Sujeto", columns="Label", values="Turno").fillna("DESCANSO")
         sorted_cols = sorted(pivot.columns, key=lambda x: datetime.strptime(x.split(" ")[1] + "/2026", '%d/%m/%Y'))
         
-        st.subheader("📝 Editor Maestro")
+        st.subheader("📝 Editor Maestro de Turnos")
         df_edit = st.data_editor(style_malla(pivot[sorted_cols]), use_container_width=True)
         
         df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
@@ -277,8 +286,9 @@ def pantalla_programador():
         malla_det = generar_malla_transaccional(df_final, tipo, config_h)
         errs, cob, equidad = ejecutar_auditoria(df_final, tipo)
         
-        st.subheader("📋 Malla Detallada")
+        st.subheader("📋 Malla Transaccional Detallada")
         st.dataframe(malla_det, use_container_width=True)
-        st.subheader("📊 Auditoría")
+        
+        st.subheader("📊 Análisis de Cobertura y Equidad")
         st.dataframe(equidad.style.background_gradient(cmap="Blues"), use_container_width=True)
         st.area_chart(cob)
