@@ -28,20 +28,10 @@ def style_malla(df_pivot):
         bg = COLORES_MAP.get(val, "")
         txt = "white" if val == "DESCANSO" else "black"
         return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB' if bg else ''
-    
-    def highlight_special_days(col):
-        try:
-            fecha_str = col.name.split(" - ")[1]
-            f_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
-            if f_obj.weekday() >= 5 or f_obj in festivos_co:
-                return ['border-bottom: 3px solid #E67E22;' for _ in col]
-        except: pass
-        return ['' for _ in col]
-    
-    return df_pivot.style.map(apply_styles).apply(highlight_special_days, axis=0)
+    return df_pivot.style.map(apply_styles)
 
 # =========================================================
-# 2. CONECTIVIDAD GITHUB
+# 2. FUNCIONES DE APOYO Y GITHUB
 # =========================================================
 def conectar_github():
     try:
@@ -69,105 +59,107 @@ def guardar_github(df, nombre_archivo):
         st.toast(f"✅ {nombre_archivo} sincronizado.")
     except:
         repo.create_file(nombre_archivo, "Create", buffer.getvalue())
-        st.toast(f"🆕 {nombre_archivo} creado.")
 
 # =========================================================
-# 3. MOTORES DE GENERACIÓN (TECNICOS DEUDA / ABORDAJE CUPO)
+# 3. MOTOR TÉCNICOS: COMPENSADO INMEDIATO
 # =========================================================
-
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
     filas = []
-    deudas_comp = {g: 0 for g in GRUPOS_TEC}
+    # Diccionario para saber quién trabajó en su descanso y debe compensar en la semana actual
+    pendientes_semana = {g: False for g in GRUPOS_TEC}
     u_turno = {g: "DESCANSO" for g in GRUPOS_TEC}
     c_bloque = {g: 0 for g in GRUPOS_TEC}
 
     for fecha in pd.date_range(inicio, fin):
-        dia_nombre = DIAS_ES[fecha.weekday()]
+        dia_n = DIAS_ES[fecha.weekday()]
+        # Resetear pendientes si es Lunes (nueva semana)
+        if fecha.weekday() == 0: pendientes_semana = {g: False for g in GRUPOS_TEC}
+        
         asignados = {}
-        
-        # 1. Candidato a descanso de ley hoy
-        debe_descansar = [g for g, d in descansos_ley.items() if d == dia_nombre]
+        debe_descansar = [g for g, d in descansos_ley.items() if d == dia_n]
         activos_potenciales = list(GRUPOS_TEC)
-        
-        # 2. Asignar Descanso de Ley (siempre que queden 3 para T1, T2, T3)
-        descansador_hoy = None
-        if debe_descansar:
-            descansador_hoy = debe_descansar[0]
-            asignados[descansador_hoy] = "DESCANSO"
-            activos_potenciales.remove(descansador_hoy)
-        
-        # 3. Pago de Compensados (Solo si sobran grupos y hay deuda)
-        if len(activos_potenciales) > 3:
-            cands_comp = sorted(activos_potenciales, key=lambda x: deudas_comp[x], reverse=True)
-            if deudas_comp[cands_comp[0]] > 0:
-                lucky_g = cands_comp[0]
-                asignados[lucky_g] = "COMPENSADO"
-                deudas_comp[lucky_g] -= 1
-                activos_potenciales.remove(lucky_g)
 
-        # 4. Cobertura Blindada T3, T2, T1
-        turnos_principales = ["T3", "T2", "T1"]
-        # Priorizar continuidad de bloque
-        activos_potenciales = sorted(activos_potenciales, key=lambda g: (u_turno[g], c_bloque[g]), reverse=True)
-        
-        for t in turnos_principales:
+        # 1. Prioridad: Asignar COMPENSADO si alguien trabajó el fin de semana o su día previo
+        if 0 <= fecha.weekday() <= 4:
+            for g in activos_potenciales[:]:
+                if pendientes_semana[g] and len(activos_potenciales) > 3:
+                    asignados[g] = "COMPENSADO"
+                    pendientes_semana[g] = False
+                    activos_potenciales.remove(g)
+                    break
+
+        # 2. Descanso de Ley (Si no está compensando ya)
+        if debe_descansar and debe_descansar[0] in activos_potenciales:
+            descansador = debe_descansar[0]
+            # Si hay 4 grupos, puede descansar. Si solo hay 3, DEBE TRABAJAR y genera deuda.
+            if len(activos_potenciales) > 3:
+                asignados[descansador] = "DESCANSO"
+                activos_potenciales.remove(descansador)
+            else:
+                pendientes_semana[descansador] = True # Se activa compensado inmediato
+
+        # 3. Cobertura Blindada T3, T2, T1
+        for t in ["T3", "T2", "T1"]:
             if activos_potenciales:
-                # Buscar si alguien ya traía este turno
                 sel = next((g for g in activos_potenciales if u_turno[g] == t and c_bloque[g] < 4), activos_potenciales[0])
                 asignados[sel] = t
-                if u_turno[sel] == t: c_bloque[sel] += 1
-                else: c_bloque[sel] = 1
+                c_bloque[sel] = (c_bloque[sel] + 1) if u_turno[sel] == t else 1
                 u_turno[sel] = t
                 activos_potenciales.remove(sel)
 
-        # 5. Restantes -> T1 APOYO
         for g in activos_potenciales:
             asignados[g] = "T1 APOYO"
             u_turno[g] = "T1 APOYO"
             c_bloque[g] = 0
-
-        # 6. Registro de Deuda: Si el descansador por ley tuvo que trabajar hoy
-        if descansador_hoy and asignados.get(descansador_hoy) in ["T1", "T2", "T3"]:
-            deudas_comp[descansador_hoy] += 1
 
         for g in GRUPOS_TEC:
             filas.append({"Fecha": fecha, "Sujeto": g, "Turno": asignados.get(g, "T1 APOYO")})
             
     return pd.DataFrame(filas)
 
+# =========================================================
+# 4. MOTOR ABORDAJE: CUPO 10/10 Y COMPENSADO EXPRESS
+# =========================================================
 def generar_malla_abordaje_individual(inicio, fin, d_ba, d_bb):
     df_emp = cargar_excel("empleados_grupos.xlsx")
     personal = df_emp[df_emp['GrupoAsignado'] == "Abordaje"]['Nombre'].tolist() if not df_emp.empty else [f"Asesor {i}" for i in range(1, 26)]
     
     filas = []
-    deudas_p = {p: 0 for p in personal}
+    pendientes_p = {p: False for p in personal}
     mitad = len(personal) // 2
     bloque_a, bloque_b = personal[:mitad], personal[mitad:]
     
     for fecha in pd.date_range(inicio, fin):
-        dia_n = DIAS_ES[fecha.weekday()]; sem = fecha.isocalendar()[1]
+        dia_n = DIAS_ES[fecha.weekday()]
+        if fecha.weekday() == 0: pendientes_p = {p: False for p in personal}
+        
         asig = {}
-        inv = sem % 2 == 0
+        inv = (fecha.isocalendar()[1] % 2 == 0)
         d_hoy_a, d_hoy_b = (d_ba, d_bb) if not inv else (d_bb, d_ba)
 
+        # 1. Compensado inmediato (L-V)
         if 0 <= fecha.weekday() <= 4:
-            p_con_deuda = sorted([p for p in personal if deudas_p[p] > 0], key=lambda x: deudas_p[x], reverse=True)
-            for p in p_con_deuda:
-                if len(asig) < (len(personal) - 20):
-                    asig[p] = "COMPENSADO"; deudas_p[p] -= 1
+            for p in personal:
+                if pendientes_p[p] and len(asig) < (len(personal) - 20):
+                    asig[p] = "COMPENSADO"
+                    pendientes_p[p] = False
 
-        for p in bloque_a:
-            if dia_n == d_hoy_a and p not in asig: asig[p] = "DESCANSO"
-        for p in bloque_b:
-            if dia_n == d_hoy_b and p not in asig: asig[p] = "DESCANSO"
+        # 2. Descansos teóricos
+        for p in personal:
+            if p not in asig:
+                if (p in bloque_a and dia_n == d_hoy_a) or (p in bloque_b and dia_n == d_hoy_b):
+                    asig[p] = "DESCANSO"
 
+        # 3. Asegurar Cupo 10/10
         libres = [p for p in personal if p not in asig]
         if len(libres) < 20:
             faltantes = 20 - len(libres)
-            candidatos = sorted([p for p in personal if asig.get(p) == "DESCANSO"], key=lambda x: deudas_p[x])
+            candidatos = [p for p in personal if asig.get(p) == "DESCANSO"]
             for i in range(min(faltantes, len(candidatos))):
                 p_extra = candidatos[i]
-                del asig[p_extra]; libres.append(p_extra); deudas_p[p_extra] += 1
+                del asig[p_extra]
+                libres.append(p_extra)
+                pendientes_p[p_extra] = True # Genera compensado para mañana u otro día de la semana
 
         random.shuffle(libres)
         c1 = c2 = 0
@@ -180,12 +172,11 @@ def generar_malla_abordaje_individual(inicio, fin, d_ba, d_bb):
     return pd.DataFrame(filas)
 
 # =========================================================
-# 4. INTERFACES DE PANTALLA
+# 5. PANTALLA Y AUDITORÍA COMPLETA
 # =========================================================
-
 def pantalla_programador():
-    st.title("🚀 MovilGo Optimizer Pro")
-    tipo = st.sidebar.radio("Sección", ["Técnicos", "Abordaje"])
+    st.title("🛡️ Auditoría y Programación MovilGO")
+    tipo = st.sidebar.radio("Módulo", ["Técnicos", "Abordaje"])
     
     c1, c2 = st.columns(2)
     inicio = c1.date_input("Desde", date.today())
@@ -196,53 +187,56 @@ def pantalla_programador():
             desc_conf = {g: st.selectbox(f"{g}", DIAS_ES, index=(5 if i<2 else 6)) for i, g in enumerate(GRUPOS_TEC)}
         else:
             ca, cb = st.columns(2)
-            d_ba = ca.selectbox("Bloque A", DIAS_ES, index=5); d_bb = cb.selectbox("Bloque B", DIAS_ES, index=6)
+            d_ba = ca.selectbox("Bloque A (Sáb)", DIAS_ES, index=5); d_bb = cb.selectbox("Bloque B (Dom)", DIAS_ES, index=6)
 
-    if st.button(f"🚀 Generar Malla {tipo}"):
+    if st.button(f"🚀 Generar y Auditar {tipo}"):
         if tipo == "Técnicos": st.session_state.m_tec = generar_malla_tecnicos(inicio, fin, desc_conf)
         else: st.session_state.m_abo = generar_malla_abordaje_individual(inicio, fin, d_ba, d_bb)
 
-    m_key = "m_tec" if tipo == "Técnicos" else "m_abo"
-    if m_key in st.session_state:
-        df = st.session_state[m_key]
-        df_view = df.copy()
-        df_view["Label"] = df_view["Fecha"].apply(lambda x: f"{INICIALES[DIAS_ES[x.weekday()]]} - {x.strftime('%Y-%m-%d')}")
-        pivot = df_view.pivot(index="Sujeto", columns="Label", values="Turno").fillna("DESCANSO")
-        sorted_cols = sorted(pivot.columns, key=lambda x: x.split(" - ")[1])
-        pivot = pivot[sorted_cols]
+    key = "m_tec" if tipo == "Técnicos" else "m_abo"
+    if key in st.session_state:
+        df = st.session_state[key]
+        pivot = df.pivot(index="Sujeto", columns="Fecha", values="Turno")
+        pivot.columns = [f"{INICIALES[DIAS_ES[c.weekday()]]} {c.strftime('%d/%m')}" for c in pivot.columns]
+        
+        st.subheader("📋 Malla Generada")
+        st.data_editor(style_malla(pivot), use_container_width=True)
 
-        st.subheader("📝 Editor Maestro")
-        config_cols = {str(c): st.column_config.SelectboxColumn(options=OPCIONES_TURNOS, width="small") for c in pivot.columns}
-        df_edit = st.data_editor(style_malla(pivot), use_container_width=True, column_config=config_cols)
-
-        # Auditoría Pro
+        # --- AUDITORÍA DE EQUILIBRIO ---
         st.divider()
-        df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
-        df_final["Fecha"] = pd.to_datetime(df_final["Label"].apply(lambda x: x.split(" - ")[1]))
+        st.subheader("⚖️ Auditoría de Equilibrio y Ley")
         
-        conteo = df_final.groupby(["Label", "Turno"]).size().unstack(fill_value=0)
+        # 1. Verificación de Compensados Inmediatos
+        resumen = df.groupby(["Sujeto", "Turno"]).size().unstack(fill_value=0)
         
-        col_a, col_b = st.columns([2,1])
+        col_a, col_b = st.columns(2)
         with col_a:
-            st.subheader("📊 Resumen de Cobertura")
-            if tipo == "Abordaje":
-                st.dataframe(conteo[["T1", "T2"]].T if "T1" in conteo.columns else conteo.T, use_container_width=True)
-            else:
-                st.dataframe(conteo[["T1", "T2", "T3"]].T if "T1" in conteo.columns else conteo.T, use_container_width=True)
+            st.write("**Conteo de Turnos por Persona**")
+            st.dataframe(resumen)
         
         with col_b:
-            st.subheader("⚖️ Historial / Alertas")
-            # Mostrar deudas si existen
-            resumen_ind = df_final.groupby(["Sujeto", "Turno"]).size().unstack(fill_value=0)
-            if "COMPENSADO" in resumen_ind.columns:
-                st.write("Compensados otorgados:")
-                st.dataframe(resumen_ind[resumen_ind["COMPENSADO"] > 0]["COMPENSADO"])
+            # Alerta si alguien trabajó fin de semana y no tiene un COMPENSADO en la tabla
+            st.write("**Estado de Alertas**")
+            conteo_dias = df.groupby("Fecha")["Turno"].value_counts().unstack(fill_value=0)
+            
+            if tipo == "Abordaje":
+                incumplimiento = conteo_dias[(conteo_dias["T1"] < 10) | (conteo_dias["T2"] < 10)]
+                if not incumplimiento.empty:
+                    st.error(f"⚠️ Hay {len(incumplimiento)} días con cupo incompleto.")
+                else:
+                    st.success("✅ Cupo 10/10 garantizado todos los días.")
+            
+            if "COMPENSADO" in resumen.columns:
+                st.info(f"ℹ️ Se han otorgado {resumen['COMPENSADO'].sum()} días compensados inmediatos.")
+            else:
+                st.warning("⚠️ No se detectaron compensados otorgados. Verifique si hubo trabajo en domingo.")
 
-        if st.button("💾 Sincronizar con GitHub"):
-            guardar_github(df_final, f"malla_{tipo.lower()}.xlsx")
+        if st.button("💾 Finalizar y Guardar"):
+            guardar_github(df, f"malla_{tipo.lower()}.xlsx")
+            st.success("Archivo guardado en GitHub.")
 
 def pantalla_personal():
-    st.title("👥 Gestión de Personal")
+    st.title("👥 Personal")
     df_emp = cargar_excel("empleados_grupos.xlsx")
     df_ed = st.data_editor(df_emp, num_rows="dynamic", use_container_width=True)
-    if st.button("💾 Guardar"): guardar_github(df_ed, "empleados_grupos.xlsx")
+    if st.button("Guardar"): guardar_github(df_ed, "empleados_grupos.xlsx")
