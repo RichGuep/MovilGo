@@ -84,6 +84,7 @@ def asignar_grupos_automatico(df):
     df = df.copy()
     if 'GrupoAsignado' in df.columns: df = df.drop(columns=['GrupoAsignado'])
     
+    # Técnicos: Cuotas específicas
     m = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     ta = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     tb = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
@@ -95,6 +96,7 @@ def asignar_grupos_automatico(df):
         temp_tb = tb.iloc[i*3:(i+1)*3].copy(); temp_tb['GrupoAsignado'] = g
         res.extend([temp_m, temp_ta, temp_tb])
 
+    # Abordaje
     abo = df[df['Cargo'].str.contains('Abordaje|Auxiliar', case=False, na=False)].copy()
     abo['GrupoAsignado'] = "Abordaje"
     res.append(abo)
@@ -119,7 +121,7 @@ def pantalla_personal():
                 guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTORES DE GENERACIÓN Y AUDITORÍA
+# 4. MOTORES DE GENERACIÓN
 # =========================================================
 
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
@@ -127,6 +129,8 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
     deudas_comp = {g: 0 for g in GRUPOS_TEC}
     for fecha in pd.date_range(inicio, fin):
         dia_n = DIAS_ES[fecha.weekday()]; sem = fecha.isocalendar()[1]; asig = {}
+        
+        # Lógica de Descanso y Deuda (Heredada y perfecta)
         gps_h = [g for g, d in descansos_ley.items() if d == dia_n]
         if len(gps_h) > 1:
             idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
@@ -158,24 +162,28 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
     grupo_b = personal[13:]
     
     filas = []
-    deudas_comp = {p: 0 for p in personal}
+    deudas_comp = {p: 0 for p in personal} # Rastreo de deuda de descanso
     
     for fecha in pd.date_range(inicio, fin):
         dia_n = DIAS_ES[fecha.weekday()]; asig = {}
         
+        # 1. Identificar quién debería descansar hoy
         deben_descansar = []
         for p in grupo_a:
             if dia_n == descansos_elegidos["A"]: deben_descansar.append(p)
         for p in grupo_b:
             if dia_n == descansos_elegidos["B"]: deben_descansar.append(p)
             
+        # Priorizar descanso real para máximo 5 personas (para asegurar 11 T1 y 11 T2)
         np.random.shuffle(deben_descansar)
         for i, p in enumerate(deben_descansar):
             if i < 5: 
                 asig[p] = "DESCANSO"
             else: 
+                # Si debe trabajar en su descanso por cobertura, gana deuda de compensatorio
                 deudas_comp[p] += 1 
 
+        # 2. Pagar compensatorios (L-V) si hay deuda y cupo (máx 5 total fuera)
         if 0 <= fecha.weekday() <= 4:
             p_con_deuda = [p for p in personal if deudas_comp[p] > 0 and p not in asig]
             p_con_deuda = sorted(p_con_deuda, key=lambda x: deudas_comp[x], reverse=True)
@@ -184,6 +192,7 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
                     asig[p] = "COMPENSADO"
                     deudas_comp[p] -= 1
 
+        # 3. Cubrir 11 T1 y 11 T2 (Domingo a Domingo)
         disponibles = [p for p in personal if p not in asig]
         np.random.seed(fecha.day)
         np.random.shuffle(disponibles)
@@ -198,20 +207,14 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
             
     return pd.DataFrame(filas)
 
-def ejecutar_auditoria_v2(df):
-    """Nueva auditoría: Desglose por turnos diarios y equidad individual."""
-    df_temp = df.copy()
-    df_temp["Fecha"] = pd.to_datetime(df_temp["Fecha"])
-    
-    # 1. Auditoría de Cobertura Diaria (Lo que le faltaba)
-    cobertura_diaria = df_temp.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
-    for col in ["T1", "T2", "DESCANSO", "COMPENSADO", "DISPONIBLE"]:
-        if col not in cobertura_diaria.columns: cobertura_diaria[col] = 0
-    
-    # 2. Equidad individual
-    equidad = df_temp.groupby(["Sujeto", "Turno"]).size().unstack(fill_value=0)
-    
-    return cobertura_diaria, equidad
+def ejecutar_auditoria(df, tipo):
+    df = df.copy(); df["Fecha"] = pd.to_datetime(df["Fecha"])
+    t1 = df[df["Turno"] == "T1"].groupby("Fecha").size()
+    t2 = df[df["Turno"] == "T2"].groupby("Fecha").size()
+    equidad = df.groupby(["Sujeto", "Turno"]).size().unstack(fill_value=0)
+    for c in ["T1", "T2", "T3", "DESCANSO", "COMPENSADO", "DISPONIBLE"]:
+        if c not in equidad.columns: equidad[c] = 0
+    return [], t1 + t2, equidad
 
 def generar_malla_transaccional(df_final, tipo, config_horas):
     df_empleados = cargar_excel("empleados_grupos.xlsx")
@@ -252,15 +255,15 @@ def pantalla_programador():
     
     desc_data = {}
     if tipo == "Técnicos":
-        st.write("⚙️ **Parametrización Técnicos**")
+        st.write("⚙️ **Parametrización de Descansos Técnicos**")
         cols_d = st.columns(4)
         for i, g in enumerate(GRUPOS_TEC):
             desc_data[g] = cols_d[i].selectbox(f"Descanso {g}", DIAS_ES, index=(i+6)%7)
     else:
-        st.write("⚓ **Parametrización Abordaje**")
+        st.write("⚓ **Parametrización de Descansos Abordaje**")
         cola, colb = st.columns(2)
-        desc_data["A"] = cola.selectbox("Descanso Grupo A (1-13)", DIAS_ES, index=5)
-        desc_data["B"] = colb.selectbox("Descanso Grupo B (14-27)", DIAS_ES, index=6)
+        desc_data["A"] = cola.selectbox("Día Descanso Grupo A (1-13)", DIAS_ES, index=5)
+        desc_data["B"] = colb.selectbox("Día Descanso Grupo B (14-27)", DIAS_ES, index=6)
 
     if st.button("🚀 Generar Malla y Auditoría"):
         if tipo == "Técnicos":
@@ -278,21 +281,14 @@ def pantalla_programador():
         st.subheader("📝 Editor Maestro de Turnos")
         df_edit = st.data_editor(style_malla(pivot[sorted_cols]), use_container_width=True)
         
-        # Procesar datos finales del editor
         df_final = df_edit.reset_index().melt(id_vars="Sujeto", var_name="Label", value_name="Turno")
         df_final["Fecha"] = df_final["Label"].apply(lambda x: datetime.strptime(x.split(" ")[1] + "/2026", '%d/%m/%Y'))
-        
-        # --- AUDITORÍA DE NIVEL SUPERIOR ---
-        cob_diaria, equidad = ejecutar_auditoria_v2(df_final)
-        
-        st.subheader("📊 Auditoría de Cobertura Diaria")
-        st.write("Verificación de cupos (Meta: 11 en T1, 11 en T2)")
-        # Aplicamos estilo para resaltar cuando se cumple el cupo de 11
-        st.dataframe(cob_diaria.style.highlight_between(left=11, right=11, subset=["T1", "T2"], color="#D5F5E3"), use_container_width=True)
+        malla_det = generar_malla_transaccional(df_final, tipo, config_h)
+        errs, cob, equidad = ejecutar_auditoria(df_final, tipo)
         
         st.subheader("📋 Malla Transaccional Detallada")
-        malla_det = generar_malla_transaccional(df_final, tipo, config_h)
         st.dataframe(malla_det, use_container_width=True)
         
-        st.subheader("⚖️ Equidad y Acumulados")
+        st.subheader("📊 Análisis de Cobertura y Equidad")
         st.dataframe(equidad.style.background_gradient(cmap="Blues"), use_container_width=True)
+        st.area_chart(cob)
