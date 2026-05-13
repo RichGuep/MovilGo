@@ -22,7 +22,7 @@ COLORES_MAP = {
 }
 
 def style_malla(df_pivot):
-    """Aplica el formato condicional de colores a la tabla."""
+    """Aplica el formato condicional de colores a la tabla del editor."""
     def apply_styles(val):
         key = val if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
@@ -106,7 +106,7 @@ def pantalla_personal():
         df = cargar_excel("empleados.xlsx")
         if not df.empty: 
             st.session_state.df_pers = df
-            st.success("Lista base cargada desde GitHub.")
+            st.success("Lista base cargada.")
     
     if 'df_pers' in st.session_state:
         if st.button("🎲 Ejecutar Clasificación por Grupos"):
@@ -164,7 +164,7 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
     for fecha in pd.date_range(inicio, fin):
         dia_n = DIAS_ES[fecha.weekday()]; asig = {}; cupo_fuera = 5
         
-        # 1. Identificar candidatos a descanso
+        # 1. Candidatos a descanso programado
         desc_prog = [p for p in grupo_a if dia_n == descansos_elegidos["A"]] + \
                     [p for p in grupo_b if dia_n == descansos_elegidos["B"]]
         
@@ -174,9 +174,9 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos):
                 asig[p] = "DESCANSO"
                 cupo_fuera -= 1
             else:
-                deudas_comp[p] += 1 # Deuda por trabajar en su descanso
+                deudas_comp[p] += 1 
 
-        # 2. Pagar compensatorios (L-V) si hay cupo
+        # 2. Pago de compensatorios (L-V) repartidos para no romper los 11/11
         if 0 <= fecha.weekday() <= 4:
             p_con_deuda = [p for p in personal if deudas_comp[p] > 0 and p not in asig]
             p_con_deuda = sorted(p_con_deuda, key=lambda x: deudas_comp[x], reverse=True)
@@ -213,8 +213,10 @@ def ejecutar_auditoria_v2(df):
 def generar_malla_transaccional(df_final, tipo, config_horas):
     df_empleados = cargar_excel("empleados_grupos.xlsx")
     if df_empleados.empty: return pd.DataFrame()
+    
     detallada = pd.merge(df_final, df_empleados[['Nombre', 'Cargo', 'GrupoAsignado']], 
                          left_on="Sujeto", right_on="Nombre" if tipo == "Abordaje" else "GrupoAsignado", how="inner")
+
     detallada["Hora Inicio"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Inicio", "OFF"))
     detallada["Hora Fin"] = detallada["Turno"].apply(lambda x: config_horas.get(x, {}).get("Fin", "OFF"))
     detallada["Horas Prog."] = detallada.apply(calcular_horas_turno, axis=1)
@@ -251,9 +253,9 @@ def pantalla_programador():
             desc_data[g] = cols_d[i].selectbox(f"Descanso {g}", DIAS_ES, index=(i+6)%7)
     else:
         st.write("⚓ **Parametrización Abordaje**")
-        ca, cb = st.columns(2)
-        desc_data["A"] = ca.selectbox("Descanso Grupo A (1-13)", DIAS_ES, index=5)
-        desc_data["B"] = cb.selectbox("Descanso Grupo B (14-27)", DIAS_ES, index=6)
+        cola, colb = st.columns(2)
+        desc_data["A"] = cola.selectbox("Descanso Grupo A (1-13)", DIAS_ES, index=5)
+        desc_data["B"] = colb.selectbox("Descanso Grupo B (14-27)", DIAS_ES, index=6)
 
     if st.button("🚀 Generar Malla y Auditoría"):
         if tipo == "Técnicos":
@@ -277,15 +279,14 @@ def pantalla_programador():
         cob_diaria, equidad = ejecutar_auditoria_v2(df_final)
         
         st.subheader("📊 Auditoría de Cobertura Diaria")
-        st.write("Verificación de cupos (Meta: 11 en T1, 11 en T2)")
-        # Resaltado en rojo si baja de 11, verde si es exactamente 11
         def resaltar_deficit(val):
             color = '#FADBD8' if val < 11 else '#D5F5E3' if val == 11 else ''
             return f'background-color: {color}'
         
-        st.dataframe(cob_diaria.style.applymap(resaltar_deficit, subset=["T1", "T2"]), use_container_width=True)
+        st.dataframe(cob_diaria.style.map(resaltar_deficit, subset=["T1", "T2"]), use_container_width=True)
         
         st.subheader("📋 Malla Transaccional Detallada")
+        # Corrección: Asegurar que config_h esté disponible
         st.dataframe(generar_malla_transaccional(df_final, tipo, config_h), use_container_width=True)
         
         st.subheader("⚖️ Equidad y Acumulados")
