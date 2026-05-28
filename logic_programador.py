@@ -203,15 +203,42 @@ def ejecutar_auditoria_completa(df):
     eq_det["Total Libres"] = eq_det["DESCANSO"] + eq_det["COMPENSADO"]
     return cob, h_sem, eq_det
 
-def generar_reporte_detallado(df_final, tipo, config_horas):
+def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos):
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
+    
+    # Combinamos datos operativos con los del personal de GitHub
     det = pd.merge(df_final, df_emp[['Nombre', 'Cargo', 'GrupoAsignado']], 
                    left_on="Sujeto", right_on="Nombre" if tipo == "Abordaje" else "GrupoAsignado", how="inner")
+    
+    # Manejo del Nombre en Técnicos debido al cruce por GrupoAsignado
+    if tipo != "Abordaje":
+        if "Nombre_y" in det.columns:
+            det["Nombre"] = det["Nombre_y"]
+        elif "Nombre" in det.columns:
+            pass
+
+    # Tiempos de jornada y cálculo de horas programadas
     det["Hora Inicio"] = det["Turno"].apply(lambda x: config_horas.get(x, {}).get("Inicio", "OFF"))
     det["Hora Fin"] = det["Turno"].apply(lambda x: config_horas.get(x, {}).get("Fin", "OFF"))
     det["Horas Prog"] = det["Turno"].apply(calcular_horas_turno)
-    return det[["Fecha", "Nombre", "Cargo", "Turno", "Hora Inicio", "Hora Fin", "Horas Prog"]]
+    
+    # Lógica para extraer el día de descanso estipulado originalmente
+    def obtener_descanso_base(row):
+        if tipo == "Abordaje":
+            idx_empleado = df_emp[df_emp['Nombre'] == row['Nombre']].index
+            if not idx_empleado.empty and idx_empleado[0] < 13:
+                return config_descansos.get("A", "N/A")
+            else:
+                return config_descansos.get("B", "N/A")
+        else:
+            return config_descansos.get(row['GrupoAsignado'], "N/A")
+
+    det["Día Descanso Base"] = det.apply(obtener_descanso_base, axis=1)
+    
+    # Estructuración final de las columnas del Reporte de Nómina
+    columnas_ordenadas = ["Fecha", "Nombre", "Cargo", "GrupoAsignado", "Día Descanso Base", "Turno", "Hora Inicio", "Hora Fin", "Horas Prog"]
+    return det[columnas_ordenadas]
 
 # =========================================================
 # 7. INTERFAZ DE USUARIO
@@ -264,8 +291,11 @@ def pantalla_programador():
         with t3:
             st.dataframe(eq.style.background_gradient(cmap="Greens", subset=["Total Libres"]), use_container_width=True)
         with t4:
-            rep = generar_reporte_detallado(df_audit, tipo, config_h)
+            rep = generar_reporte_detallado(df_audit, tipo, config_h, desc_data)
             st.dataframe(rep, use_container_width=True)
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer: rep.to_excel(writer, index=False)
             st.download_button("📥 Descargar Reporte Nómina", output.getvalue(), f"Malla_{tipo}_{date.today()}.xlsx")
+
+if __name__ == "__main__":
+    pantalla_programador()
