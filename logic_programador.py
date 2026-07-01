@@ -4,12 +4,12 @@ import numpy as np
 from datetime import datetime, timedelta, date, time
 import holidays
 import io
-import json
 import os
+import json
 from github import Github
 
 # =========================================================
-# 1. CONFIGURACIÓN, CONSTANTES Y ESTILOS (ORIGINALES)
+# 1. CONFIGURACIÓN, CONSTANTES Y ESTILOS
 # =========================================================
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
@@ -32,7 +32,7 @@ def style_malla(df_pivot):
     return df_pivot.style.map(apply_styles)
 
 # =========================================================
-# 2. CONECTIVIDAD GITHUB Y CARGA DE DATOS (ORIGINALES)
+# 2. CONECTIVIDAD GITHUB Y CARGA DE DATOS
 # =========================================================
 def conectar_github():
     try:
@@ -63,13 +63,15 @@ def guardar_github(df, nombre_archivo):
         st.toast(f"🆕 Archivo creado en GitHub.")
 
 # =========================================================
-# 3. GESTIÓN DE PERSONAL (ORIGINAL CON ADICIÓN DE SUPERVISOR)
+# 3. GESTIÓN DE PERSONAL (AUTOMÁTICA + DESPLEGABLE MANUAL)
 # =========================================================
 def asignar_grupos_automatico(df):
     df = df.copy()
-    if 'GrupoAsignado' in df.columns: df = df.drop(columns=['GrupoAsignado'])
+    if 'GrupoAsignado' in df.columns: 
+        df = df.drop(columns=['GrupoAsignado'])
     
-    # Filtrar operativos descartando supervisores para mantener la cuota intacta
+    # Separación estricta para no diluir las cuotas de técnicos
+    supervisores = df[df['Cargo'].str.contains('Supervisor', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     df_ops = df[~df['Cargo'].str.contains('Supervisor', case=False, na=False)]
     
     m = df_ops[df_ops['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).reset_index(drop=True)
@@ -77,38 +79,77 @@ def asignar_grupos_automatico(df):
     tb = df_ops[df_ops['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     
     res = []
+    # Distribución equitativa inyectando 1 supervisor por cada bloque
     for i, g in enumerate(GRUPOS_TEC):
         temp_m = m.iloc[i*2:(i+1)*2].copy(); temp_m['GrupoAsignado'] = g
         temp_ta = ta.iloc[i*7:(i+1)*7].copy(); temp_ta['GrupoAsignado'] = g
         temp_tb = tb.iloc[i*3:(i+1)*3].copy(); temp_tb['GrupoAsignado'] = g
+        
+        if i < len(supervisores):
+            temp_sup = supervisores.iloc[[i]].copy()
+            temp_sup['GrupoAsignado'] = g
+            res.append(temp_sup)
+            
         res.extend([temp_m, temp_ta, temp_tb])
         
     abo = df_ops[df_ops['Cargo'].str.contains('Abordaje|Auxiliar', case=False, na=False)].copy()
     abo['GrupoAsignado'] = "Abordaje"
     res.append(abo)
     
-    # Reincorporar supervisores de forma manual si existen
-    supervisores = df[df['Cargo'].str.contains('Supervisor', case=False, na=False)].copy()
-    if not supervisores.empty:
-        res.append(supervisores)
-        
     return pd.concat(res).reset_index(drop=True)
 
 def pantalla_personal():
-    st.subheader("👥 Gestión de Plantilla")
-    if st.button("📥 Cargar empleados.xlsx"):
-        df = cargar_excel("empleados.xlsx")
-        if not df.empty: st.session_state.df_pers = df; st.success("Personal cargado.")
-    if 'df_pers' in st.session_state:
-        if st.button("🎲 Ejecutar Clasificación"):
-            st.session_state.df_pers_ready = asignar_grupos_automatico(st.session_state.df_pers)
-        if 'df_pers_ready' in st.session_state:
-            df_edit = st.data_editor(st.session_state.df_pers_ready, use_container_width=True)
-            if st.button("💾 Guardar Estructura"):
-                guardar_github(df_edit, "empleados_grupos.xlsx")
+    st.subheader("👥 Gestión de Plantilla Operativa")
+    
+    if 'df_pers_ready' not in st.session_state:
+        st.session_state.df_pers_ready = pd.DataFrame()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("📥 Cargar empleados.xlsx Base"):
+            df = cargar_excel("empleados.xlsx")
+            if not df.empty: 
+                st.session_state.df_pers_ready = df
+                st.success("Personal cargado exitosamente.")
+    with c2:
+        if st.button("🎲 Ejecutar Clasificación Aleatoria"):
+            df_base = cargar_excel("empleados.xlsx")
+            if not df_base.empty:
+                st.session_state.df_pers_ready = asignar_grupos_automatico(df_base)
+                st.success("¡Distribución terminada! Supervisores asignados del Grupo 1 al 4.")
+
+    if not st.session_state.df_pers_ready.empty:
+        st.markdown("---")
+        st.markdown("##### ✍️ Modificación e Inyección Manual de Grupos")
+        st.caption("💡 Haz doble clic sobre la celda de 'GrupoAsignado' para reasignar el bloque o supervisor a mano.")
+        
+        if 'GrupoAsignado' not in st.session_state.df_pers_ready.columns:
+            st.session_state.df_pers_ready['GrupoAsignado'] = "None"
+            
+        st.session_state.df_pers_ready['GrupoAsignado'] = st.session_state.df_pers_ready['GrupoAsignado'].fillna("None").astype(str)
+        opciones_grupos = ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4", "Abordaje", "None"]
+        
+        # EDITOR INTERACTIVO CON SELECTOR MULTIOPCIÓN
+        df_edit = st.data_editor(
+            st.session_state.df_pers_ready,
+            use_container_width=True,
+            column_config={
+                "GrupoAsignado": st.column_config.SelectboxColumn(
+                    "📦 Grupo Asignado",
+                    help="Establece el grupo definitivo para la malla",
+                    options=opciones_grupos,
+                    required=True
+                )
+            },
+            key="maestro_personal_dropdown"
+        )
+        
+        if st.button("💾 Guardar Estructura Definitiva en GitHub"):
+            st.session_state.df_pers_ready = df_edit
+            guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR ABORDAJE (ORIGINAL CON PARAMETRIZACIÓN DE CUOTAS)
+# 4. MOTORES DE ROTACIÓN ORIGINALES PRESERVADOS
 # =========================================================
 def calcular_horas_turno(turno_val):
     if turno_val in ["DESCANSO", "COMPENSADO", "OFF", None]: return 0.0
@@ -118,7 +159,6 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos, cuota_des
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
     
-    # Extraer personal de Abordaje y Supervisores asignados a Abordaje
     df_pool = df_emp[df_emp['GrupoAsignado'] == "Abordaje"]
     personal = df_pool[~df_pool['Cargo'].str.contains('Supervisor', case=False, na=False)]['Nombre'].tolist()
     supervisores = df_pool[df_pool['Cargo'].str.contains('Supervisor', case=False, na=False)]['Nombre'].tolist()
@@ -131,20 +171,17 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos, cuota_des
         dia_n, asig, cupo_fuera = DIAS_ES[fecha.weekday()], {}, cuota_descansos_lv
         n_semana = fecha.isocalendar()[1]
         
-        # 1. PRIORIDAD: Pago de Compensados (Lunes a Viernes)
         if 0 <= fecha.weekday() <= 4:
             for p in list(cola_compensatorios):
                 if cupo_fuera > 0 and p in personal:
                     asig[p], cupo_fuera = "COMPENSADO", cupo_fuera - 1
                     cola_compensatorios.remove(p)
 
-        # 2. EQUIDAD: Alternancia semanal de Grupos
         if n_semana % 2 == 0:
             sagrados = {"A": descansos_elegidos["A"], "B": descansos_elegidos["B"]}
         else:
             sagrados = {"A": descansos_elegidos["B"], "B": descansos_elegidos["A"]}
 
-        # Identificar quién debería librar hoy
         candidatos_hoy = []
         mitad_pool = len(personal) // 2
         for i, p in enumerate(personal):
@@ -161,7 +198,6 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos, cuota_des
             else:
                 if p not in cola_compensatorios: cola_compensatorios.append(p)
 
-        # 3. LLENADO OBLIGATORIO PARAMETRIZADO
         dispos = [p for p in personal if p not in asig]
         np.random.seed(fecha.day)
         np.random.shuffle(dispos)
@@ -170,32 +206,23 @@ def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos, cuota_des
             elif list(asig.values()).count("T2") < cuota_t2: asig[p] = "T2"
             else: asig[p] = "DISPONIBLE"
             
-        # 4. GESTIÓN DEL SUPERVISOR (Sigue la rotación del Bloque principal)
         for sup in supervisores:
-            if dia_n == sagrados["B"]:
-                asig[sup] = "DESCANSO"
-            else:
-                asig[sup] = "T1" if list(asig.values()).count("T1") <= list(asig.values()).count("T2") else "T2"
+            if dia_n == sagrados["B"]: asig[sup] = "DESCANSO"
+            else: asig[sup] = "T1" if list(asig.values()).count("T1") <= list(asig.values()).count("T2") else "T2"
             
         for p in personal + supervisores:
             filas.append({"Fecha": fecha, "Sujeto": p, "Turno": asig.get(p, "DESCANSO")})
     return pd.DataFrame(filas)
 
-# =========================================================
-# 5. MOTOR TÉCNICOS (ORIGINAL CON INYECCIÓN DE SUPERVISORES)
-# =========================================================
 def generar_malla_tecnicos(inicio, fin, descansos_ley):
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
     
-    # Mapeo de supervisores manuales por grupo
     supervisores_mapeo = df_emp[df_emp['Cargo'].str.contains('Supervisor', case=False, na=False)].set_index('GrupoAsignado')['Nombre'].to_dict()
     
     filas, deudas = [], {g: 0 for g in GRUPOS_TEC}
     for fecha in pd.date_range(inicio, fin):
         dia_n, sem, asig = DIAS_ES[fecha.weekday()], fecha.isocalendar()[1], {}
-        
-        # Rotación determinista original de descansos estructurales de grupo
         gps_h = [g for g, d in descansos_ley.items() if d == dia_n]
         if len(gps_h) > 1:
             idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
@@ -207,27 +234,23 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
             g_d = sorted([g for g, d in deudas.items() if d > 0 and g not in asig], key=lambda x: deudas[x], reverse=True)
             if g_d: asig[g_d[0]], deudas[g_d[0]] = "COMPENSADO", deudas[g_d[0]]-1
         
-        # Garantía inquebrantable 24/7: Secuencia exacta de asignación de turnos
+        # LOGICA MODULAR ORIGINAL: Cobertura ininterrumpida de turnos críticos por ordenación
         activos = sorted([g for g in GRUPOS_TEC if g not in asig], key=lambda x: (GRUPOS_TEC.index(x) + sem) % 4)
         for g in activos:
             for t in ["T1", "T2", "T3", "T1 APOYO"]:
                 if t not in asig.values(): asig[g] = t; break
                 
-        # Construcción de registros: El grupo define el turno, los individuos (técnicos y supervisores) lo heredan
         for g in GRUPOS_TEC:
             turno_asignado = asig.get(g, "DESCANSO")
-            
-            # 1. Asignar al Grupo como bloque (Compatibilidad e historial)
             filas.append({"Fecha": fecha, "Sujeto": g, "Turno": turno_asignado})
             
-            # 2. Inyectar Supervisor de ese grupo si existe reflejando exactamente el estado del bloque
             if g in supervisores_mapeo:
                 filas.append({"Fecha": fecha, "Sujeto": f"SVP - {supervisores_mapeo[g]} ({g})", "Turno": turno_asignado})
                 
     return pd.DataFrame(filas)
 
 # =========================================================
-# 6. AUDITORÍA INTEGRAL Y TRANSACCIONAL (ORIGINAL)
+# 5. AUDITORÍA INTEGRAL DE LA REFORMA
 # =========================================================
 def ejecutar_auditoria_completa(df):
     df_aud = df.copy(); df_aud["Fecha"] = pd.to_datetime(df_aud["Fecha"])
@@ -268,7 +291,7 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos):
     return det[columnas_ordenadas]
 
 # =========================================================
-# 7. INTERFAZ DE USUARIO CON MEJORAS DE PARAMETRIZACIÓN
+# 6. INTERFAZ DE USUARIO DEL PROGRAMADOR
 # =========================================================
 def pantalla_programador():
     tipo = st.sidebar.radio("Módulo Selección", ["Abordaje", "Técnicos"])
@@ -284,13 +307,13 @@ def pantalla_programador():
                 config_h[t] = {"Inicio": ini.strftime("%H:%M"), "Fin": fin.strftime("%H:%M")}
         config_h["DESCANSO"] = config_h["COMPENSADO"] = {"Inicio": "OFF", "Fin": "OFF"}
 
-    # NUEVO: PARAMETRIZADOR DINÁMICO DE CAPACIDAD Y FILTROS
+    # CARGA DE CUOTAS NUMÉRICAS RECEPTIVAS EN ABORDAJE
     if tipo == "Abordaje":
-        with st.expander("📊 Parámetros de Personal - Abordaje", expanded=True):
+        with st.expander("📊 Parámetros de Capacidad - Abordaje", expanded=True):
             pc1, pc2, pc3 = st.columns(3)
             cuota_desc_lv = pc1.number_input("Cupo máximo de descansos L-V", min_value=1, max_value=15, value=5)
-            cuota_t1 = pc2.number_input("Cantidad obligatoria de personal en T1", min_value=1, max_value=20, value=11)
-            cuota_t2 = pc3.number_input("Cantidad obligatoria de personal en T2", min_value=1, max_value=20, value=11)
+            cuota_t1 = pc2.number_input("Personal requerido en T1", min_value=1, max_value=20, value=11)
+            cuota_t2 = pc3.number_input("Personal requerido en T2", min_value=1, max_value=20, value=11)
 
     c1, c2 = st.columns(2)
     inicio, fin = c1.date_input("Inicio", date(2026, 7, 1)), c2.date_input("Fin", date(2026, 12, 31))
@@ -312,15 +335,14 @@ def pantalla_programador():
     if 'm_base' in st.session_state and not st.session_state.m_base.empty:
         df_final = st.session_state.m_base.copy()
         
-        # NUEVO: FILTRO INTERACTIVO POR GRUPO/CATEGORÍA EN LA MALLA RESULTANTE
         st.write("---")
-        st.subheader("📝 Editor Maestro")
+        st.subheader("📋 Malla Resultante y Ajustes Manuales")
         
+        # FILTRADO DE GRUPO DINÁMICO EN PANTALLA
         opciones_vista = ["Ver Todo"] + (GRUPOS_TEC if tipo == "Técnicos" else ["Abordaje"])
-        if tipo == "Técnicos":
-            opciones_vista.append("Supervisores")
+        if tipo == "Técnicos": opciones_vista.append("Supervisores")
             
-        filtro_grupo = st.selectbox("🔍 Filtrar Malla en Pantalla:", opciones_vista)
+        filtro_grupo = st.selectbox("🔍 Filtrar visualización por Bloque:", opciones_vista)
         
         if filtro_grupo == "Supervisores":
             df_display = df_final[df_final["Sujeto"].str.contains("SVP -", na=False)]
@@ -328,23 +350,22 @@ def pantalla_programador():
             if tipo == "Técnicos":
                 df_display = df_final[(df_final["Sujeto"] == filtro_grupo) | (df_final["Sujeto"].str.contains(f"\({filtro_grupo}\)", na=False))]
             else:
-                df_display = df_final[df_final["Sujeto"] != "Abordaje"] # Muestra las personas naturales
+                df_display = df_final[df_final["Sujeto"] != "Abordaje"]
         else:
             df_display = df_final.copy()
 
         pivot = df_display.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
         
-        # EDITOR CON TU FORMATO VISUAL CONDICIONAL Y COLORES EXACTOS
-        df_edit_matriz = st.data_editor(style_malla(pivot), use_container_width=True, key=f"ed_{filtro_grupo}")
+        # EDITOR DE CELDAS CON COLORES ORIGINALES RESTAURADOS
+        df_edit_matriz = st.data_editor(style_malla(pivot), use_container_width=True, key=f"ed_v3_{filtro_grupo}")
         
-        # Re-alinear cambios manuales con los reportes de abajo
         df_audit = df_edit_matriz.reset_index().melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
         cob, h_sem, eq = ejecutar_auditoria_completa(df_audit)
         
-        t1, t2, t3, t4 = st.tabs(["📊 Cobertura", "⚖️ Jornada 42h", "📈 Equidad Semestral", "📋 Reporte Nómina"])
+        t1, t2, t3, t4 = st.tabs(["📊 Cobertura Lograda", "⚖️ Jornada 42h (Reforma)", "📈 Historial Equidad", "📋 Reporte Nómina"])
         with t1:
-            st.dataframe(cob.style.map(lambda v: 'background-color: #D5F5E3' if v>=5 else ('background-color: #FADBD8' if v<3 else ''), subset=["T1", "T2"] if "T1" in cob.columns else []), use_container_width=True)
+            st.dataframe(cob, use_container_width=True)
         with t2:
             st.dataframe(h_sem.style.highlight_between(left=42.1, right=100, color="#FADBD8"), use_container_width=True)
         with t3:
@@ -357,7 +378,7 @@ def pantalla_programador():
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: rep.to_excel(writer, index=False)
                 st.download_button("📥 Descargar Reporte Nómina", output.getvalue(), f"Malla_{tipo}_{date.today()}.xlsx")
             except:
-                st.info("Reporte disponible al visualizar el pool completo o registros válidos.")
+                st.info("Reporte disponible en pool completo.")
 
 if __name__ == "__main__":
     pantalla_programador()
