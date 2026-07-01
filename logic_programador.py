@@ -22,7 +22,17 @@ COLORES_MAP = {
     "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"
 }
 
-def style_malla(df_pivot):
+def style_malla(df_pivot):Escáner de Protección de Fatiga (Haz clic para mitigar y abrir Pop-up)
+NameError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
+Traceback:
+File "/mount/src/movilgo/app.py", line 136, in <module>
+    elif menu == "📅 Programación": pantalla_programador()
+                                    ~~~~~~~~~~~~~~~~~~~~^^
+File "/mount/src/movilgo/logic_programador.py", line 505, in pantalla_programador
+    lista_alertas_drasticas = verificar_alarmas_cambios_drasticos(df_audit)
+File "/mount/src/movilgo/logic_programador.py", line 269, in verificar_alarmas_cambios_drasticos
+    if novelty:
+       ^^^^^^^
     """Aplica el formato visual de celdas según el turno con los colores exactos."""
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
@@ -271,7 +281,7 @@ def verificar_alarmas_cambios_drasticos(df_plano):
                     "Sujeto": sujeto,
                     "Fecha": fecha_act,
                     "Semana": semana_num,
-                    "Mensaje": f"🚨 **{novelty}** en '{sujeto}' el {fecha_act.strftime('%Y-%m-%d')}."
+                    "Mensaje": f"🚨 **{novedad}** en '{sujeto}' el {fecha_act.strftime('%Y-%m-%d')}."
                 })
     return alertas
 
