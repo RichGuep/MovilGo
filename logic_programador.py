@@ -276,7 +276,7 @@ def verificar_alarmas_cambios_drasticos(df_plano):
             elif t_anterior == "T2" and t_actual == "T1":
                 novedad = "Transición Corta (T2 -> T1)"
                 
-            if novelty:
+            if novedad:
                 alertas.append({
                     "Sujeto": sujeto,
                     "Fecha": fecha_act,
