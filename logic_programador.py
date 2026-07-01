@@ -126,7 +126,7 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v9"
+            key="personal_dropdown_v10"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
@@ -232,7 +232,7 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
 # 5. CÁLCULO DINÁMICO DE HORAS Y AUDITORÍAS RECEPTIVAS
 # =========================================================
 def calcular_delta_horas(inicio_str, fin_str):
-    if inicio_str == "OFF" or fin_str == "OFF": return 0.0
+    if inicio_str == "OFF" or fin_str == "OFF" or pd.isna(inicio_str) or pd.isna(fin_str): return 0.0
     try:
         t_ini = datetime.strptime(str(inicio_str).strip(), "%H:%M")
         t_fin = datetime.strptime(str(fin_str).strip(), "%H:%M")
@@ -258,7 +258,7 @@ def ejecutar_auditoria_completa(df_plano, config_horas):
         fin = config_horas.get(turno, {}).get("Fin", "OFF")
         return calcular_delta_horas(ini, fin)
         
-    df_aud['Horas'] = df_aud['Turno'].apply(assignar_horas_vivas)
+    df_aud['Horas'] = df_aud['Turno'].apply(asignar_horas_vivas)
     h_sem = df_aud.groupby(['Sujeto', 'Semana'])['Horas'].sum().unstack(fill_value=0)
     
     return cob, h_sem
@@ -325,7 +325,6 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
             g_pertenece = emp['GrupoAsignado']
             cargo_actual = emp['Cargo']
             
-            # Buscar el acople exacto configurado en la malla
             if "Supervisor" in str(cargo_actual):
                 malla_bloque = df_final[df_final['Sujeto'] == f"{g_pertenece} - Supervisor: {emp['Nombre']}"]
             else:
@@ -407,19 +406,18 @@ def popup_resolver_fatiga(sujeto, fecha_novedad, semana_num):
             st.rerun()
 
 # =========================================================
-# 8. MÓDULO NUEVO: TRADUCTOR / DE-CONSTRUCTOR DE MATRIX (.MELT)
+# 8. MÓDULO: TRADUCTOR / DE-CONSTRUCTOR DE MATRIX (.MELT)
 # =========================================================
 def procesar_archivo_malla_externa(df_externo):
     """Toma un Excel en formato matriz calendario y lo aplana al estándar plano del sistema."""
     try:
-        # Detectar la columna de pivote (puede llamarse Sujeto, Empleado, Grupo, etc.)
         columna_clave = df_externo.columns[0]
         df_externo = df_externo.rename(columns={columna_clave: "Sujeto"})
         
-        # Desarmar la matriz para pasarla a filas ordenadas
+        # Desarmar la matriz para pasarla a filas ordenadas transaccionales
         df_plano = df_externo.melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
         
-        # Estandarizar formatos de fecha para prevenir caídas de tipos
+        # Estandarizar formatos y remover nulos tipográficos
         df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
         df_plano["Turno"] = df_plano["Turno"].fillna("DESCANSO").astype(str).str.strip().str.upper()
         
@@ -434,7 +432,9 @@ def procesar_archivo_malla_externa(df_externo):
 def pantalla_programador():
     st.sidebar.markdown("---")
     st.sidebar.subheader("📥 Carga de Mallas Externas")
-    archivo_malla = st.sidebar.file_uploader("Cargar Excel de Programación Realizada:", type=["xlsx", "xls"])
+    
+    # El cargador ahora es visible gracias a las correcciones de estilo en app.py
+    archivo_malla = st.sidebar.file_uploader("Arrastra aquí el Excel de la Malla (.xlsx):", type=["xlsx", "xls"])
     
     if archivo_malla is not None:
         try:
@@ -443,7 +443,7 @@ def pantalla_programador():
                 df_aplanado = procesar_archivo_malla_externa(df_cargado_raw)
                 if not df_aplanado.empty:
                     st.session_state.m_base = df_aplanado
-                    st.sidebar.success("¡Malla importada con éxito! Auditando...")
+                    st.sidebar.success("📋 Malla externa acoplada. Auditorías listas.")
         except Exception as e:
             st.sidebar.error(f"Error de lectura: {str(e)}")
 
@@ -597,4 +597,4 @@ def pantalla_programador():
                     resumen_persona.to_excel(writer, sheet_name="Total_Persona", index=False)
                     resumen_grupo.to_excel(writer, sheet_name="Total_Grupo", index=False)
                     
-                st.download_button("📥 Descargar Libro de Nómina y Resúmenes (.xlsx)", output.getvalue(), f"Nomina_Completa_{tipo}_{date.today()}.xlsx")
+                st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Completa_{tipo}_{date.today()}.xlsx")
