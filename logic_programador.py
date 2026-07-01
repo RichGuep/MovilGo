@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, date, time
 import holidays
 import io
 import os
+import json
 
 # =========================================================
 # 1. CONSTANTES, ESTILOS Y CONTROL DE FESTIVOS (ORIGINAL)
