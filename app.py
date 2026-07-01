@@ -20,27 +20,25 @@ st.set_page_config(
 URL_BASE = "https://raw.githubusercontent.com/RichGuep/movilgo/main/"
 LOGO_MÓVILGO = f"{URL_BASE}MovilGo.png"
 
-# --- LÓGICA DE ALMACENAMIENTO DE PARÁMETROS ---
 CONFIG_FILE = "config_estructural.json"
 
 def cargar_configuracion():
-    """Carga los tipos de personal parametrizados"""
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     else:
         default_config = {
             "Técnicos": {
-                "descripcion": "Operación de soporte técnico en campo 24/7.",
+                "descripcion": "Operación de soporte técnico en campo 24/7 por bloques organizados.",
                 "extension_turno": 7,
-                "rotacion": "Determinista por Grupos",
-                "reglas": ["Garantía total 24/7 de turnos T1, T2 y T3.", "Asignación de un Supervisor por Grupo."]
+                "grupos": ["Grupo 1", "Grupo 2", "Grupo 3", "Grupo 4"],
+                "rotacion": "Determinista por Grupos"
             },
             "Abordaje": {
                 "descripcion": "Gestión comercial y de abordaje operativo.",
                 "extension_turno": 7,
-                "rotacion": "Alternancia Semanal Quincenal",
-                "reglas": ["Bloques de gestión balanceados.", "Cupos de personal parametrizables."]
+                "grupos": ["Abordaje"],
+                "rotacion": "Alternancia Semanal"
             }
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -67,18 +65,9 @@ st.markdown(f"""
         color: white; padding: 2.5rem; border-radius: 20px; 
         box-shadow: 0 10px 25px rgba(0,0,0,0.1); margin-bottom: 2rem;
     }}
-    .centered-box {{
-        display: flex; flex-direction: column; align-items: center; 
-        justify-content: center; text-align: center; padding: 2rem; margin-top: 5vh;
-    }}
-    .login-card {{
-        max-width: 450px; background: white; padding: 3rem; 
-        border-radius: 25px; border: 1px solid #eee; box-shadow: 0 15px 35px rgba(0,0,0,0.15); margin: auto;
-    }}
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. MÓDULOS DE INTERFAZ ---
 def modulo_inicio():
     st.markdown(f'''
         <div class="welcome-card">
@@ -100,23 +89,17 @@ def modulo_inicio():
     st.subheader("🇨🇴 Contexto Legal Global: Reforma Laboral 2026")
     inf1, inf2 = st.columns(2)
     with inf1:
-        st.info("""
-        **📉 Reducción de la Jornada**
-        Para el año **2026 la jornada ordinaria máxima es de 42 horas semanales**. El motor transversal del sistema calcula los acumulados respetando este límite de ley.
-        """)
+        st.info("📉 **Reducción de la Jornada Semanal:** Para el año 2026 la jornada ordinaria máxima es de 42 horas semanales. El sistema controla los acumulados semanales por empleado.")
     with inf2:
-        st.warning("""
-        **🛌 Descansos Compensatorios**
-        El sistema genera deudas automáticas de compensación cuando las necesidades del servicio interrumpen los días de descanso base de cada grupo.
-        """)
+        st.warning("🛌 **Descansos Compensatorios:** El sistema genera deudas automáticas individuales de compensación cuando las necesidades del servicio obligan a laborar en días de descanso base.")
 
-# --- 4. FLUJO DE NAVEGACIÓN Y ACCESO ---
+# --- Flujo de Estados de Sesión ---
 if 'splash_done' not in st.session_state: st.session_state.splash_done = False
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'empresa' not in st.session_state: st.session_state.empresa = "Grupo Movil"
 
 if not st.session_state.splash_done:
-    st.markdown('<div class="centered-box">', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center; margin-top:15vh;">', unsafe_allow_html=True)
     st.image(LOGO_MÓVILGO, width=550)
     st.markdown("<h1 style='color:#1E3D59;'>Optimizer Pro 2026</h1>", unsafe_allow_html=True)
     if st.button("INGRESAR AL PORTAL"):
@@ -125,7 +108,7 @@ if not st.session_state.splash_done:
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif not st.session_state.logged_in:
-    st.markdown('<div class="centered-box"><div class="login-card">', unsafe_allow_html=True)
+    st.markdown('<div style="max-width:450px; margin:10vh auto; background:white; padding:3rem; border-radius:25px; box-shadow: 0 15px 35px rgba(0,0,0,0.15);">', unsafe_allow_html=True)
     st.image(LOGO_MÓVILGO, width=180)
     st.markdown("### **Acceso Administrativo**")
     u = st.text_input("Usuario", placeholder="admin")
@@ -136,24 +119,18 @@ elif not st.session_state.logged_in:
             st.rerun()
         else:
             st.error("Credenciales incorrectas")
-    st.markdown('</div></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 else:
     with st.sidebar:
         st.image(LOGO_MÓVILGO, use_container_width=True)
-        st.markdown(f"<h3 style='text-align:center;'>{st.session_state.empresa}</h3>", unsafe_allow_html=True)
         st.divider()
         menu = st.radio("NAVEGACIÓN", ["🏠 Inicio", "👥 Personal", "📅 Programación"])
-        
-        st.markdown("<br>"*8, unsafe_allow_html=True)
         if st.button("🚪 Cerrar Sesión"):
             st.session_state.logged_in = False
             st.session_state.splash_done = False
             st.rerun()
 
-    if menu == "🏠 Inicio":
-        modulo_inicio()
-    elif menu == "👥 Personal":
-        pantalla_personal()
-    elif menu == "📅 Programación":
-        pantalla_programador()
+    if menu == "🏠 Inicio": modulo_inicio()
+    elif menu == "👥 Personal": pantalla_personal()
+    elif menu == "📅 Programación": pantalla_programador()
