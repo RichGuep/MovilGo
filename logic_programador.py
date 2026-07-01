@@ -126,7 +126,7 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v10"
+            key="personal_dropdown_v11"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
@@ -320,11 +320,13 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                     "Horas Prog": calcular_delta_horas(ini, fin)
                 })
     else:
+        # CORRECCIÓN EN EL FILTRADO: Mapeo y procesamiento integrado del Supervisor como rol técnico activo
         df_sub = df_emp[df_emp['GrupoAsignado'].isin(GRUPOS_TEC)]
         for _, emp in df_sub.iterrows():
             g_pertenece = emp['GrupoAsignado']
             cargo_actual = emp['Cargo']
             
+            # CRÍTICO: Búsqueda dinámica por contenedor de texto para supervisores acoplados
             if "Supervisor" in str(cargo_actual):
                 malla_bloque = df_final[df_final['Sujeto'] == f"{g_pertenece} - Supervisor: {emp['Nombre']}"]
             else:
@@ -409,18 +411,12 @@ def popup_resolver_fatiga(sujeto, fecha_novedad, semana_num):
 # 8. MÓDULO: TRADUCTOR / DE-CONSTRUCTOR DE MATRIX (.MELT)
 # =========================================================
 def procesar_archivo_malla_externa(df_externo):
-    """Toma un Excel en formato matriz calendario y lo aplana al estándar plano del sistema."""
     try:
         columna_clave = df_externo.columns[0]
         df_externo = df_externo.rename(columns={columna_clave: "Sujeto"})
-        
-        # Desarmar la matriz para pasarla a filas ordenadas transaccionales
         df_plano = df_externo.melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
-        
-        # Estandarizar formatos y remover nulos tipográficos
         df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
         df_plano["Turno"] = df_plano["Turno"].fillna("DESCANSO").astype(str).str.strip().str.upper()
-        
         return df_plano
     except Exception as e:
         st.error(f"❌ Error en la estructura del Excel cargado: {str(e)}")
@@ -432,8 +428,6 @@ def procesar_archivo_malla_externa(df_externo):
 def pantalla_programador():
     st.sidebar.markdown("---")
     st.sidebar.subheader("📥 Carga de Mallas Externas")
-    
-    # El cargador ahora es visible gracias a las correcciones de estilo en app.py
     archivo_malla = st.sidebar.file_uploader("Arrastra aquí el Excel de la Malla (.xlsx):", type=["xlsx", "xls"])
     
     if archivo_malla is not None:
@@ -539,6 +533,7 @@ def pantalla_programador():
         df_audit = df_final.copy()
         df_audit["Fecha"] = pd.to_datetime(df_audit["Fecha"])
         
+        # NUEVA AUDITORÍA DE HORAS POR TRANSACCIÓN DE MATRIZ EXTERNA O GENERADA
         cob, h_sem = ejecutar_auditoria_completa(df_audit, config_h)
         
         st.write("---")
@@ -567,6 +562,8 @@ def pantalla_programador():
                 st.success("✅ No se detectaron transiciones críticas en la malla horaria actual.")
                 
         with t3:
+            # Sincronización paramétrica en vivo de las 42 horas en base a horas calculadas por turno
+            st.write("### Horas Semanales Consolidadas por Bloque y Supervisor")
             st.dataframe(h_sem.style.highlight_between(left=42.01, right=100, color="#FADBD8"), use_container_width=True)
             
         with t4:
@@ -576,8 +573,11 @@ def pantalla_programador():
             if not rep_individual.empty:
                 st.dataframe(rep_individual, use_container_width=True)
                 
+                # =========================================================
+                # 📊 SECCIÓN: RESÚMENES TOTALES INTEGRANDO AL SUPERVISOR POR GRUPO
+                # =========================================================
                 st.write("---")
-                st.subheader("📊 Resumen Consolidado de Horas Laboradas")
+                st.subheader("📊 Resumen Consolidado de Horas Laboradas (Incluye Supervisores)")
                 r_col1, r_col2 = st.columns(2)
                 with r_col1:
                     st.markdown("**📈 Total Horas por Persona (Semestre Completo):**")
