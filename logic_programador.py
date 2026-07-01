@@ -126,7 +126,7 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v8"
+            key="personal_dropdown_v9"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
@@ -232,21 +232,18 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
 # 5. CÁLCULO DINÁMICO DE HORAS Y AUDITORÍAS RECEPTIVAS
 # =========================================================
 def calcular_delta_horas(inicio_str, fin_str):
-    """Calcula la duración exacta de horas entre dos marcas de tiempo (Soporta cruce de medianoche)."""
     if inicio_str == "OFF" or fin_str == "OFF": return 0.0
     try:
-        t_ini = datetime.strptime(inicio_str, "%H:%M")
-        t_fin = datetime.strptime(fin_str, "%H:%M")
+        t_ini = datetime.strptime(str(inicio_str).strip(), "%H:%M")
+        t_fin = datetime.strptime(str(fin_str).strip(), "%H:%M")
         if t_fin >= t_ini:
             return (t_fin - t_ini).seconds / 3600.0
         else:
-            # Cruce de medianoche (Ej: 21:30 a 05:30)
             return ((t_fin + timedelta(days=1)) - t_ini).seconds / 3600.0
     except:
         return 0.0
 
 def ejecutar_auditoria_completa(df_plano, config_horas):
-    """Audita coberturas y calcula las horas semanales usando la matemática real del turno."""
     df_aud = df_plano.copy()
     df_aud["Fecha"] = pd.to_datetime(df_aud["Fecha"])
     
@@ -256,13 +253,12 @@ def ejecutar_auditoria_completa(df_plano, config_horas):
         
     df_aud['Semana'] = df_aud['Fecha'].dt.isocalendar().week
     
-    # NUEVO: Mapeo y cálculo matemático dinámico de horas basado en los inputs de pantalla
     def asignar_horas_vivas(turno):
         ini = config_horas.get(turno, {}).get("Inicio", "OFF")
         fin = config_horas.get(turno, {}).get("Fin", "OFF")
         return calcular_delta_horas(ini, fin)
         
-    df_aud['Horas'] = df_aud['Turno'].apply(asignar_horas_vivas)
+    df_aud['Horas'] = df_aud['Turno'].apply(assignar_horas_vivas)
     h_sem = df_aud.groupby(['Sujeto', 'Semana'])['Horas'].sum().unstack(fill_value=0)
     
     return cob, h_sem
@@ -321,7 +317,7 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                     "Turno": turno,
                     "Hora Inicio": ini,
                     "Hora Fin": fin,
-                    "Horas Prog": calcular_delta_horas(ini, fin)  # <--- !!! NUEVO: CÁLCULO REAL DE HORAS !!!
+                    "Horas Prog": calcular_delta_horas(ini, fin)
                 })
     else:
         df_sub = df_emp[df_emp['GrupoAsignado'].isin(GRUPOS_TEC)]
@@ -329,6 +325,7 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
             g_pertenece = emp['GrupoAsignado']
             cargo_actual = emp['Cargo']
             
+            # Buscar el acople exacto configurado en la malla
             if "Supervisor" in str(cargo_actual):
                 malla_bloque = df_final[df_final['Sujeto'] == f"{g_pertenece} - Supervisor: {emp['Nombre']}"]
             else:
@@ -353,7 +350,7 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                     "Turno": turno,
                     "Hora Inicio": ini,
                     "Hora Fin": fin,
-                    "Horas Prog": calcular_delta_horas(ini, fin)  # <--- !!! NUEVO: CÁLCULO REAL DE HORAS !!!
+                    "Horas Prog": calcular_delta_horas(ini, fin)
                 })
                 
     return pd.DataFrame(filas_reporte)
@@ -410,13 +407,50 @@ def popup_resolver_fatiga(sujeto, fecha_novedad, semana_num):
             st.rerun()
 
 # =========================================================
-# 7. INTERFAZ OPERATIVA PRINCIPAL
+# 8. MÓDULO NUEVO: TRADUCTOR / DE-CONSTRUCTOR DE MATRIX (.MELT)
+# =========================================================
+def procesar_archivo_malla_externa(df_externo):
+    """Toma un Excel en formato matriz calendario y lo aplana al estándar plano del sistema."""
+    try:
+        # Detectar la columna de pivote (puede llamarse Sujeto, Empleado, Grupo, etc.)
+        columna_clave = df_externo.columns[0]
+        df_externo = df_externo.rename(columns={columna_clave: "Sujeto"})
+        
+        # Desarmar la matriz para pasarla a filas ordenadas
+        df_plano = df_externo.melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
+        
+        # Estandarizar formatos de fecha para prevenir caídas de tipos
+        df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
+        df_plano["Turno"] = df_plano["Turno"].fillna("DESCANSO").astype(str).str.strip().str.upper()
+        
+        return df_plano
+    except Exception as e:
+        st.error(f"❌ Error en la estructura del Excel cargado: {str(e)}")
+        return pd.DataFrame()
+
+# =========================================================
+# 9. INTERFAZ OPERATIVA PRINCIPAL
 # =========================================================
 def pantalla_programador():
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📥 Carga de Mallas Externas")
+    archivo_malla = st.sidebar.file_uploader("Cargar Excel de Programación Realizada:", type=["xlsx", "xls"])
+    
+    if archivo_malla is not None:
+        try:
+            df_cargado_raw = pd.read_excel(archivo_malla)
+            if st.sidebar.button("🔄 Importar y Evaluar Malla"):
+                df_aplanado = procesar_archivo_malla_externa(df_cargado_raw)
+                if not df_aplanado.empty:
+                    st.session_state.m_base = df_aplanado
+                    st.sidebar.success("¡Malla importada con éxito! Auditando...")
+        except Exception as e:
+            st.sidebar.error(f"Error de lectura: {str(e)}")
+
     tipo = st.sidebar.radio("Módulo Selección", ["Abordaje", "Técnicos"])
     
     matriz_tecnicos_cap = {}
-    with st.expander("📊 Parámetros de Capacidad y Roles Requeridos", expanded=True):
+    with st.expander("📊 Parámetros de Capacidad y Roles Requeridos", expanded=False):
         if tipo == "Abordaje":
             pc1, pc2, pc3 = st.columns(3)
             cuota_desc_lv = pc1.number_input("Cupo máximo de descansos L-V", min_value=1, max_value=15, value=5)
@@ -443,7 +477,7 @@ def pantalla_programador():
                         matriz_tecnicos_cap[cargo][t] = cant
                 st.caption("---")
 
-    with st.expander("⏰ Configuración Rangos de Jornada (Basado en Horas Reales)"):
+    with st.expander("⏰ Configuración Rangos de Jornada (Basado en Horas Reales)", expanded=False):
         config_h = {}
         t_l = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
         def_h = {"T1": [time(5,30), time(13,30)], "T2": [time(13,30), time(21,30)], "T3": [time(21,30), time(5,30)], "RELEVO": [time(8,0), time(15,0)], "T1 APOYO": [time(7,0), time(14,0)], "DISPONIBLE": [time(8,0), time(15,0)]}
@@ -465,7 +499,7 @@ def pantalla_programador():
         cols = st.columns(4)
         for i, g in enumerate(GRUPOS_TEC): desc_data[g] = cols[i].selectbox(f"Descanso {g}", DIAS_ES, index=(i+6)%7)
 
-    if st.button("🚀 GENERAR MALLA SEMESTRAL CON REGLAS"):
+    if st.button("🚀 GENERAR MALLA SEMESTRAL CON ALGORITMO"):
         if tipo == "Abordaje": 
             st.session_state.m_base = generar_malla_abordaje_individual(inicio, fin, desc_data, cuota_desc_lv, cuota_t1, cuota_t2)
         else: 
@@ -475,7 +509,7 @@ def pantalla_programador():
         df_final = st.session_state.m_base.copy()
         
         st.write("---")
-        st.subheader("📋 Malla Resultante y Ajustes Manuales")
+        st.subheader("📋 Malla de Turnos bajo Evaluación")
         
         with st.expander("🛠️ Panel de Ajuste Rápido (Pop-up Interactivo)", expanded=False):
             st.caption("Selecciona el sujeto y la fecha para sobreescribir la celda mediante un Pop-up controlado.")
@@ -495,7 +529,7 @@ def pantalla_programador():
         opciones_vista = ["Ver Todo"] + (GRUPOS_TEC if tipo == "Técnicos" else ["Abordaje"])
         filtro_grupo = st.selectbox("🔍 Filtrar Malla por Bloque en Pantalla:", opciones_vista)
         
-        df_display = df_final[df_final["Sujeto"].str.contains(filtro_grupo, na=False)] if filtro_grupo != "Ver Todo" else df_final.copy()
+        df_display = df_final[df_final["Sujeto"].astype(str).str.contains(filtro_grupo, na=False)] if filtro_grupo != "Ver Todo" else df_final.copy()
 
         pivot = df_display.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
@@ -505,7 +539,6 @@ def pantalla_programador():
         df_audit = df_final.copy()
         df_audit["Fecha"] = pd.to_datetime(df_audit["Fecha"])
         
-        # NUEVA AUDITORÍA MATEMÁTICA CON HORAS VIVAS EN CALIENTE
         cob, h_sem = ejecutar_auditoria_completa(df_audit, config_h)
         
         st.write("---")
@@ -543,12 +576,8 @@ def pantalla_programador():
             if not rep_individual.empty:
                 st.dataframe(rep_individual, use_container_width=True)
                 
-                # =========================================================
-                # 📊 SECCIÓN NUEVA: RESÚMENES TOTALES POR PERSONA Y GRUPO
-                # =========================================================
                 st.write("---")
                 st.subheader("📊 Resumen Consolidado de Horas Laboradas")
-                
                 r_col1, r_col2 = st.columns(2)
                 with r_col1:
                     st.markdown("**📈 Total Horas por Persona (Semestre Completo):**")
@@ -562,7 +591,6 @@ def pantalla_programador():
                     resumen_grupo.columns = ["Grupo / Cuadrilla", "Total Horas Acumuladas"]
                     st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Acumuladas"]), use_container_width=True)
                 
-                # Botón de descarga unificado
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: 
                     rep_individual.to_excel(writer, sheet_name="Detalle_Dias", index=False)
@@ -570,8 +598,3 @@ def pantalla_programador():
                     resumen_grupo.to_excel(writer, sheet_name="Total_Grupo", index=False)
                     
                 st.download_button("📥 Descargar Libro de Nómina y Resúmenes (.xlsx)", output.getvalue(), f"Nomina_Completa_{tipo}_{date.today()}.xlsx")
-            else:
-                st.warning("⚠️ Selecciona el filtro en 'Ver Todo' para compilar el consolidado completo de nómina por persona.")
-
-if __name__ == "__main__":
-    pantalla_programador()
