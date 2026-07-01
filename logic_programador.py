@@ -22,17 +22,7 @@ COLORES_MAP = {
     "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"
 }
 
-def style_malla(df_pivot):Escáner de Protección de Fatiga (Haz clic para mitigar y abrir Pop-up)
-NameError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
-Traceback:
-File "/mount/src/movilgo/app.py", line 136, in <module>
-    elif menu == "📅 Programación": pantalla_programador()
-                                    ~~~~~~~~~~~~~~~~~~~~^^
-File "/mount/src/movilgo/logic_programador.py", line 505, in pantalla_programador
-    lista_alertas_drasticas = verificar_alarmas_cambios_drasticos(df_audit)
-File "/mount/src/movilgo/logic_programador.py", line 269, in verificar_alarmas_cambios_drasticos
-    if novelty:
-       ^^^^^^^
+def style_malla(df_pivot):
     """Aplica el formato visual de celdas según el turno con los colores exactos."""
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
@@ -136,7 +126,7 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v6"
+            key="personal_dropdown_v7"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
@@ -243,7 +233,7 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
     return pd.DataFrame(filas)
 
 # =========================================================
-# 5. AUDITORÍA INTEGRAL
+# 5. AUDITORÍA INTEGRAL Y ALARMAS DE FATIGA
 # =========================================================
 def ejecutar_auditoria_completa(df):
     df_aud = df.copy(); df_aud["Fecha"] = pd.to_datetime(df_aud["Fecha"])
@@ -353,7 +343,6 @@ def popup_cambio_manual(sujeto, fecha_str, turno_actual):
     nuevo_turno = st.selectbox("Seleccione el nuevo Turno:", opciones_turnos, index=opciones_turnos.index(turno_actual) if turno_actual in opciones_turnos else 5)
     
     if st.button("💾 Guardar Ajuste"):
-        # Modificar directamente en el estado de sesión maestro
         df = st.session_state.m_base
         idx = df[(df['Sujeto'] == sujeto) & (pd.to_datetime(df['Fecha']) == pd.to_datetime(fecha_str))].index
         if not idx.empty:
@@ -362,18 +351,16 @@ def popup_cambio_manual(sujeto, fecha_str, turno_actual):
             st.rerun()
 
 @st.dialog("🔍 Mitigación de Alerta de Fatiga Semanal", width="large")
-def popup_resolver_fatiga(sujeto, fecha_novedad, semana_num, config_horas, config_descansos, tipo, matriz_cap):
+def popup_resolver_fatiga(sujeto, fecha_novedad, semana_num):
     st.markdown(f"### Historial de la Semana {semana_num} para: **{sujeto}**")
     st.warning(f"Novedad registrada el día: {fecha_novedad.strftime('%Y-%m-%d')}")
     
-    # Aislar y mostrar únicamente la semana de la alerta
     df_malla = st.session_state.m_base.copy()
     df_malla['Fecha'] = pd.to_datetime(df_malla['Fecha'])
     df_malla['Semana'] = df_malla['Fecha'].dt.isocalendar().week
     
     df_semana = df_malla[(df_malla['Sujeto'] == sujeto) & (df_malla['Semana'] == semana_num)].sort_values(by="Fecha")
     
-    # Renderizar mini-malla editable de la semana
     pivot_sem = df_semana.pivot(index="Sujeto", columns="Fecha", values="Turno")
     pivot_sem.columns = [c.strftime('%Y-%m-%d') for c in pivot_sem.columns]
     st.write("##### Calendario Semanal:")
@@ -463,7 +450,6 @@ def pantalla_programador():
         st.write("---")
         st.subheader("📋 Malla Resultante y Ajustes Manuales")
         
-        # PANEL DE CAMBIO MANUAL ASISTIDO POR POP-UP (REQUISITO 1)
         with st.expander("🛠️ Panel de Ajuste Rápido (Pop-up Interactivo)", expanded=False):
             st.caption("Selecciona el sujeto y la fecha para sobreescribir la celda mediante un Pop-up controlado.")
             col_p1, col_p2 = st.columns(2)
@@ -479,7 +465,6 @@ def pantalla_programador():
             if st.button("🪟 Abrir Ventana de Cambio"):
                 popup_cambio_manual(suj_cambio, f_cambio, turno_actual_sel)
 
-        # RENDERIZACIÓN DE LA MALLA VIVA CON COLORES CONDICIONALES FIJADOS
         opciones_vista = ["Ver Todo"] + (GRUPOS_TEC if tipo == "Técnicos" else ["Abordaje"])
         filtro_grupo = st.selectbox("🔍 Filtrar Malla por Bloque en Pantalla:", opciones_vista)
         
@@ -488,10 +473,8 @@ def pantalla_programador():
         pivot = df_display.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
         
-        # Mostrar el Data Editor estático para lectura rápida con color condicional
         st.dataframe(style_malla(pivot), use_container_width=True)
         
-        # Compilar datos planos frescos para auditoría
         df_audit = df_final.copy()
         df_audit["Fecha"] = pd.to_datetime(df_audit["Fecha"])
         cob, h_sem = ejecutar_auditoria_completa(df_audit)
@@ -511,7 +494,6 @@ def pantalla_programador():
             
         with t2:
             st.write("### Escáner de Protección de Fatiga (Haz clic para mitigar y abrir Pop-up)")
-            # REQUISITO 2: CASOS DE FATIGA INTERACTIVOS CON APERTURA DE POP-UP POR CLIC
             lista_alertas_drasticas = verificar_alarmas_cambios_drasticos(df_audit)
             if lista_alertas_drasticas:
                 for idx_al, alerta in enumerate(lista_alertas_drasticas[:15]):
@@ -521,11 +503,7 @@ def pantalla_programador():
                         popup_resolver_fatiga(
                             alerta["Sujeto"], 
                             alerta["Fecha"], 
-                            alerta["Semana"], 
-                            config_h, 
-                            desc_data, 
-                            tipo, 
-                            matriz_tecnicos_cap if tipo == "Técnicos" else None
+                            alerta["Semana"]
                         )
             else:
                 st.success("✅ No se detectaron transiciones críticas en la malla horaria actual.")
