@@ -126,7 +126,7 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v7"
+            key="personal_dropdown_v8"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
@@ -135,10 +135,6 @@ def pantalla_personal():
 # =========================================================
 # 4. MOTORES DE ASIGNACIÓN DETERMINISTAS ORIGINALES
 # =========================================================
-def calcular_horas_turno(turno_val):
-    if turno_val in ["DESCANSO", "COMPENSADO", "OFF", None]: return 0.0
-    return 7.0
-
 def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos, cuota_descansos_lv, cuota_t1, cuota_t2):
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
@@ -233,17 +229,42 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
     return pd.DataFrame(filas)
 
 # =========================================================
-# 5. AUDITORÍA INTEGRAL Y ALARMAS DE FATIGA
+# 5. CÁLCULO DINÁMICO DE HORAS Y AUDITORÍAS RECEPTIVAS
 # =========================================================
-def ejecutar_auditoria_completa(df):
-    df_aud = df.copy(); df_aud["Fecha"] = pd.to_datetime(df_aud["Fecha"])
+def calcular_delta_horas(inicio_str, fin_str):
+    """Calcula la duración exacta de horas entre dos marcas de tiempo (Soporta cruce de medianoche)."""
+    if inicio_str == "OFF" or fin_str == "OFF": return 0.0
+    try:
+        t_ini = datetime.strptime(inicio_str, "%H:%M")
+        t_fin = datetime.strptime(fin_str, "%H:%M")
+        if t_fin >= t_ini:
+            return (t_fin - t_ini).seconds / 3600.0
+        else:
+            # Cruce de medianoche (Ej: 21:30 a 05:30)
+            return ((t_fin + timedelta(days=1)) - t_ini).seconds / 3600.0
+    except:
+        return 0.0
+
+def ejecutar_auditoria_completa(df_plano, config_horas):
+    """Audita coberturas y calcula las horas semanales usando la matemática real del turno."""
+    df_aud = df_plano.copy()
+    df_aud["Fecha"] = pd.to_datetime(df_aud["Fecha"])
+    
     cob = df_aud.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
     for c in ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]:
         if c not in cob.columns: cob[c] = 0
         
     df_aud['Semana'] = df_aud['Fecha'].dt.isocalendar().week
-    df_aud['Horas'] = df_aud['Turno'].apply(lambda x: calcular_horas_turno(x))
+    
+    # NUEVO: Mapeo y cálculo matemático dinámico de horas basado en los inputs de pantalla
+    def asignar_horas_vivas(turno):
+        ini = config_horas.get(turno, {}).get("Inicio", "OFF")
+        fin = config_horas.get(turno, {}).get("Fin", "OFF")
+        return calcular_delta_horas(ini, fin)
+        
+    df_aud['Horas'] = df_aud['Turno'].apply(asignar_horas_vivas)
     h_sem = df_aud.groupby(['Sujeto', 'Semana'])['Horas'].sum().unstack(fill_value=0)
+    
     return cob, h_sem
 
 def verificar_alarmas_cambios_drasticos(df_plano):
@@ -288,6 +309,9 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
             malla_persona = df_final[df_final['Sujeto'] == emp['Nombre']]
             for _, m_fila in malla_persona.iterrows():
                 turno = m_fila['Turno']
+                ini = config_horas.get(turno, {}).get("Inicio", "OFF")
+                fin = config_horas.get(turno, {}).get("Fin", "OFF")
+                
                 filas_reporte.append({
                     "Fecha": m_fila['Fecha'].strftime('%Y-%m-%d'),
                     "Nombre": emp['Nombre'],
@@ -295,9 +319,9 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                     "GrupoAsignado": "Abordaje",
                     "Día Descanso Base": config_descansos.get("A", "Sábado"),
                     "Turno": turno,
-                    "Hora Inicio": config_horas.get(turno, {}).get("Inicio", "OFF"),
-                    "Hora Fin": config_horas.get(turno, {}).get("Fin", "OFF"),
-                    "Horas Prog": calcular_horas_turno(turno)
+                    "Hora Inicio": ini,
+                    "Hora Fin": fin,
+                    "Horas Prog": calcular_delta_horas(ini, fin)  # <--- !!! NUEVO: CÁLCULO REAL DE HORAS !!!
                 })
     else:
         df_sub = df_emp[df_emp['GrupoAsignado'].isin(GRUPOS_TEC)]
@@ -317,6 +341,9 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                     if limite_cupo == 0 and turno not in ["DESCANSO", "COMPENSADO"]:
                         turno = "DISPONIBLE"
 
+                ini = config_horas.get(turno, {}).get("Inicio", "OFF")
+                fin = config_horas.get(turno, {}).get("Fin", "OFF")
+
                 filas_reporte.append({
                     "Fecha": m_fila['Fecha'].strftime('%Y-%m-%d'),
                     "Nombre": emp['Nombre'],
@@ -324,9 +351,9 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                     "GrupoAsignado": g_pertenece,
                     "Día Descanso Base": config_descansos.get(g_pertenece, "Domingo"),
                     "Turno": turno,
-                    "Hora Inicio": config_horas.get(turno, {}).get("Inicio", "OFF"),
-                    "Hora Fin": config_horas.get(turno, {}).get("Fin", "OFF"),
-                    "Horas Prog": calcular_horas_turno(turno)
+                    "Hora Inicio": ini,
+                    "Hora Fin": fin,
+                    "Horas Prog": calcular_delta_horas(ini, fin)  # <--- !!! NUEVO: CÁLCULO REAL DE HORAS !!!
                 })
                 
     return pd.DataFrame(filas_reporte)
@@ -416,7 +443,7 @@ def pantalla_programador():
                         matriz_tecnicos_cap[cargo][t] = cant
                 st.caption("---")
 
-    with st.expander("⏰ Configuración Rangos de Jornada (7h)"):
+    with st.expander("⏰ Configuración Rangos de Jornada (Basado en Horas Reales)"):
         config_h = {}
         t_l = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
         def_h = {"T1": [time(5,30), time(13,30)], "T2": [time(13,30), time(21,30)], "T3": [time(21,30), time(5,30)], "RELEVO": [time(8,0), time(15,0)], "T1 APOYO": [time(7,0), time(14,0)], "DISPONIBLE": [time(8,0), time(15,0)]}
@@ -477,7 +504,9 @@ def pantalla_programador():
         
         df_audit = df_final.copy()
         df_audit["Fecha"] = pd.to_datetime(df_audit["Fecha"])
-        cob, h_sem = ejecutar_auditoria_completa(df_audit)
+        
+        # NUEVA AUDITORÍA MATEMÁTICA CON HORAS VIVAS EN CALIENTE
+        cob, h_sem = ejecutar_auditoria_completa(df_audit, config_h)
         
         st.write("---")
         t1, t2, t3, t4 = st.tabs(["📊 Cobertura Lograda", "⚠️ Alarmas de Fatiga Interactivas", "⚖️ Jornada 42h (Reforma)", "📋 Reporte Nómina Detallado"])
@@ -500,11 +529,7 @@ def pantalla_programador():
                     col_al1, col_al2 = st.columns([0.8, 0.2])
                     col_al1.markdown(alerta["Mensaje"])
                     if col_al2.button("🪟 Resolver Novedad", key=f"btn_al_{idx_al}_{alerta['Sujeto']}_{alerta['Semana']}"):
-                        popup_resolver_fatiga(
-                            alerta["Sujeto"], 
-                            alerta["Fecha"], 
-                            alerta["Semana"]
-                        )
+                        popup_resolver_fatiga(alerta["Sujeto"], alerta["Fecha"], alerta["Semana"])
             else:
                 st.success("✅ No se detectaron transiciones críticas en la malla horaria actual.")
                 
@@ -517,7 +542,36 @@ def pantalla_programador():
             
             if not rep_individual.empty:
                 st.dataframe(rep_individual, use_container_width=True)
+                
+                # =========================================================
+                # 📊 SECCIÓN NUEVA: RESÚMENES TOTALES POR PERSONA Y GRUPO
+                # =========================================================
+                st.write("---")
+                st.subheader("📊 Resumen Consolidado de Horas Laboradas")
+                
+                r_col1, r_col2 = st.columns(2)
+                with r_col1:
+                    st.markdown("**📈 Total Horas por Persona (Semestre Completo):**")
+                    resumen_persona = rep_individual.groupby("Nombre")["Horas Prog"].sum().reset_index()
+                    resumen_persona.columns = ["Nombre Empleado", "Total Horas Laboradas"]
+                    st.dataframe(resumen_persona.style.background_gradient(cmap="Blues", subset=["Total Horas Laboradas"]), use_container_width=True)
+                    
+                with r_col2:
+                    st.markdown("**📂 Total Horas por Grupo Técnico / Operativo:**")
+                    resumen_grupo = rep_individual.groupby("GrupoAsignado")["Horas Prog"].sum().reset_index()
+                    resumen_grupo.columns = ["Grupo / Cuadrilla", "Total Horas Acumuladas"]
+                    st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Acumuladas"]), use_container_width=True)
+                
+                # Botón de descarga unificado
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: 
-                    rep_individual.to_excel(writer, index=False)
-                st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Detallada_{tipo}_{date.today()}.xlsx")
+                    rep_individual.to_excel(writer, sheet_name="Detalle_Dias", index=False)
+                    resumen_persona.to_excel(writer, sheet_name="Total_Persona", index=False)
+                    resumen_grupo.to_excel(writer, sheet_name="Total_Grupo", index=False)
+                    
+                st.download_button("📥 Descargar Libro de Nómina y Resúmenes (.xlsx)", output.getvalue(), f"Nomina_Completa_{tipo}_{date.today()}.xlsx")
+            else:
+                st.warning("⚠️ Selecciona el filtro en 'Ver Todo' para compilar el consolidado completo de nómina por persona.")
+
+if __name__ == "__main__":
+    pantalla_programador()
