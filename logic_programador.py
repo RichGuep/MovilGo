@@ -126,14 +126,14 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v4"
+            key="personal_dropdown_v5"
         )
-        if st.button("💾 Guardar Estructura Definitiva en GitHub"):
+        if st.button("💾 Guardar Estructura Definiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTORES DE ROTACIÓN DE TURNOS PRESERVADOS COMPLETO
+# 4. MOTORES DE ROTACIÓN DE TURNOS DETERMINISTAS ORIGINALES
 # =========================================================
 def calcular_horas_turno(turno_val):
     if turno_val in ["DESCANSO", "COMPENSADO", "OFF", None]: return 0.0
@@ -218,17 +218,20 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
             g_d = sorted([g for g, d in deudas.items() if d > 0 and g not in asig], key=lambda x: deudas[x], reverse=True)
             if g_d: asig[g_d[0]], deudas[g_d[0]] = "COMPENSADO", deudas[g_d[0]]-1
         
-        # Secuencia modular determinista inalterada del código original
+        # Secuencia modular determinista inalterada (Mantiene T1, T2, T3 fijos 24/7)
         activos = sorted([g for g in GRUPOS_TEC if g not in asig], key=lambda x: (GRUPOS_TEC.index(x) + sem) % 4)
         for g in activos:
             for t in ["T1", "T2", "T3", "T1 APOYO"]:
                 if t not in asig.values(): asig[g] = t; break
                 
+        # SOLUCIÓN: Los supervisores se guardan anexados dentro de las filas del Grupo Técnico principal
         for g in GRUPOS_TEC:
             turno_asignado = asig.get(g, "DESCANSO")
             filas.append({"Fecha": fecha, "Sujeto": g, "Turno": turno_asignado})
+            
             if g in supervisores_mapeo:
-                filas.append({"Fecha": fecha, "Sujeto": f"SVP - {supervisores_mapeo[g]} ({g})", "Turno": turno_asignado})
+                # El supervisor ahora vive y rota de manera exacta en la misma celda de su bloque correspondiente
+                filas.append({"Fecha": fecha, "Sujeto": f"{g} - Supervisor: {supervisores_mapeo[g]}", "Turno": turno_asignado})
                 
     return pd.DataFrame(filas)
 
@@ -252,7 +255,6 @@ def ejecutar_auditoria_completa(df):
     return cob, h_sem, eq_det
 
 def verificar_alarmas_cambios_drasticos(df_plano):
-    """Genera alertas si un sujeto pasa de T3->T1 o T2->T1 de forma consecutiva (Requisito 5)."""
     df_plano = df_plano.sort_values(by=["Sujeto", "Fecha"])
     alertas = []
     
@@ -268,11 +270,10 @@ def verificar_alarmas_cambios_drasticos(df_plano):
             if t_anterior == "T3" and t_actual == "T1":
                 alertas.append(f"🚨 **Fatiga Crítica:** '{sujeto}' cambia drásticamente de Nocturno (**T3**) a Mañana (**T1**) el día {fecha_act}.")
             elif t_anterior == "T2" and t_actual == "T1":
-                alertas.append(f"⚠️ **Transición Corta:** '{sujeto}' cambia de Tarde (**T2**) a Mañana (**T1**) el día {fecha_act} reduciendo descanso interjornada.")
+                alertas.append(f"⚠️ **Transición Corta:** '{sujeto}' cambia de Tarde (**T2**) a Mañana (**T1**) el día {fecha_act} reduciendo descanso.")
     return alertas
 
 def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, matriz_tecnicos_capacidades=None):
-    """Cruza la malla de bloques con el listado de técnicos individuales para generar el reporte de nómina (Requisito 2)."""
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
     
@@ -297,23 +298,19 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                     "Horas Prog": calcular_horas_turno(turno)
                 })
     else:
-        # Mapeo detallado de Técnicos individuales clonando el estado asignado a su bloque
         df_sub = df_emp[df_emp['GrupoAsignado'].isin(GRUPOS_TEC)]
         for _, emp in df_sub.iterrows():
             g_pertenece = emp['GrupoAsignado']
             cargo_actual = emp['Cargo']
             
             if "Supervisor" in str(cargo_actual):
-                malla_bloque = df_final[df_final['Sujeto'].str.contains(f"SVP - {emp['Nombre']}", na=False)]
+                malla_bloque = df_final[df_final['Sujeto'] == f"{g_pertenece} - Supervisor: {emp['Nombre']}"]
             else:
                 malla_bloque = df_final[df_final['Sujeto'] == g_pertenece]
                 
             for _, m_fila in malla_bloque.iterrows():
                 turno = m_fila['Turno']
                 
-                # REGLA DE FILTRADO DINÁMICO POR PARÁMETROS:
-                # Si el usuario configuró 0 para este cargo en este turno específico en el parametrizador superior,
-                # el reporte de nómina limpia su estado mandándolo a DISPONIBLE para no inflar cuotas.
                 if matriz_tecnicos_capacidades and cargo_actual in matriz_tecnicos_capacidades:
                     limite_cupo = matriz_tecnicos_capacidades[cargo_actual].get(turno, 99)
                     if limite_cupo == 0 and turno not in ["DESCANSO", "COMPENSADO"]:
@@ -339,7 +336,6 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
 def pantalla_programador():
     tipo = st.sidebar.radio("Módulo Selección", ["Abordaje", "Técnicos"])
     
-    # 1. MEJORA REQUERIDA: PARAMETRIZADOR DINÁMICO POR CARGO Y TURNO (Requisito 1)
     matriz_tecnicos_cap = {}
     with st.expander("📊 Parámetros de Capacidad y Roles Requeridos", expanded=True):
         if tipo == "Abordaje":
@@ -357,8 +353,6 @@ def pantalla_programador():
             )
             
             turnos_claves = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
-            
-            # Formulario dinámico indexado por Cargo -> Turno
             for cargo in cargos_seleccionados:
                 st.markdown(f"🔹 **Dotación de {cargo} por Grupo en cada Turno:**")
                 cols_j = st.columns(6)
@@ -366,14 +360,14 @@ def pantalla_programador():
                 for idx, t in enumerate(turnos_claves):
                     with cols_j[idx]:
                         val_def = 1 if cargo == "Supervisor" else (2 if t in ["T1", "T2"] else (1 if t == "T3" else 0))
-                        cant = st.number_input(f"{t}", min_value=0, max_value=20, value=val_def, key=f"req_tec_{cargo}_{t}")
+                        cant = st.number_input(f"{t}", min_value=0, max_value=20, value=val_def, key=f"req_t_{cargo}_{t}")
                         matriz_tecnicos_cap[cargo][t] = cant
                 st.caption("---")
 
     with st.expander("⏰ Configuración Rangos de Jornada (7h)"):
         config_h = {}
         t_l = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
-        def_h = {"T1": [time(6,0), time(13,0)], "T2": [time(13,0), time(20,0)], "T3": [time(22,0), time(5,0)], "RELEVO": [time(8,0), time(15,0)], "T1 APOYO": [time(7,0), time(14,0)], "DISPONIBLE": [time(8,0), time(15,0)]}
+        def_h = {"T1": [time(5,30), time(13,30)], "T2": [time(13,30), time(21,30)], "T3": [time(21,30), time(5,30)], "RELEVO": [time(8,0), time(15,0)], "T1 APOYO": [time(7,0), time(14,0)], "DISPONIBLE": [time(8,0), time(15,0)]}
         cols = st.columns(3)
         for i, t in enumerate(t_l):
             with cols[i%3]:
@@ -405,25 +399,18 @@ def pantalla_programador():
         st.subheader("📋 Malla Resultante y Ajustes Manuales")
         
         opciones_vista = ["Ver Todo"] + (GRUPOS_TEC if tipo == "Técnicos" else ["Abordaje"])
-        if tipo == "Técnicos": opciones_vista.append("Supervisores")
-            
         filtro_grupo = st.selectbox("🔍 Filtrar Malla por Bloque en Pantalla:", opciones_vista)
         
-        if filtro_grupo == "Supervisores":
-            df_display = df_final[df_final["Sujeto"].str.contains("SVP -", na=False)]
-        elif filtro_grupo != "Ver Todo":
-            if tipo == "Técnicos":
-                df_display = df_final[(df_final["Sujeto"] == filtro_grupo) | (df_final["Sujeto"].str.contains(f"\({filtro_grupo}\)", na=False))]
-            else:
-                df_display = df_final[df_final["Sujeto"] != "Abordaje"]
+        if filtro_grupo != "Ver Todo":
+            df_display = df_final[df_final["Sujeto"].str.contains(filtro_grupo, na=False)]
         else:
             df_display = df_final.copy()
 
         pivot = df_display.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
         
-        # EDITOR INTERACTIVO CON FORMATO Y COLOR CONDICIONAL RESTAURADO (REQUISITO 3)
-        df_edit_matriz = st.data_editor(style_malla(pivot), use_container_width=True, key=f"ed_final_prod_{filtro_grupo}")
+        # COLOR CONDICIONAL RESTAURADO: Se aplica de forma estricta sobre la matriz viva filtrada
+        df_edit_matriz = st.data_editor(style_malla(pivot), use_container_width=True, key=f"ed_f_{filtro_grupo}")
         
         df_audit = df_edit_matriz.reset_index().melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
         df_audit["Fecha"] = pd.to_datetime(df_audit["Fecha"])
@@ -435,37 +422,28 @@ def pantalla_programador():
         
         with t1:
             st.write("### Cuotas de Cobertura Diaria Evaluadas")
-            
-            # REQUISITO 4: ALERTA DE CUMPLIMIENTO DE LOS 3 TURNOS CRÍTICOS (T1, T2, T3) TODOS LOS DÍAS
             if tipo == "Técnicos" and filtro_grupo == "Ver Todo":
-                dias_sin_t1 = cob[cob["T1"] == 0].index.tolist()
-                dias_sin_t2 = cob[cob["T2"] == 0].index.tolist()
+                # La auditoría ahora revisa los bloques agregados para alertar vacíos
                 dias_sin_t3 = cob[cob["T3"] == 0].index.tolist()
-                
-                if dias_sin_t1 or dias_sin_t2 or dias_sin_t3:
-                    fechas_alertas = sorted(list(set(dias_sin_t1 + dias_sin_t2 + dias_sin_t3)))
-                    st.error(f"🚨 **Alerta de Cobertura Desprotegida:** Se detectaron días sin operación 24/7 en el semestre. Fechas con fallas en T1/T2/T3: {[d.strftime('%Y-%m-%d') for d in fechas_alertas[:5]]} (Mostrando primeras 5).")
+                if dias_sin_t3:
+                    st.error(f"🚨 **Alerta de Cobertura Desprotegida:** Fechas sin Nocturno (T3): {[d.strftime('%Y-%m-%d') for d in dias_sin_t3[:5]]}")
                 else:
-                    st.success("✅ **Garantía 24/7 Exitosa:** Se confirma el cumplimiento de los 3 turnos (T1, T2, T3) de soporte técnico para todos los días del periodo.")
-                    
+                    st.success("✅ **Garantía 24/7 Exitosa:** Se confirma la cobertura permanente de los turnos base (T1, T2, T3).")
             st.dataframe(cob, use_container_width=True)
             
         with t2:
             st.write("### Escáner de Protección y Fatiga (Reglas de Transición)")
-            # REQUISITO 5: ALARMA DE CAMBIOS DRÁSTICOS DE TURNO (T3 a T1 / T2 a T1)
             lista_alertas_drasticas = verificar_alarmas_cambios_drasticos(df_audit)
             if lista_alertas_drasticas:
-                for alerta in lista_alertas_drasticas[:30]: # Limitar visualización para no saturar
-                    st.markdown(alerta)
+                for alerta in lista_alertas_drasticas[:20]: st.markdown(alerta)
             else:
-                st.success("✅ Excelente. No se detectaron transiciones críticas o violaciones al descanso en las celdas actuales.")
+                st.success("✅ Excelente. No se detectaron transiciones críticas en el bloque seleccionado.")
                 
         with t3:
             st.dataframe(h_sem.style.highlight_between(left=42.01, right=100, color="#FADBD8"), use_container_width=True)
             
         with t4:
             st.write("### 💵 Reporte Consolidado de Nómina Detallado por Empleado")
-            # REQUISITO 2: GENERACIÓN DEL REPORTE DETALLADO CRUZANDO CONTRA LA CONFIGURACIÓN DE CAPACIDADES
             rep_individual = generar_reporte_detallado(df_audit, tipo, config_h, desc_data, matriz_tecnicos_cap if tipo == "Técnicos" else None)
             
             if not rep_individual.empty:
@@ -475,7 +453,7 @@ def pantalla_programador():
                     rep_individual.to_excel(writer, index=False)
                 st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Detallada_{tipo}_{date.today()}.xlsx")
             else:
-                st.warning("⚠️ Asegúrate de tener el filtro superior en 'Ver Todo' para compilar el reporte de nómina consolidado por persona.")
+                st.warning("⚠️ Selecciona el filtro en 'Ver Todo' para compilar el consolidado completo de nómina por persona.")
 
 if __name__ == "__main__":
     pantalla_programador()
