@@ -63,33 +63,31 @@ def guardar_github(df, nombre_archivo):
         st.toast(f"🆕 Archivo creado en GitHub.")
 
 # =========================================================
-# 3. GESTIÓN DE PERSONAL
+# 3. GESTIÓN DE PERSONAL (ESTRUCTURA DE CUADRILLA FIJA)
 # =========================================================
 def asignar_grupos_automatico(df):
+    """Clasifica al personal respetando tu estructura: 1 Supervisor, 1 Master, 3 Tec B, 7 Tec A por grupo."""
     df = df.copy()
     if 'GrupoAsignado' in df.columns: df = df.drop(columns=['GrupoAsignado'])
     
     supervisores = df[df['Cargo'].str.contains('Supervisor', case=False, na=False)].sample(frac=1).reset_index(drop=True)
-    df_ops = df[~df['Cargo'].str.contains('Supervisor', case=False, na=False)]
-    
-    m = df_ops[df_ops['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).reset_index(drop=True)
-    ta = df_ops[df_ops['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).reset_index(drop=True)
-    tb = df_ops[df_ops['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
+    m = df[df['Cargo'].str.contains('Master', case=False, na=False)].sample(frac=1).reset_index(drop=True)
+    ta = df[df['Cargo'].str.contains('Tecnico A', case=False, na=False)].sample(frac=1).reset_index(drop=True)
+    tb = df[df['Cargo'].str.contains('Tecnico B', case=False, na=False)].sample(frac=1).reset_index(drop=True)
     
     res = []
     for i, g in enumerate(GRUPOS_TEC):
-        temp_m = m.iloc[i*2:(i+1)*2].copy(); temp_m['GrupoAsignado'] = g
+        # Distribución exacta según las cuotas solicitadas
+        if i < len(supervisores):
+            temp_sup = supervisores.iloc[[i]].copy(); temp_sup['GrupoAsignado'] = g; res.append(temp_sup)
+        if i < len(m):
+            temp_m = m.iloc[[i]].copy(); temp_m['GrupoAsignado'] = g; res.append(temp_m)
+            
         temp_ta = ta.iloc[i*7:(i+1)*7].copy(); temp_ta['GrupoAsignado'] = g
         temp_tb = tb.iloc[i*3:(i+1)*3].copy(); temp_tb['GrupoAsignado'] = g
+        res.extend([temp_ta, temp_tb])
         
-        if i < len(supervisores):
-            temp_sup = supervisores.iloc[[i]].copy()
-            temp_sup['GrupoAsignado'] = g
-            res.append(temp_sup)
-            
-        res.extend([temp_m, temp_ta, temp_tb])
-        
-    abo = df_ops[df_ops['Cargo'].str.contains('Abordaje|Auxiliar', case=False, na=False)].copy()
+    abo = df[df['Cargo'].str.contains('Abordaje|Auxiliar', case=False, na=False)].copy()
     abo['GrupoAsignado'] = "Abordaje"
     res.append(abo)
     return pd.concat(res).reset_index(drop=True)
@@ -111,7 +109,7 @@ def pantalla_personal():
             df_base = cargar_excel("empleados.xlsx")
             if not df_base.empty:
                 st.session_state.df_pers_ready = asignar_grupos_automatico(df_base)
-                st.success("Distribución aleatoria calculada.")
+                st.success("Distribución calculada según tu estructura de cuadrilla.")
 
     if not st.session_state.df_pers_ready.empty:
         st.markdown("---")
@@ -126,15 +124,19 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v11"
+            key="personal_dropdown_v12"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTORES DE ASIGNACIÓN DETERMINISTAS ORIGINALES
+# 4. MOTORES DE ASIGNACIÓN DETERMINISTAS MANTENIDOS
 # =========================================================
+def calcular_horas_turno(turno_val):
+    if turno_val in ["DESCANSO", "COMPENSADO", "OFF", None]: return 0.0
+    return 7.0
+
 def generar_malla_abordaje_individual(inicio, fin, descansos_elegidos, cuota_descansos_lv, cuota_t1, cuota_t2):
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
@@ -198,7 +200,6 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
     
-    supervisores_mapeo = df_emp[df_emp['Cargo'].str.contains('Supervisor', case=False, na=False)].set_index('GrupoAsignado')['Nombre'].to_dict()
     filas, deudas = [], {g: 0 for g in GRUPOS_TEC}
     
     for fecha in pd.date_range(inicio, fin):
@@ -221,15 +222,13 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
                 
         for g in GRUPOS_TEC:
             turno_asignado = asig.get(g, "DESCANSO")
+            # Dejamos las filas limpias por Grupo. El reporte de nómina se encargará de abrir los nombres reales.
             filas.append({"Fecha": fecha, "Sujeto": g, "Turno": turno_asignado})
-            
-            if g in supervisores_mapeo:
-                filas.append({"Fecha": fecha, "Sujeto": f"{g} - Supervisor: {supervisores_mapeo[g]}", "Turno": turno_asignado})
                 
     return pd.DataFrame(filas)
 
 # =========================================================
-# 5. CÁLCULO DINÁMICO DE HORAS Y AUDITORÍAS RECEPTIVAS
+# 5. MATEMÁTICA REAL DE HORAS Y ALARMAS DE FATIGA
 # =========================================================
 def calcular_delta_horas(inicio_str, fin_str):
     if inicio_str == "OFF" or fin_str == "OFF" or pd.isna(inicio_str) or pd.isna(fin_str): return 0.0
@@ -293,6 +292,7 @@ def verificar_alarmas_cambios_drasticos(df_plano):
     return alertas
 
 def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, matriz_tecnicos_capacidades=None):
+    """Cruza la malla de bloques con el listado de personas reales e inyecta al Supervisor en su grupo."""
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
     
@@ -320,20 +320,20 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                     "Horas Prog": calcular_delta_horas(ini, fin)
                 })
     else:
-        # CORRECCIÓN EN EL FILTRADO: Mapeo y procesamiento integrado del Supervisor como rol técnico activo
+        # PROCESAMIENTO UNIFICADO: Todos los empleados (Técnicos y Supervisores) jalan el turno de su GrupoAsignado
         df_sub = df_emp[df_emp['GrupoAsignado'].isin(GRUPOS_TEC)]
         for _, emp in df_sub.iterrows():
             g_pertenece = emp['GrupoAsignado']
             cargo_actual = emp['Cargo']
+            nombre_real = emp['Nombre']
             
-            # CRÍTICO: Búsqueda dinámica por contenedor de texto para supervisores acoplados
-            if "Supervisor" in str(cargo_actual):
-                malla_bloque = df_final[df_final['Sujeto'] == f"{g_pertenece} - Supervisor: {emp['Nombre']}"]
-            else:
-                malla_bloque = df_final[df_final['Sujeto'] == g_pertenece]
+            # Buscamos en la malla el registro correspondiente al bloque de su cuadrilla
+            malla_bloque = df_final[df_final['Sujeto'] == g_pertenece]
                 
             for _, m_fila in malla_bloque.iterrows():
                 turno = m_fila['Turno']
+                
+                # Control paramétrico por cargo
                 if matriz_tecnicos_capacidades and cargo_actual in matriz_tecnicos_capacidades:
                     limite_cupo = matriz_tecnicos_capacidades[cargo_actual].get(turno, 99)
                     if limite_cupo == 0 and turno not in ["DESCANSO", "COMPENSADO"]:
@@ -344,14 +344,14 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
 
                 filas_reporte.append({
                     "Fecha": m_fila['Fecha'].strftime('%Y-%m-%d'),
-                    "Nombre": emp['Nombre'],
+                    "Nombre": nombre_real,
                     "Cargo": cargo_actual,
                     "GrupoAsignado": g_pertenece,
                     "Día Descanso Base": config_descansos.get(g_pertenece, "Domingo"),
                     "Turno": turno,
                     "Hora Inicio": ini,
                     "Hora Fin": fin,
-                    "Horas Prog": calcular_delta_horas(ini, fin)
+                    "Horas Prog": calcular_delta_horas(ini, fin) # <--- Sma el tiempo real
                 })
                 
     return pd.DataFrame(filas_reporte)
@@ -362,7 +362,6 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
 @st.dialog("🛠️ Modificar Turno Específico")
 def popup_cambio_manual(sujeto, fecha_str, turno_actual):
     st.write(f"Modificando la asignación de **{sujeto}** para el día **{fecha_str}**.")
-    st.write(f"Turno actual programado: `{turno_actual}`")
     
     opciones_turnos = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
     nuevo_turno = st.selectbox("Seleccione el nuevo Turno:", opciones_turnos, index=opciones_turnos.index(turno_actual) if turno_actual in opciones_turnos else 5)
@@ -372,13 +371,12 @@ def popup_cambio_manual(sujeto, fecha_str, turno_actual):
         idx = df[(df['Sujeto'] == sujeto) & (pd.to_datetime(df['Fecha']) == pd.to_datetime(fecha_str))].index
         if not idx.empty:
             st.session_state.m_base.at[idx[0], 'Turno'] = nuevo_turno
-            st.success("¡Turno modificado localmente!")
+            st.success("¡Malla modificada!")
             st.rerun()
 
 @st.dialog("🔍 Mitigación de Alerta de Fatiga Semanal", width="large")
 def popup_resolver_fatiga(sujeto, fecha_novedad, semana_num):
-    st.markdown(f"### Historial de la Semana {semana_num} para: **{sujeto}**")
-    st.warning(f"Novedad registrada el día: {fecha_novedad.strftime('%Y-%m-%d')}")
+    st.markdown(f"### Historial de la Semana {semana_num} para el Bloque: **{sujeto}**")
     
     df_malla = st.session_state.m_base.copy()
     df_malla['Fecha'] = pd.to_datetime(df_malla['Fecha'])
@@ -388,27 +386,21 @@ def popup_resolver_fatiga(sujeto, fecha_novedad, semana_num):
     
     pivot_sem = df_semana.pivot(index="Sujeto", columns="Fecha", values="Turno")
     pivot_sem.columns = [c.strftime('%Y-%m-%d') for c in pivot_sem.columns]
-    st.write("##### Calendario Semanal:")
     st.dataframe(style_malla(pivot_sem), use_container_width=True)
     
     st.markdown("---")
-    st.markdown("##### ✏️ Corregir Turno Crítico:")
-    c1, c2 = st.columns(2)
-    dia_modificar = c1.selectbox("Día a cambiar:", list(pivot_sem.columns), index=list(pivot_sem.columns).index(fecha_novedad.strftime('%Y-%m-%d')) if fecha_novedad.strftime('%Y-%m-%d') in pivot_sem.columns else 0)
-    
+    dia_modificar = st.selectbox("Día a cambiar:", list(pivot_sem.columns), index=list(pivot_sem.columns).index(fecha_novedad.strftime('%Y-%m-%d')) if fecha_novedad.strftime('%Y-%m-%d') in pivot_sem.columns else 0)
     opciones = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
-    turno_actual_dia = pivot_sem.at[sujeto, dia_modificar]
-    nuevo_t = c2.selectbox("Nuevo Turno mitigador:", opciones, index=opciones.index(turno_actual_dia) if turno_actual_dia in opciones else 5)
+    nuevo_t = st.selectbox("Nuevo Turno:", opciones, value="DESCANSO")
     
-    if st.button("💾 Aplicar Corrección y Re-auditar Malla"):
+    if st.button("💾 Aplicar Corrección"):
         idx_maestro = st.session_state.m_base[(st.session_state.m_base['Sujeto'] == sujeto) & (pd.to_datetime(st.session_state.m_base['Fecha']) == pd.to_datetime(dia_modificar))].index
         if not idx_maestro.empty:
             st.session_state.m_base.at[idx_maestro[0], 'Turno'] = nuevo_t
-            st.success("Turno corregido con éxito.")
             st.rerun()
 
 # =========================================================
-# 8. MÓDULO: TRADUCTOR / DE-CONSTRUCTOR DE MATRIX (.MELT)
+# 8. MÓDULO: IMPORTADOR EXTERNO (.MELT)
 # =========================================================
 def procesar_archivo_malla_externa(df_externo):
     try:
@@ -419,7 +411,7 @@ def procesar_archivo_malla_externa(df_externo):
         df_plano["Turno"] = df_plano["Turno"].fillna("DESCANSO").astype(str).str.strip().str.upper()
         return df_plano
     except Exception as e:
-        st.error(f"❌ Error en la estructura del Excel cargado: {str(e)}")
+        st.error(f"❌ Error: {str(e)}")
         return pd.DataFrame()
 
 # =========================================================
@@ -437,9 +429,8 @@ def pantalla_programador():
                 df_aplanado = procesar_archivo_malla_externa(df_cargado_raw)
                 if not df_aplanado.empty:
                     st.session_state.m_base = df_aplanado
-                    st.sidebar.success("📋 Malla externa acoplada. Auditorías listas.")
-        except Exception as e:
-            st.sidebar.error(f"Error de lectura: {str(e)}")
+                    st.sidebar.success("📋 Malla externa acoplada.")
+        except Exception as e: st.sidebar.error(f"Error: {str(e)}")
 
     tipo = st.sidebar.radio("Módulo Selección", ["Abordaje", "Técnicos"])
     
@@ -506,19 +497,14 @@ def pantalla_programador():
         st.subheader("📋 Malla de Turnos bajo Evaluación")
         
         with st.expander("🛠️ Panel de Ajuste Rápido (Pop-up Interactivo)", expanded=False):
-            st.caption("Selecciona el sujeto y la fecha para sobreescribir la celda mediante un Pop-up controlado.")
+            st.caption("Selecciona el sujeto y la fecha para sobreescribir la celda mediante un Pop-up.")
             col_p1, col_p2 = st.columns(2)
             suj_cambio = col_p1.selectbox("Sujeto / Bloque:", list(df_final["Sujeto"].unique()))
-            
-            fechas_dispo = sorted(df_final["Fecha"].unique())
-            fechas_str = [pd.to_datetime(d).strftime('%Y-%m-%d') for d in fechas_dispo]
-            f_cambio = col_p2.selectbox("Fecha del cambio:", fechas_str)
+            f_cambio = col_p2.selectbox("Fecha del cambio:", [pd.to_datetime(d).strftime('%Y-%m-%d') for d in sorted(df_final["Fecha"].unique())])
             
             turno_act_row = df_final[(df_final['Sujeto'] == suj_cambio) & (pd.to_datetime(df_final['Fecha']) == pd.to_datetime(f_cambio))]['Turno'].values
             turno_actual_sel = turno_act_row[0] if len(turno_act_row) > 0 else "DESCANSO"
-            
-            if st.button("🪟 Abrir Ventana de Cambio"):
-                popup_cambio_manual(suj_cambio, f_cambio, turno_actual_sel)
+            if st.button("🪟 Abrir Ventana de Cambio"): popup_cambio_manual(suj_cambio, f_cambio, turno_actual_sel)
 
         opciones_vista = ["Ver Todo"] + (GRUPOS_TEC if tipo == "Técnicos" else ["Abordaje"])
         filtro_grupo = st.selectbox("🔍 Filtrar Malla por Bloque en Pantalla:", opciones_vista)
@@ -528,65 +514,44 @@ def pantalla_programador():
         pivot = df_display.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
         
-        st.dataframe(style_malla(pivot), use_container_width=True)
+        # MUESTRA ÚNICAMENTE LAS 4 FILAS DE GRUPO PRINCIPALES (Sujetos limpios)
+        pivot_clean = pivot[pivot.index.isin(GRUPOS_TEC or ["Abordaje"])] if tipo == "Técnicos" and filtro_grupo == "Ver Todo" else pivot
+        st.dataframe(style_malla(pivot_clean), use_container_width=True)
         
         df_audit = df_final.copy()
         df_audit["Fecha"] = pd.to_datetime(df_audit["Fecha"])
-        
-        # NUEVA AUDITORÍA DE HORAS POR TRANSACCIÓN DE MATRIZ EXTERNA O GENERADA
         cob, h_sem = ejecutar_auditoria_completa(df_audit, config_h)
         
         st.write("---")
         t1, t2, t3, t4 = st.tabs(["📊 Cobertura Lograda", "⚠️ Alarmas de Fatiga Interactivas", "⚖️ Jornada 42h (Reforma)", "📋 Reporte Nómina Detallado"])
         
         with t1:
-            st.write("### Cuotas de Cobertura Diaria Evaluadas")
-            if tipo == "Técnicos" and filtro_grupo == "Ver Todo":
-                dias_sin_t3 = cob[cob["T3"] == 0].index.tolist()
-                if dias_sin_t3:
-                    st.error(f"🚨 **Alerta de Cobertura Desprotegida:** Fechas sin Nocturno (T3): {[d.strftime('%Y-%m-%d') for d in dias_sin_t3[:5]]}")
-                else:
-                    st.success("✅ **Garantía 24/7 Exitosa:** Operación continua en T1, T2 y T3 confirmada.")
             st.dataframe(cob, use_container_width=True)
-            
         with t2:
-            st.write("### Escáner de Protección de Fatiga (Haz clic para mitigar y abrir Pop-up)")
-            lista_alertas_drasticas = verificar_alarmas_cambios_drasticos(df_audit)
-            if lista_alertas_drasticas:
-                for idx_al, alerta in enumerate(lista_alertas_drasticas[:15]):
+            lista_alertas = verificar_alarmas_cambios_drasticos(df_audit)
+            if lista_alertas:
+                for idx_al, alerta in enumerate(lista_alertas[:15]):
                     col_al1, col_al2 = st.columns([0.8, 0.2])
                     col_al1.markdown(alerta["Mensaje"])
-                    if col_al2.button("🪟 Resolver Novedad", key=f"btn_al_{idx_al}_{alerta['Sujeto']}_{alerta['Semana']}"):
+                    if col_al2.button("🪟 Resolver Novedad", key=f"btn_al_{idx_al}_{alerta['Sujeto']}"):
                         popup_resolver_fatiga(alerta["Sujeto"], alerta["Fecha"], alerta["Semana"])
-            else:
-                st.success("✅ No se detectaron transiciones críticas en la malla horaria actual.")
-                
+            else: st.success("✅ Sin alertas de fatiga.")
         with t3:
-            # Sincronización paramétrica en vivo de las 42 horas en base a horas calculadas por turno
-            st.write("### Horas Semanales Consolidadas por Bloque y Supervisor")
             st.dataframe(h_sem.style.highlight_between(left=42.01, right=100, color="#FADBD8"), use_container_width=True)
             
         with t4:
-            st.write("### 💵 Reporte Consolidado de Nómina Detallado por Empleado")
+            # EL REPORTE AHORA SÍ PROCESA DINÁMICAMENTE AL SUPERVISOR DESGLOSADO
             rep_individual = generar_reporte_detallado(df_audit, tipo, config_h, desc_data, matriz_tecnicos_cap if tipo == "Técnicos" else None)
-            
             if not rep_individual.empty:
                 st.dataframe(rep_individual, use_container_width=True)
                 
-                # =========================================================
-                # 📊 SECCIÓN: RESÚMENES TOTALES INTEGRANDO AL SUPERVISOR POR GRUPO
-                # =========================================================
-                st.write("---")
-                st.subheader("📊 Resumen Consolidado de Horas Laboradas (Incluye Supervisores)")
+                st.subheader("📊 Resumen Consolidado de Horas Laboradas Semestrales")
                 r_col1, r_col2 = st.columns(2)
                 with r_col1:
-                    st.markdown("**📈 Total Horas por Persona (Semestre Completo):**")
                     resumen_persona = rep_individual.groupby("Nombre")["Horas Prog"].sum().reset_index()
                     resumen_persona.columns = ["Nombre Empleado", "Total Horas Laboradas"]
                     st.dataframe(resumen_persona.style.background_gradient(cmap="Blues", subset=["Total Horas Laboradas"]), use_container_width=True)
-                    
                 with r_col2:
-                    st.markdown("**📂 Total Horas por Grupo Técnico / Operativo:**")
                     resumen_grupo = rep_individual.groupby("GrupoAsignado")["Horas Prog"].sum().reset_index()
                     resumen_grupo.columns = ["Grupo / Cuadrilla", "Total Horas Acumuladas"]
                     st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Acumuladas"]), use_container_width=True)
@@ -596,5 +561,4 @@ def pantalla_programador():
                     rep_individual.to_excel(writer, sheet_name="Detalle_Dias", index=False)
                     resumen_persona.to_excel(writer, sheet_name="Total_Persona", index=False)
                     resumen_grupo.to_excel(writer, sheet_name="Total_Grupo", index=False)
-                    
                 st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Completa_{tipo}_{date.today()}.xlsx")
