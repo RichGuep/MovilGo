@@ -57,13 +57,13 @@ def guardar_github(df, nombre_archivo):
     try:
         file = repo.get_contents(nombre_archivo)
         repo.update_file(nombre_archivo, f"Update {datetime.now()}", buffer.getvalue(), file.sha)
-        st.toast(f"... Archivo actualizado en GitHub.")
+        st.toast(f"✅ Archivo actualizado en GitHub.")
     except:
         repo.create_file(nombre_archivo, "Create", buffer.getvalue())
-        st.toast(f" Archivo creado en GitHub.")
+        st.toast(f"🆕 Archivo creado en GitHub.")
 
 # =========================================================
-# 3. GESTIÓN DE PERSONAL (SELECTOR DESPLEGABLE MANUAL)
+# 3. GESTIÓN DE PERSONAL (AUTOMÁTICA + DESPLEGABLE MANUAL)
 # =========================================================
 def asignar_grupos_automatico(df):
     df = df.copy()
@@ -126,7 +126,7 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v3"
+            key="personal_dropdown_v4"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
@@ -218,7 +218,7 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
             g_d = sorted([g for g, d in deudas.items() if d > 0 and g not in asig], key=lambda x: deudas[x], reverse=True)
             if g_d: asig[g_d[0]], deudas[g_d[0]] = "COMPENSADO", deudas[g_d[0]]-1
         
-        # Secuencia exacta de asignación de turnos del código original
+        # Secuencia modular determinista inalterada del código original
         activos = sorted([g for g in GRUPOS_TEC if g not in asig], key=lambda x: (GRUPOS_TEC.index(x) + sem) % 4)
         for g in activos:
             for t in ["T1", "T2", "T3", "T1 APOYO"]:
@@ -233,12 +233,12 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
     return pd.DataFrame(filas)
 
 # =========================================================
-# 5. AUDITORÍA INTEGRAL Y ALARMAS DE FATIGA RECEPTIVAS
+# 5. AUDITORÍA INTEGRAL Y ALARMAS DE FATIGA
 # =========================================================
 def ejecutar_auditoria_completa(df):
     df_aud = df.copy(); df_aud["Fecha"] = pd.to_datetime(df_aud["Fecha"])
     cob = df_aud.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
-    for c in ["T1", "T2", "T3", "DESCANSO", "COMPENSADO", "DISPONIBLE"]:
+    for c in ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]:
         if c not in cob.columns: cob[c] = 0
         
     df_aud['Semana'] = df_aud['Fecha'].dt.isocalendar().week
@@ -252,7 +252,7 @@ def ejecutar_auditoria_completa(df):
     return cob, h_sem, eq_det
 
 def verificar_alarmas_cambios_drasticos(df_plano):
-    """Genera una lista de advertencias si un sujeto pasa de T3->T1 o T2->T1 sin descanso."""
+    """Genera alertas si un sujeto pasa de T3->T1 o T2->T1 de forma consecutiva (Requisito 5)."""
     df_plano = df_plano.sort_values(by=["Sujeto", "Fecha"])
     alertas = []
     
@@ -266,13 +266,13 @@ def verificar_alarmas_cambios_drasticos(df_plano):
             fecha_act = lista_fechas[i].strftime('%Y-%m-%d')
             
             if t_anterior == "T3" and t_actual == "T1":
-                alertas.append(f"🚨 **Fatiga Extrema:** '{sujeto}' cambia drásticamente de Nocturno (**T3**) a Mañana (**T1**) el día {fecha_act}.")
+                alertas.append(f"🚨 **Fatiga Crítica:** '{sujeto}' cambia drásticamente de Nocturno (**T3**) a Mañana (**T1**) el día {fecha_act}.")
             elif t_anterior == "T2" and t_actual == "T1":
-                alertas.append(f"⚠️ **Cambio Corto:** '{sujeto}' cambia de Tarde (**T2**) a Mañana (**T1**) el día {fecha_act} reduciendo ventana de desconexión.")
+                alertas.append(f"⚠️ **Transición Corta:** '{sujeto}' cambia de Tarde (**T2**) a Mañana (**T1**) el día {fecha_act} reduciendo descanso interjornada.")
     return alertas
 
-def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos):
-    """Cruza la malla general con cada una de las personas reales del Excel de GitHub para la Nómina."""
+def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, matriz_tecnicos_capacidades=None):
+    """Cruza la malla de bloques con el listado de técnicos individuales para generar el reporte de nómina (Requisito 2)."""
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
     
@@ -290,29 +290,39 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos):
                     "Nombre": emp['Nombre'],
                     "Cargo": emp['Cargo'],
                     "GrupoAsignado": "Abordaje",
-                    "Día Descanso Base": config_descansos.get("A" if emp['Cedula'] % 2 == 0 else "B", "Sábado"),
+                    "Día Descanso Base": config_descansos.get("A", "Sábado"),
                     "Turno": turno,
                     "Hora Inicio": config_horas.get(turno, {}).get("Inicio", "OFF"),
                     "Hora Fin": config_horas.get(turno, {}).get("Fin", "OFF"),
                     "Horas Prog": calcular_horas_turno(turno)
                 })
     else:
+        # Mapeo detallado de Técnicos individuales clonando el estado asignado a su bloque
         df_sub = df_emp[df_emp['GrupoAsignado'].isin(GRUPOS_TEC)]
         for _, emp in df_sub.iterrows():
             g_pertenece = emp['GrupoAsignado']
+            cargo_actual = emp['Cargo']
             
-            # Buscar el registro de la malla correspondiente al bloque del grupo o al supervisor directo
-            if "Supervisor" in str(emp['Cargo']):
-                malla_grupo = df_final[df_final['Sujeto'].str.contains(f"SVP - {emp['Nombre']}", na=False)]
+            if "Supervisor" in str(cargo_actual):
+                malla_bloque = df_final[df_final['Sujeto'].str.contains(f"SVP - {emp['Nombre']}", na=False)]
             else:
-                malla_grupo = df_final[df_final['Sujeto'] == g_pertenece]
+                malla_bloque = df_final[df_final['Sujeto'] == g_pertenece]
                 
-            for _, m_fila in malla_grupo.iterrows():
+            for _, m_fila in malla_bloque.iterrows():
                 turno = m_fila['Turno']
+                
+                # REGLA DE FILTRADO DINÁMICO POR PARÁMETROS:
+                # Si el usuario configuró 0 para este cargo en este turno específico en el parametrizador superior,
+                # el reporte de nómina limpia su estado mandándolo a DISPONIBLE para no inflar cuotas.
+                if matriz_tecnicos_capacidades and cargo_actual in matriz_tecnicos_capacidades:
+                    limite_cupo = matriz_tecnicos_capacidades[cargo_actual].get(turno, 99)
+                    if limite_cupo == 0 and turno not in ["DESCANSO", "COMPENSADO"]:
+                        turno = "DISPONIBLE"
+
                 filas_reporte.append({
                     "Fecha": m_fila['Fecha'].strftime('%Y-%m-%d'),
                     "Nombre": emp['Nombre'],
-                    "Cargo": emp['Cargo'],
+                    "Cargo": cargo_actual,
                     "GrupoAsignado": g_pertenece,
                     "Día Descanso Base": config_descansos.get(g_pertenece, "Domingo"),
                     "Turno": turno,
@@ -324,12 +334,13 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos):
     return pd.DataFrame(filas_reporte)
 
 # =========================================================
-# 7. INTERFAZ OPERATIVA DEL PROGRAMADOR
+# 6. INTERFAZ OPERATIVA DEL PROGRAMADOR
 # =========================================================
 def pantalla_programador():
     tipo = st.sidebar.radio("Módulo Selección", ["Abordaje", "Técnicos"])
     
-    # 1. PARAMETRIZADOR DE CUPOS POR CARGO Y GRUPO (REQUISITO 1)
+    # 1. MEJORA REQUERIDA: PARAMETRIZADOR DINÁMICO POR CARGO Y TURNO (Requisito 1)
+    matriz_tecnicos_cap = {}
     with st.expander("📊 Parámetros de Capacidad y Roles Requeridos", expanded=True):
         if tipo == "Abordaje":
             pc1, pc2, pc3 = st.columns(3)
@@ -337,11 +348,27 @@ def pantalla_programador():
             cuota_t1 = pc2.number_input("Personal requerido en T1", min_value=1, max_value=25, value=11)
             cuota_t2 = pc3.number_input("Personal requerido en T2", min_value=1, max_value=25, value=11)
         else:
-            st.markdown("##### Configuración de Dotación Mínima por Grupo Técnico:")
-            st.caption("Establece la cantidad mínima de personal que heredará la rotación de bloques 24/7.")
-            c_g1, c_g2 = st.columns(2)
-            req_masters = c_g1.number_input("Cantidad de Masters por Grupo", min_value=1, max_value=5, value=2)
-            req_tecnicos = c_g2.number_input("Cantidad de Técnicos (A+B) por Grupo", min_value=1, max_value=15, value=10)
+            st.markdown("##### ⚙️ Selección de Cargos Activos y Cuota por Turno:")
+            cargos_disponibles = ["Master", "Tecnico A", "Tecnico B", "Supervisor"]
+            cargos_seleccionados = st.multiselect(
+                "💼 Seleccione qué cargos se incluirán en la programación técnica:",
+                options=cargos_disponibles,
+                default=["Master", "Tecnico A", "Supervisor"]
+            )
+            
+            turnos_claves = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DISPONIBLE"]
+            
+            # Formulario dinámico indexado por Cargo -> Turno
+            for cargo in cargos_seleccionados:
+                st.markdown(f"🔹 **Dotación de {cargo} por Grupo en cada Turno:**")
+                cols_j = st.columns(6)
+                matriz_tecnicos_cap[cargo] = {}
+                for idx, t in enumerate(turnos_claves):
+                    with cols_j[idx]:
+                        val_def = 1 if cargo == "Supervisor" else (2 if t in ["T1", "T2"] else (1 if t == "T3" else 0))
+                        cant = st.number_input(f"{t}", min_value=0, max_value=20, value=val_def, key=f"req_tec_{cargo}_{t}")
+                        matriz_tecnicos_cap[cargo][t] = cant
+                st.caption("---")
 
     with st.expander("⏰ Configuración Rangos de Jornada (7h)"):
         config_h = {}
@@ -375,7 +402,7 @@ def pantalla_programador():
         df_final = st.session_state.m_base.copy()
         
         st.write("---")
-        st.subheader("📝 Malla de Turnos Resultante")
+        st.subheader("📋 Malla Resultante y Ajustes Manuales")
         
         opciones_vista = ["Ver Todo"] + (GRUPOS_TEC if tipo == "Técnicos" else ["Abordaje"])
         if tipo == "Técnicos": opciones_vista.append("Supervisores")
@@ -395,51 +422,51 @@ def pantalla_programador():
         pivot = df_display.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
         
-        # EDITOR INTERACTIVO CON COLORES RESTAURADOS (REQUISITO 3)
-        df_edit_matriz = st.data_editor(style_malla(pivot), use_container_width=True, key=f"ed_final_{filtro_grupo}")
+        # EDITOR INTERACTIVO CON FORMATO Y COLOR CONDICIONAL RESTAURADO (REQUISITO 3)
+        df_edit_matriz = st.data_editor(style_malla(pivot), use_container_width=True, key=f"ed_final_prod_{filtro_grupo}")
         
-        # Sincronización en caliente para las pestañas de auditoría inferiores
         df_audit = df_edit_matriz.reset_index().melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
         df_audit["Fecha"] = pd.to_datetime(df_audit["Fecha"])
         
         cob, h_sem, eq = ejecutar_auditoria_completa(df_audit)
         
         st.write("---")
-        t1, t2, t3, t4 = st.tabs(["📊 Cobertura Lograda", "⚠️ Alarmas de Fatiga", "⚖️ Jornada 42h", "📋 Reporte Nómina Detallado"])
+        t1, t2, t3, t4 = st.tabs(["📊 Cobertura Lograda", "⚠️ Alarmas de Fatiga", "⚖️ Jornada 42h (Reforma)", "📋 Reporte Nómina Detallado"])
         
         with t1:
-            st.write("### Cuotas de Cobertura Diaria")
+            st.write("### Cuotas de Cobertura Diaria Evaluadas")
             
-            # REQUISITO 4: AUDITORÍA 24/7 (SABER SI SE CUMPLEN LOS 3 TURNOS DIARIOS)
+            # REQUISITO 4: ALERTA DE CUMPLIMIENTO DE LOS 3 TURNOS CRÍTICOS (T1, T2, T3) TODOS LOS DÍAS
             if tipo == "Técnicos" and filtro_grupo == "Ver Todo":
                 dias_sin_t1 = cob[cob["T1"] == 0].index.tolist()
                 dias_sin_t2 = cob[cob["T2"] == 0].index.tolist()
                 dias_sin_t3 = cob[cob["T3"] == 0].index.tolist()
                 
                 if dias_sin_t1 or dias_sin_t2 or dias_sin_t3:
-                    st.error(f"🚨 **Alerta de Cobertura Desprotegida:** Se detectaron días sin operación 24/7. Fechas sin Nocturno (T3): {[d.strftime('%Y-%m-%d') for d in dias_sin_t3]}")
+                    fechas_alertas = sorted(list(set(dias_sin_t1 + dias_sin_t2 + dias_sin_t3)))
+                    st.error(f"🚨 **Alerta de Cobertura Desprotegida:** Se detectaron días sin operación 24/7 en el semestre. Fechas con fallas en T1/T2/T3: {[d.strftime('%Y-%m-%d') for d in fechas_alertas[:5]]} (Mostrando primeras 5).")
                 else:
-                    st.success("✅ **Garantía 24/7 Exitosa:** Todos los días cuentan con cubrimiento en T1, T2 y T3 de forma ininterrumpida.")
+                    st.success("✅ **Garantía 24/7 Exitosa:** Se confirma el cumplimiento de los 3 turnos (T1, T2, T3) de soporte técnico para todos los días del periodo.")
                     
             st.dataframe(cob, use_container_width=True)
             
         with t2:
-            st.write("### Escáner de Protección de Fatiga (Reglas de Transición)")
-            # REQUISITO 5: ALARMA DE CAMBIOS DRÁSTICOS DE TURNO
+            st.write("### Escáner de Protección y Fatiga (Reglas de Transición)")
+            # REQUISITO 5: ALARMA DE CAMBIOS DRÁSTICOS DE TURNO (T3 a T1 / T2 a T1)
             lista_alertas_drasticas = verificar_alarmas_cambios_drasticos(df_audit)
             if lista_alertas_drasticas:
-                for alerta in lista_alertas_drasticas:
+                for alerta in lista_alertas_drasticas[:30]: # Limitar visualización para no saturar
                     st.markdown(alerta)
             else:
-                st.success("✅ No se detectaron transiciones críticas o sobreesfuerzos horarios en el personal visualizado.")
+                st.success("✅ Excelente. No se detectaron transiciones críticas o violaciones al descanso en las celdas actuales.")
                 
         with t3:
             st.dataframe(h_sem.style.highlight_between(left=42.01, right=100, color="#FADBD8"), use_container_width=True)
             
         with t4:
-            st.write("### 💵 Nómina Desglosada por Empleado Individual (REQUISITO 2)")
-            # REQUISITO 2: EL REPORTE DE NÓMINA DETALLADO AHORA SÍ CONECTA LAS PERSONAS NATURALES
-            rep_individual = generar_reporte_detallado(df_audit, tipo, config_h, desc_data)
+            st.write("### 💵 Reporte Consolidado de Nómina Detallado por Empleado")
+            # REQUISITO 2: GENERACIÓN DEL REPORTE DETALLADO CRUZANDO CONTRA LA CONFIGURACIÓN DE CAPACIDADES
+            rep_individual = generar_reporte_detallado(df_audit, tipo, config_h, desc_data, matriz_tecnicos_cap if tipo == "Técnicos" else None)
             
             if not rep_individual.empty:
                 st.dataframe(rep_individual, use_container_width=True)
@@ -448,4 +475,7 @@ def pantalla_programador():
                     rep_individual.to_excel(writer, index=False)
                 st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Detallada_{tipo}_{date.today()}.xlsx")
             else:
-                st.warning("Para ver el Reporte de Nómina por persona, asegúrate de tener el filtro en 'Ver Todo'.")
+                st.warning("⚠️ Asegúrate de tener el filtro superior en 'Ver Todo' para compilar el reporte de nómina consolidado por persona.")
+
+if __name__ == "__main__":
+    pantalla_programador()
