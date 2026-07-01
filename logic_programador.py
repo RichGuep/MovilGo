@@ -63,7 +63,7 @@ def guardar_github(df, nombre_archivo):
         st.toast(f"🆕 Archivo creado en GitHub.")
 
 # =========================================================
-# 3. GESTIÓN DE PERSONAL (AUTOMÁTICA + DESPLEGABLE MANUAL)
+# 3. GESTIÓN DE PERSONAL
 # =========================================================
 def asignar_grupos_automatico(df):
     df = df.copy()
@@ -111,7 +111,7 @@ def pantalla_personal():
             df_base = cargar_excel("empleados.xlsx")
             if not df_base.empty:
                 st.session_state.df_pers_ready = asignar_grupos_automatico(df_base)
-                st.success("Distribución aleatoria calculada con supervisores.")
+                st.success("Distribución aleatoria calculada.")
 
     if not st.session_state.df_pers_ready.empty:
         st.markdown("---")
@@ -126,14 +126,14 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v5"
+            key="personal_dropdown_v6"
         )
-        if st.button("💾 Guardar Estructura Definiva en GitHub"):
+        if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTORES DE ROTACIÓN DE TURNOS DETERMINISTAS ORIGINALES
+# 4. MOTORES DE ASIGNACIÓN DETERMINISTAS ORIGINALES
 # =========================================================
 def calcular_horas_turno(turno_val):
     if turno_val in ["DESCANSO", "COMPENSADO", "OFF", None]: return 0.0
@@ -218,25 +218,22 @@ def generar_malla_tecnicos(inicio, fin, descansos_ley):
             g_d = sorted([g for g, d in deudas.items() if d > 0 and g not in asig], key=lambda x: deudas[x], reverse=True)
             if g_d: asig[g_d[0]], deudas[g_d[0]] = "COMPENSADO", deudas[g_d[0]]-1
         
-        # Secuencia modular determinista inalterada (Mantiene T1, T2, T3 fijos 24/7)
         activos = sorted([g for g in GRUPOS_TEC if g not in asig], key=lambda x: (GRUPOS_TEC.index(x) + sem) % 4)
         for g in activos:
             for t in ["T1", "T2", "T3", "T1 APOYO"]:
                 if t not in asig.values(): asig[g] = t; break
                 
-        # SOLUCIÓN: Los supervisores se guardan anexados dentro de las filas del Grupo Técnico principal
         for g in GRUPOS_TEC:
             turno_asignado = asig.get(g, "DESCANSO")
             filas.append({"Fecha": fecha, "Sujeto": g, "Turno": turno_asignado})
             
             if g in supervisores_mapeo:
-                # El supervisor ahora vive y rota de manera exacta en la misma celda de su bloque correspondiente
                 filas.append({"Fecha": fecha, "Sujeto": f"{g} - Supervisor: {supervisores_mapeo[g]}", "Turno": turno_asignado})
                 
     return pd.DataFrame(filas)
 
 # =========================================================
-# 5. AUDITORÍA INTEGRAL Y ALARMAS DE FATIGA
+# 5. AUDITORÍA INTEGRAL
 # =========================================================
 def ejecutar_auditoria_completa(df):
     df_aud = df.copy(); df_aud["Fecha"] = pd.to_datetime(df_aud["Fecha"])
@@ -247,12 +244,7 @@ def ejecutar_auditoria_completa(df):
     df_aud['Semana'] = df_aud['Fecha'].dt.isocalendar().week
     df_aud['Horas'] = df_aud['Turno'].apply(lambda x: calcular_horas_turno(x))
     h_sem = df_aud.groupby(['Sujeto', 'Semana'])['Horas'].sum().unstack(fill_value=0)
-    
-    eq_det = df_aud[df_aud['Turno'].isin(["DESCANSO", "COMPENSADO"])].groupby(['Sujeto', 'Turno']).size().unstack(fill_value=0)
-    for c in ["DESCANSO", "COMPENSADO"]:
-        if c not in eq_det.columns: eq_det[c] = 0
-    eq_det["Total Libres"] = eq_det["DESCANSO"] + eq_det["COMPENSADO"]
-    return cob, h_sem, eq_det
+    return cob, h_sem
 
 def verificar_alarmas_cambios_drasticos(df_plano):
     df_plano = df_plano.sort_values(by=["Sujeto", "Fecha"])
@@ -265,12 +257,22 @@ def verificar_alarmas_cambios_drasticos(df_plano):
         for i in range(1, len(lista_turnos)):
             t_anterior = lista_turnos[i-1]
             t_actual = lista_turnos[i]
-            fecha_act = lista_fechas[i].strftime('%Y-%m-%d')
+            fecha_act = lista_fechas[i]
+            semana_num = fecha_act.isocalendar()[1]
             
+            novedad = None
             if t_anterior == "T3" and t_actual == "T1":
-                alertas.append(f"🚨 **Fatiga Crítica:** '{sujeto}' cambia drásticamente de Nocturno (**T3**) a Mañana (**T1**) el día {fecha_act}.")
+                novedad = "Fatiga Crítica (T3 -> T1)"
             elif t_anterior == "T2" and t_actual == "T1":
-                alertas.append(f"⚠️ **Transición Corta:** '{sujeto}' cambia de Tarde (**T2**) a Mañana (**T1**) el día {fecha_act} reduciendo descanso.")
+                novedad = "Transición Corta (T2 -> T1)"
+                
+            if novelty:
+                alertas.append({
+                    "Sujeto": sujeto,
+                    "Fecha": fecha_act,
+                    "Semana": semana_num,
+                    "Mensaje": f"🚨 **{novelty}** en '{sujeto}' el {fecha_act.strftime('%Y-%m-%d')}."
+                })
     return alertas
 
 def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, matriz_tecnicos_capacidades=None):
@@ -310,7 +312,6 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
                 
             for _, m_fila in malla_bloque.iterrows():
                 turno = m_fila['Turno']
-                
                 if matriz_tecnicos_capacidades and cargo_actual in matriz_tecnicos_capacidades:
                     limite_cupo = matriz_tecnicos_capacidades[cargo_actual].get(turno, 99)
                     if limite_cupo == 0 and turno not in ["DESCANSO", "COMPENSADO"]:
@@ -331,7 +332,61 @@ def generar_reporte_detallado(df_final, tipo, config_horas, config_descansos, ma
     return pd.DataFrame(filas_reporte)
 
 # =========================================================
-# 6. INTERFAZ OPERATIVA DEL PROGRAMADOR
+# 6. POP-UPS INTERACTIVOS (ST.DIALOG)
+# =========================================================
+@st.dialog("🛠️ Modificar Turno Específico")
+def popup_cambio_manual(sujeto, fecha_str, turno_actual):
+    st.write(f"Modificando la asignación de **{sujeto}** para el día **{fecha_str}**.")
+    st.write(f"Turno actual programado: `{turno_actual}`")
+    
+    opciones_turnos = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
+    nuevo_turno = st.selectbox("Seleccione el nuevo Turno:", opciones_turnos, index=opciones_turnos.index(turno_actual) if turno_actual in opciones_turnos else 5)
+    
+    if st.button("💾 Guardar Ajuste"):
+        # Modificar directamente en el estado de sesión maestro
+        df = st.session_state.m_base
+        idx = df[(df['Sujeto'] == sujeto) & (pd.to_datetime(df['Fecha']) == pd.to_datetime(fecha_str))].index
+        if not idx.empty:
+            st.session_state.m_base.at[idx[0], 'Turno'] = nuevo_turno
+            st.success("¡Turno modificado localmente!")
+            st.rerun()
+
+@st.dialog("🔍 Mitigación de Alerta de Fatiga Semanal", width="large")
+def popup_resolver_fatiga(sujeto, fecha_novedad, semana_num, config_horas, config_descansos, tipo, matriz_cap):
+    st.markdown(f"### Historial de la Semana {semana_num} para: **{sujeto}**")
+    st.warning(f"Novedad registrada el día: {fecha_novedad.strftime('%Y-%m-%d')}")
+    
+    # Aislar y mostrar únicamente la semana de la alerta
+    df_malla = st.session_state.m_base.copy()
+    df_malla['Fecha'] = pd.to_datetime(df_malla['Fecha'])
+    df_malla['Semana'] = df_malla['Fecha'].dt.isocalendar().week
+    
+    df_semana = df_malla[(df_malla['Sujeto'] == sujeto) & (df_malla['Semana'] == semana_num)].sort_values(by="Fecha")
+    
+    # Renderizar mini-malla editable de la semana
+    pivot_sem = df_semana.pivot(index="Sujeto", columns="Fecha", values="Turno")
+    pivot_sem.columns = [c.strftime('%Y-%m-%d') for c in pivot_sem.columns]
+    st.write("##### Calendario Semanal:")
+    st.dataframe(style_malla(pivot_sem), use_container_width=True)
+    
+    st.markdown("---")
+    st.markdown("##### ✏️ Corregir Turno Crítico:")
+    c1, c2 = st.columns(2)
+    dia_modificar = c1.selectbox("Día a cambiar:", list(pivot_sem.columns), index=list(pivot_sem.columns).index(fecha_novedad.strftime('%Y-%m-%d')) if fecha_novedad.strftime('%Y-%m-%d') in pivot_sem.columns else 0)
+    
+    opciones = ["T1", "T2", "T3", "RELEVO", "T1 APOYO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
+    turno_actual_dia = pivot_sem.at[sujeto, dia_modificar]
+    nuevo_t = c2.selectbox("Nuevo Turno mitigador:", opciones, index=opciones.index(turno_actual_dia) if turno_actual_dia in opciones else 5)
+    
+    if st.button("💾 Aplicar Corrección y Re-auditar Malla"):
+        idx_maestro = st.session_state.m_base[(st.session_state.m_base['Sujeto'] == sujeto) & (pd.to_datetime(st.session_state.m_base['Fecha']) == pd.to_datetime(dia_modificar))].index
+        if not idx_maestro.empty:
+            st.session_state.m_base.at[idx_maestro[0], 'Turno'] = nuevo_t
+            st.success("Turno corregido con éxito.")
+            st.rerun()
+
+# =========================================================
+# 7. INTERFAZ OPERATIVA PRINCIPAL
 # =========================================================
 def pantalla_programador():
     tipo = st.sidebar.radio("Módulo Selección", ["Abordaje", "Técnicos"])
@@ -398,46 +453,72 @@ def pantalla_programador():
         st.write("---")
         st.subheader("📋 Malla Resultante y Ajustes Manuales")
         
+        # PANEL DE CAMBIO MANUAL ASISTIDO POR POP-UP (REQUISITO 1)
+        with st.expander("🛠️ Panel de Ajuste Rápido (Pop-up Interactivo)", expanded=False):
+            st.caption("Selecciona el sujeto y la fecha para sobreescribir la celda mediante un Pop-up controlado.")
+            col_p1, col_p2 = st.columns(2)
+            suj_cambio = col_p1.selectbox("Sujeto / Bloque:", list(df_final["Sujeto"].unique()))
+            
+            fechas_dispo = sorted(df_final["Fecha"].unique())
+            fechas_str = [pd.to_datetime(d).strftime('%Y-%m-%d') for d in fechas_dispo]
+            f_cambio = col_p2.selectbox("Fecha del cambio:", fechas_str)
+            
+            turno_act_row = df_final[(df_final['Sujeto'] == suj_cambio) & (pd.to_datetime(df_final['Fecha']) == pd.to_datetime(f_cambio))]['Turno'].values
+            turno_actual_sel = turno_act_row[0] if len(turno_act_row) > 0 else "DESCANSO"
+            
+            if st.button("🪟 Abrir Ventana de Cambio"):
+                popup_cambio_manual(suj_cambio, f_cambio, turno_actual_sel)
+
+        # RENDERIZACIÓN DE LA MALLA VIVA CON COLORES CONDICIONALES FIJADOS
         opciones_vista = ["Ver Todo"] + (GRUPOS_TEC if tipo == "Técnicos" else ["Abordaje"])
         filtro_grupo = st.selectbox("🔍 Filtrar Malla por Bloque en Pantalla:", opciones_vista)
         
-        if filtro_grupo != "Ver Todo":
-            df_display = df_final[df_final["Sujeto"].str.contains(filtro_grupo, na=False)]
-        else:
-            df_display = df_final.copy()
+        df_display = df_final[df_final["Sujeto"].str.contains(filtro_grupo, na=False)] if filtro_grupo != "Ver Todo" else df_final.copy()
 
         pivot = df_display.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
         
-        # COLOR CONDICIONAL RESTAURADO: Se aplica de forma estricta sobre la matriz viva filtrada
-        df_edit_matriz = st.data_editor(style_malla(pivot), use_container_width=True, key=f"ed_f_{filtro_grupo}")
+        # Mostrar el Data Editor estático para lectura rápida con color condicional
+        st.dataframe(style_malla(pivot), use_container_width=True)
         
-        df_audit = df_edit_matriz.reset_index().melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
+        # Compilar datos planos frescos para auditoría
+        df_audit = df_final.copy()
         df_audit["Fecha"] = pd.to_datetime(df_audit["Fecha"])
-        
-        cob, h_sem, eq = ejecutar_auditoria_completa(df_audit)
+        cob, h_sem = ejecutar_auditoria_completa(df_audit)
         
         st.write("---")
-        t1, t2, t3, t4 = st.tabs(["📊 Cobertura Lograda", "⚠️ Alarmas de Fatiga", "⚖️ Jornada 42h (Reforma)", "📋 Reporte Nómina Detallado"])
+        t1, t2, t3, t4 = st.tabs(["📊 Cobertura Lograda", "⚠️ Alarmas de Fatiga Interactivas", "⚖️ Jornada 42h (Reforma)", "📋 Reporte Nómina Detallado"])
         
         with t1:
             st.write("### Cuotas de Cobertura Diaria Evaluadas")
             if tipo == "Técnicos" and filtro_grupo == "Ver Todo":
-                # La auditoría ahora revisa los bloques agregados para alertar vacíos
                 dias_sin_t3 = cob[cob["T3"] == 0].index.tolist()
                 if dias_sin_t3:
                     st.error(f"🚨 **Alerta de Cobertura Desprotegida:** Fechas sin Nocturno (T3): {[d.strftime('%Y-%m-%d') for d in dias_sin_t3[:5]]}")
                 else:
-                    st.success("✅ **Garantía 24/7 Exitosa:** Se confirma la cobertura permanente de los turnos base (T1, T2, T3).")
+                    st.success("✅ **Garantía 24/7 Exitosa:** Operación continua en T1, T2 y T3 confirmada.")
             st.dataframe(cob, use_container_width=True)
             
         with t2:
-            st.write("### Escáner de Protección y Fatiga (Reglas de Transición)")
+            st.write("### Escáner de Protección de Fatiga (Haz clic para mitigar y abrir Pop-up)")
+            # REQUISITO 2: CASOS DE FATIGA INTERACTIVOS CON APERTURA DE POP-UP POR CLIC
             lista_alertas_drasticas = verificar_alarmas_cambios_drasticos(df_audit)
             if lista_alertas_drasticas:
-                for alerta in lista_alertas_drasticas[:20]: st.markdown(alerta)
+                for idx_al, alerta in enumerate(lista_alertas_drasticas[:15]):
+                    col_al1, col_al2 = st.columns([0.8, 0.2])
+                    col_al1.markdown(alerta["Mensaje"])
+                    if col_al2.button("🪟 Resolver Novedad", key=f"btn_al_{idx_al}_{alerta['Sujeto']}_{alerta['Semana']}"):
+                        popup_resolver_fatiga(
+                            alerta["Sujeto"], 
+                            alerta["Fecha"], 
+                            alerta["Semana"], 
+                            config_h, 
+                            desc_data, 
+                            tipo, 
+                            matriz_tecnicos_cap if tipo == "Técnicos" else None
+                        )
             else:
-                st.success("✅ Excelente. No se detectaron transiciones críticas en el bloque seleccionado.")
+                st.success("✅ No se detectaron transiciones críticas en la malla horaria actual.")
                 
         with t3:
             st.dataframe(h_sem.style.highlight_between(left=42.01, right=100, color="#FADBD8"), use_container_width=True)
@@ -452,8 +533,3 @@ def pantalla_programador():
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: 
                     rep_individual.to_excel(writer, index=False)
                 st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Detallada_{tipo}_{date.today()}.xlsx")
-            else:
-                st.warning("⚠️ Selecciona el filtro en 'Ver Todo' para compilar el consolidado completo de nómina por persona.")
-
-if __name__ == "__main__":
-    pantalla_programador()
