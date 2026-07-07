@@ -64,7 +64,7 @@ def guardar_github(df, nombre_archivo):
         st.toast(f"🆕 Archivo creado en GitHub.")
 
 # =========================================================
-# 3. GESTIÓN DE PERSONAL
+# 3. GESTIÓN DE PERSONAL (ESTRUCTURA DE CUADRILLA FIJA)
 # =========================================================
 def asignar_grupos_automatico(df):
     df = df.copy()
@@ -125,14 +125,14 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v18"
+            key="personal_dropdown_v19"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR DE ASIGNACIÓN CON FILTRADO DE APOYO MATUTINO
+# 4. MOTOR DE ASIGNACIÓN CON TRANSICIÓN PROGRESIVA RESTRINGIDA
 # =========================================================
 def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_compensatorio, tipo_ciclo_descanso):
     df_emp = cargar_excel("empleados_grupos.xlsx")
@@ -340,7 +340,6 @@ def popup_cambio_manual_directo(sujeto, fecha_str, turno_actual):
     nuevo_turno = st.selectbox("Seleccione el nuevo Turno de reemplazo:", opciones_turnos, index=opciones_turnos.index(turno_actual) if turno_actual in opciones_turnos else 5)
     
     if st.button("💾 Guardar y Aplicar Cambio"):
-        # Mapear T1 y T1 APOYO de forma homóloga para la validación manual
         t_ant_eval = "T1" if turno_actual in ["T1", "T1 APOYO"] else turno_actual
         t_nue_eval = "T1" if nuevo_turno in ["T1", "T1 APOYO"] else nuevo_turno
 
@@ -466,16 +465,17 @@ def pantalla_programador():
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_completa_con_semaforo = pd.concat([pivot, df_semaforo_row])
         
-        df_editada_vista = st.data_editor(
+        # --- 🛠️ COMPONENTE REVISADO PARA EVITAR CONFLICTO EN DEPLOY ---
+        df_editada_vista = st.dataframe(
             style_malla(pivot_completa_con_semaforo),
             use_container_width=True,
-            disabled=True, 
+            on_select="rerun",
             selection_mode="selections",
             key="malla_interactiva_clics"
         )
         
-        seleccionada = st.session_state.malla_interactiva_clics.get("selections", {}).get("rows", [])
-        columnas_sel = st.session_state.malla_interactiva_clics.get("selections", {}).get("columns", [])
+        seleccionada = st.session_state.malla_interactiva_clics.get("selection", {}).get("rows", [])
+        columnas_sel = st.session_state.malla_interactiva_clics.get("selection", {}).get("columns", [])
         
         if seleccionada and columnas_sel:
             fila_idx = seleccionada[0]
@@ -501,3 +501,19 @@ def pantalla_programador():
             rep_individual = generar_reporte_detallado(df_audit, config_h, desc_data, matriz_tecnicos_cap)
             if not rep_individual.empty:
                 st.dataframe(rep_individual, use_container_width=True)
+                r_col1, r_col2 = st.columns(2)
+                with r_col1:
+                    resumen_persona = rep_individual.groupby("Nombre")["Horas Prog"].sum().reset_index()
+                    resumen_persona.columns = ["Nombre Empleado", "Total Horas Laboradas"]
+                    st.dataframe(resumen_persona.style.background_gradient(cmap="Blues", subset=["Total Horas Laboradas"]), use_container_width=True)
+                with r_col2:
+                    resumen_grupo = rep_individual.groupby("GrupoAsignado")["Horas Prog"].sum().reset_index()
+                    resumen_grupo.columns = ["Grupo / Cuadrilla", "Total Horas Acumuladas"]
+                    st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Acumuladas"]), use_container_width=True)
+                
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer: 
+                    rep_individual.to_excel(writer, sheet_name="Detalle_Dias", index=False)
+                    resumen_persona.to_excel(writer, sheet_name="Total_Persona", index=False)
+                    resumen_grupo.to_excel(writer, sheet_name="Total_Grupo", index=False)
+                st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Completa_Tecnicos_{date.today()}.xlsx")
