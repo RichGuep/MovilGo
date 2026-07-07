@@ -19,7 +19,8 @@ GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 COLORES_MAP = {
     "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
     "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
-    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"
+    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053",
+    "✅ OK 24/7": "#2ECC71", "❌ FALTA TURNO": "#E74C3C"
 }
 
 def style_malla(df_pivot):
@@ -27,7 +28,7 @@ def style_malla(df_pivot):
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
-        txt = "white" if key in ["DESCANSO", "COMPENSADO"] else "#17202A"
+        txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
         return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB'
     return df_pivot.style.map(apply_styles)
 
@@ -131,7 +132,7 @@ def pantalla_personal():
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR DE ASIGNACIÓN CON TRANSICIÓN PROGRESIVA RESTRINGIDA
+# 4. MOTOR DE ASIGNACIÓN CON ROTACIÓN DINÁMICA POST-DESCANSO
 # =========================================================
 def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_compensatorio, tipo_ciclo_descanso):
     df_emp = cargar_excel("empleados_grupos.xlsx")
@@ -141,31 +142,31 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     pool_descansos = ["Viernes", "Sábado", "Domingo", "Lunes"]
     supervisores_mapeo = df_emp[df_emp['Cargo'].str.contains('Supervisor', case=False, na=False)].set_index('GrupoAsignado')['Nombre'].to_dict()
     
-    ultimos_turnos_grupos = {
-        "Grupo 1": "T1",
-        "Grupo 2": "T2",
-        "Grupo 3": "T3",
-        "Grupo 4": "T1 APOYO"
+    # Mapeo de turnos iniciales base (Se alteran dinámicamente tras cada descanso)
+    turnos_actuales = {
+        "Grupo 1": "T1", "Grupo 2": "T2", "Grupo 3": "T3", "Grupo 4": "T1 APOYO"
     }
     
-    fue_descanso_ayer = {g: False for g in GRUPOS_TEC}
+    # Bandera para saber si el grupo acaba de pasar por su descanso libre
+    vuelve_de_descanso = {g: False for g in GRUPOS_TEC}
 
     for fecha in pd.date_range(inicio, fin):
         dia_n, sem, asig = DIAS_ES[fecha.weekday()], fecha.isocalendar()[1], {}
-        
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
-        if tipo_ciclo_descanso == "Mensual": desplazamiento = delta_meses
-        elif tipo_ciclo_descanso == "Trimestral": desplazamiento = delta_meses // 3
-        else: desplazamiento = 0
+        
+        # --- ROTACIÓN TEMPORAL DEL DÍA DE DESCANSO BASE ---
+        if tipo_ciclo_descanso == "Mensual": desplazamiento_dias = delta_meses
+        elif tipo_ciclo_descanso == "Trimestral": desplazamiento_dias = delta_meses // 3
+        else: desplazamiento_dias = 0
             
         descansos_vivos = {}
         for idx_g, g in enumerate(GRUPOS_TEC):
             dia_inicial = descansos_iniciales[g]
             idx_inicial = pool_descansos.index(dia_inicial) if dia_inicial in pool_descansos else 0
-            idx_rotado = (idx_inicial + desplazamiento) % len(pool_descansos)
+            idx_rotado = (idx_inicial + desplazamiento_dias) % len(pool_descansos)
             descansos_vivos[g] = pool_descansos[idx_rotado]
 
-        # 1. Asignar Descansos Base
+        # 1. Asignar Descansos Obligatorios del Día
         gps_h = [g for g, d in descansos_vivos.items() if d == dia_n]
         if len(gps_h) > 1:
             idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
@@ -173,59 +174,65 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
                 if g != d_r and conceder_compensatorio: deudas[g] += 1
         elif len(gps_h) == 1: asig[gps_h[0]] = "DESCANSO"
         
-        # 2. Asignar Compensatorios
+        # 2. Asignar Compensatorios semanales
         if 0 <= fecha.weekday() <= 4 and conceder_compensatorio:
             g_d = sorted([g for g, d in deudas.items() if d > 0 and g not in asig], key=lambda x: deudas[x], reverse=True)
             if g_d: 
                 asig[g_d[0]] = "COMPENSADO"
                 deudas[g_d[0]] -= 1
         
+        # Marcar los grupos que descansaron hoy para habilitar su cambio de turno mañana
         for g in GRUPOS_TEC:
             if asig.get(g) in ["DESCANSO", "COMPENSADO"]:
                 fue_descanso_ayer[g] = True
         
-        # 3. Distribución de Coberturas con Restricción Avanzada T1/T1 APOYO
+        # --- 🚨 NUEVA LOGICA DE ROTACIÓN FORZADA POST-DESCANSO ---
         activos = [g for g in GRUPOS_TEC if g not in asig]
+        
+        # Separar estables (mantienen turno) de mutables (regresan de descanso y deben cambiar)
         grupos_estables = [g for g in activos if not fue_descanso_ayer[g]]
         grupos_mutables = [g for g in activos if fue_descanso_ayer[g]]
         
+        # Respetar el turno de los grupos estables
         for g in grupos_estables:
             asig[g] = ultimos_turnos_grupos[g]
             
-        turnos_disponibles_pool = ["T1", "T2", "T3", "T1 APOYO"]
+        # Determinar qué turnos quedan libres hoy para las cuadrillas mutables
+        turnos_pool = ["T1", "T2", "T3", "T1 APOYO"]
         for g_est in grupos_estables:
-            t_ocupado = asig[g_est]
-            if t_ocupado in turnos_disponibles_pool:
-                turnos_disponibles_pool.remove(t_ocupado)
+            if asig[g_est] in turnos_pool:
+                turnos_disponibles_pool = [t for t in turnos_disponibles_pool if t != asig[g_est]]
                 
-        for g_mut in sorted(grupos_mutables, key=lambda x: (GRUPOS_TEC.index(x) + sem) % 4):
+        # Rotación Progresiva para los que vuelven de descanso (Garantiza cobertura 24/7)
+        for g_mut in sorted(grupos_mutables, key=lambda x: GRUPOS_TEC.index(x)):
             t_anterior = ultimos_turnos_grupos[g_mut]
-            turno_encontrado = False
             
-            for t_libre in turnos_disponibles_pool:
+            # Buscamos un turno disponible que cumpla la regla de avance (T1->T2->T3 o Reset desde Apoyo)
+            t_asignado = None
+            for t_libre in ["T1", "T2", "T3", "T1 APOYO"]:
+                if t_libre in asig.values():
+                    continue  # Evitar duplicaciones de cobertura
+                    
                 es_valido = (
                     (t_anterior in ["T1", "T1 APOYO"] and t_libre in ["T2", "T3"]) or
                     (t_anterior == "T2" and t_libre == "T3") or
-                    (t_anterior in ["DESCANSO", "COMPENSADO", "DISPONIBLE"])
+                    (t_anterior == "T3" and t_libre == "T1 APOYO") or # Cierra ciclo al apoyo
+                    (t_anterior == "T3" and t_libre == "T1")
                 )
-                
                 if es_valido:
-                    asig[g_mut] = t_libre
-                    ultimos_turnos_grupos[g_mut] = t_libre
-                    turnos_disponibles_pool.remove(t_libre)
-                    turno_encontrado = True
+                    t_asignado = t_libre
                     break
-            
-            if not turno_encontrado:
-                if t_anterior in turnos_disponibles_pool:
-                    asig[g_mut] = t_anterior
-                    turnos_disponibles_pool.remove(t_anterior)
-                else:
-                    asig[g_mut] = "DISPONIBLE"
-                    ultimos_turnos_grupos[g_mut] = "DISPONIBLE"
                     
-            fue_descanso_ayer[g_mut] = False
+            if not t_asignado:
+                # Si hay un conflicto de pool, inyectamos el primer turno libre que mantenga activa la operación
+                restantes = [t for t in ["T1", "T2", "T3", "T1 APOYO"] if t not in asig.values()]
+                t_asignado = restantes[0] if restantes else "DISPONIBLE"
+                
+            asig[g_mut] = t_asignado
+            ultimos_turnos_grupos[g_mut] = t_asignado
+            fue_descanso_ayer[g_mut] = False # Apagar bandera
 
+        # Guardar en estructura plana unificada (Incluye Supervisor indexado)
         for g in GRUPOS_TEC:
             turno_asignado = asig.get(g, "DESCANSO")
             filas.append({"Fecha": fecha, "Sujeto": g, "Turno": turno_asignado})
@@ -326,7 +333,7 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
     return pd.DataFrame(filas_reporte)
 
 # =========================================================
-# 6. POP-UPS CON INTEGRACIÓN DE T1 APOYO (ST.DIALOG)
+# 6. POP-UP DE EDICIÓN DIRECTA SEGURO (ST.DIALOG)
 # =========================================================
 @st.dialog("🛠️ Modificar Asignación de Turno", width="small")
 def popup_cambio_manual_directo(sujeto, fecha_str, turno_actual):
@@ -348,14 +355,14 @@ def popup_cambio_manual_directo(sujeto, fecha_str, turno_actual):
                 (t_ant_eval == t_nue_eval)
             )
             if not es_valido_manual:
-                st.error(f"❌ **Cambio Prohibido:** No puedes retroceder el turno de `{turno_actual}` a `{nuevo_turno}`. Se violan las reglas de transición progresiva.")
+                st.error(f"❌ **Cambio Prohibido:** Transición descendente inválida.")
                 return 
                 
-        df = st.session_state.m_base
-        idx = df[(df['Sujeto'] == sujeto) & (pd.to_datetime(df['Fecha']) == pd.to_datetime(fecha_str))].index
+        # Modificar directamente en el estado transaccional de session_state
+        idx = st.session_state.m_base[(st.session_state.m_base['Sujeto'] == sujeto) & (pd.to_datetime(st.session_state.m_base['Fecha']) == pd.to_datetime(fecha_str))].index
         if not idx.empty:
             st.session_state.m_base.at[idx[0], 'Turno'] = nuevo_turno
-            st.toast(f"✅ Turno modificado exitosamente.")
+            st.toast("✅ Malla actualizada correctamente.")
             st.rerun()
 
 def procesar_archivo_malla_externa(df_externo):
@@ -419,9 +426,8 @@ def pantalla_programador():
 
     st.write("---")
     c1, c2 = st.columns(2)
-    inicio, fin = c1.date_input("Inicio", date(2026, 7, 1)), c2.date_input("Fin", date(2026, 12, 31))
+    inicio, fin = c1.date_input("Inicio Planificación", date(2026, 7, 1)), c2.date_input("Fin Planificación", date(2026, 12, 31))
     
-    st.write("##### 🗓️ Mapeo Inicial del Descanso Base de Cuadrillas:")
     cols = st.columns(4)
     desc_data = {"Grupo 1": cols[0].selectbox("Descanso G1", DIAS_ES, index=4), "Grupo 2": cols[1].selectbox("Descanso G2", DIAS_ES, index=5), "Grupo 3": cols[2].selectbox("Descanso G3", DIAS_ES, index=6), "Grupo 4": cols[3].selectbox("Descanso G4", DIAS_ES, index=0)}
 
@@ -447,7 +453,7 @@ def pantalla_programador():
             
         st.write("---")
         st.subheader("📋 Malla de Turnos Operativa e Interactiva")
-        st.caption("🔒 **Filtro de Seguridad Activo:** Restricción estricta de retrocesos horarios aplicada sobre T1 y T1 APOYO.")
+        st.caption("💡 **Modo de Edición:** Haz clic sobre cualquier celda para abrir el selector emergente de turnos.")
         
         pivot = df_final.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
@@ -463,7 +469,7 @@ def pantalla_programador():
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_completa_con_semaforo = pd.concat([pivot, df_semaforo_row])
         
-        # --- 🛠️ COMPONENTE CORREGIDO SEGURO PARA PYTHON 3.14 / NUEVO STREAMLIT ---
+        # --- 🛠️ CORRECCIÓN DE INTERACCIÓN: SELECCIÓN PAR AMBIENTE RECIENTE DE STREAMLIT ---
         df_editada_vista = st.dataframe(
             style_malla(pivot_completa_con_semaforo),
             use_container_width=True,
@@ -471,19 +477,18 @@ def pantalla_programador():
             key="malla_interactiva_clics"
         )
         
-        # Procesamiento adaptado del diccionario interno de Streamlit
-        seleccion_dict = st.session_state.malla_interactiva_clics.get("selection", {})
-        seleccionada = seleccion_dict.get("rows", [])
-        columnas_sel = seleccion_dict.get("columns", [])
+        # Extraer de forma estricta las coordenadas de celdas ('selection' -> 'cells')
+        selection_state = st.session_state.malla_interactiva_clics.get("selection", {})
+        celdas_seleccionadas = selection_state.get("cells", [])
         
-        if seleccionada and columnas_sel:
-            fila_idx = seleccionada[0]
-            col_idx = columnas_sel[0]
+        if celdas_seleccionadas:
+            fila_idx, col_idx = celdas_seleccionadas[0]
             
             sujeto_clic = pivot_completa_con_semaforo.index[fila_idx]
             fecha_clic = pivot_completa_con_semaforo.columns[col_idx]
             turno_clic = pivot_completa_con_semaforo.at[sujeto_clic, fecha_clic]
             
+            # Impedir el disparo del pop-up si se toca la fila de auditoría
             if sujeto_clic != "🔍 AUDITORÍA 24/7":
                 popup_cambio_manual_directo(sujeto_clic, fecha_clic, turno_clic)
 
