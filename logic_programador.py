@@ -19,8 +19,7 @@ GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 COLORES_MAP = {
     "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
     "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
-    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053",
-    "✅ OK 24/7": "#2ECC71", "❌ FALTA TURNO": "#E74C3C"
+    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"
 }
 
 def style_malla(df_pivot):
@@ -28,7 +27,7 @@ def style_malla(df_pivot):
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
-        txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
+        txt = "white" if key in ["DESCANSO", "COMPENSADO"] else "#17202A"
         return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB'
     return df_pivot.style.map(apply_styles)
 
@@ -125,7 +124,7 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v19"
+            key="personal_dropdown_v20"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
@@ -204,7 +203,6 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
             turno_encontrado = False
             
             for t_libre in turnos_disponibles_pool:
-                # REGLA: T1 y T1 APOYO se consideran equivalentes a Mañana (Turno 1)
                 es_valido = (
                     (t_anterior in ["T1", "T1 APOYO"] and t_libre in ["T2", "T3"]) or
                     (t_anterior == "T2" and t_libre == "T3") or
@@ -465,17 +463,18 @@ def pantalla_programador():
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_completa_con_semaforo = pd.concat([pivot, df_semaforo_row])
         
-        # --- 🛠️ COMPONENTE REVISADO PARA EVITAR CONFLICTO EN DEPLOY ---
+        # --- 🛠️ COMPONENTE CORREGIDO SEGURO PARA PYTHON 3.14 / NUEVO STREAMLIT ---
         df_editada_vista = st.dataframe(
             style_malla(pivot_completa_con_semaforo),
             use_container_width=True,
             on_select="rerun",
-            selection_mode="selections",
             key="malla_interactiva_clics"
         )
         
-        seleccionada = st.session_state.malla_interactiva_clics.get("selection", {}).get("rows", [])
-        columnas_sel = st.session_state.malla_interactiva_clics.get("selection", {}).get("columns", [])
+        # Procesamiento adaptado del diccionario interno de Streamlit
+        seleccion_dict = st.session_state.malla_interactiva_clics.get("selection", {})
+        seleccionada = seleccion_dict.get("rows", [])
+        columnas_sel = seleccion_dict.get("columns", [])
         
         if seleccionada and columnas_sel:
             fila_idx = seleccionada[0]
