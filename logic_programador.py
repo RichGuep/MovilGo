@@ -19,7 +19,8 @@ GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 COLORES_MAP = {
     "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
     "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
-    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"
+    "T1 APOYO": "#EBF5FB", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053",
+    "✅ OK 24/7": "#2ECC71", "❌ FALTA TURNO": "#E74C3C"
 }
 
 def style_malla(df_pivot):
@@ -27,8 +28,9 @@ def style_malla(df_pivot):
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
-        txt = "white" if key in ["DESCANSO", "COMPENSADO"] else "#17202A"
-        return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB'
+        # Forzar texto blanco en las filas de auditoría para legibilidad total (Punto 2)
+        txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
+        return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB;'
     return df_pivot.style.map(apply_styles)
 
 # =========================================================
@@ -63,7 +65,7 @@ def guardar_github(df, nombre_archivo):
         st.toast(f"🆕 Archivo creado en GitHub.")
 
 # =========================================================
-# 3. GESTIÓN DE PERSONAL (ESTRUCTURA DE CUADRILLA FIJA)
+# 3. GESTIÓN DE PERSONAL
 # =========================================================
 def asignar_grupos_automatico(df):
     df = df.copy()
@@ -124,14 +126,14 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v20"
+            key="personal_dropdown_v21"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR DE ASIGNACIÓN CON TRANSICIÓN PROGRESIVA RESTRINGIDA
+# 4. MOTOR DE ASIGNACIÓN AVANZADO (COBERTURA RECONSTITUIDA)
 # =========================================================
 def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_compensatorio, tipo_ciclo_descanso):
     df_emp = cargar_excel("empleados_grupos.xlsx")
@@ -142,12 +144,8 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     supervisores_mapeo = df_emp[df_emp['Cargo'].str.contains('Supervisor', case=False, na=False)].set_index('GrupoAsignado')['Nombre'].to_dict()
     
     ultimos_turnos_grupos = {
-        "Grupo 1": "T1",
-        "Grupo 2": "T2",
-        "Grupo 3": "T3",
-        "Grupo 4": "T1 APOYO"
+        "Grupo 1": "T1", "Grupo 2": "T2", "Grupo 3": "T3", "Grupo 4": "T1 APOYO"
     }
-    
     fue_descanso_ayer = {g: False for g in GRUPOS_TEC}
 
     for fecha in pd.date_range(inicio, fin):
@@ -184,7 +182,6 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
             if asig.get(g) in ["DESCANSO", "COMPENSADO"]:
                 fue_descanso_ayer[g] = True
         
-        # 3. Distribución de Coberturas con Restricción Avanzada T1/T1 APOYO
         activos = [g for g in GRUPOS_TEC if g not in asig]
         grupos_estables = [g for g in activos if not fue_descanso_ayer[g]]
         grupos_mutables = [g for g in activos if fue_descanso_ayer[g]]
@@ -192,38 +189,52 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
         for g in grupos_estables:
             asig[g] = ultimos_turnos_grupos[g]
             
-        turnos_disponibles_pool = ["T1", "T2", "T3", "T1 APOYO"]
-        for g_est in grupos_estables:
-            t_ocupado = asig[g_est]
-            if t_ocupado in turnos_disponibles_pool:
-                turnos_disponibles_pool.remove(t_ocupado)
-                
+        # Determinar qué turnos base faltan cubrir hoy
+        turnos_requeridos = ["T1", "T2", "T3"]
+        turnos_cubiertos = [asig[g] for g in grupos_estables if asig[g] in turnos_requeridos]
+        turnos_faltantes = [t for t in turnos_requeridos if t not in turnos_cubiertos]
+        
+        # 3. PUNTO 1: LÓGICA DE ASIGNACIÓN INTELIGENTE DE T1 APOYO POST-DESCANSO
         for g_mut in sorted(grupos_mutables, key=lambda x: (GRUPOS_TEC.index(x) + sem) % 4):
+            # Saber si mañana este grupo entra a descansar
+            manana = fecha + timedelta(days=1)
+            manana_meses = (manana.year - inicio.year) * 12 + (manana.month - inicio.month)
+            m_desplazamiento = manana_meses if tipo_ciclo_descanso == "Mensual" else (manana_meses // 3 if tipo_ciclo_descanso == "Trimestral" else 0)
+            
+            m_idx_i = pool_descansos.index(descansos_iniciales[g_mut]) if descansos_iniciales[g_mut] in pool_descansos else 0
+            m_dia_descanso = pool_descansos[(m_idx_i + m_desplazamiento) % len(pool_descansos)]
+            es_ultimo_dia_de_bloque = (DIAS_ES[manana.weekday()] == m_dia_descanso)
+            
             t_anterior = ultimos_turnos_grupos[g_mut]
-            turno_encontrado = False
+            asignado = False
             
-            for t_libre in turnos_disponibles_pool:
-                es_valido = (
-                    (t_anterior in ["T1", "T1 APOYO"] and t_libre in ["T2", "T3"]) or
-                    (t_anterior == "T2" and t_libre == "T3") or
-                    (t_anterior in ["DESCANSO", "COMPENSADO", "DISPONIBLE"])
-                )
-                
-                if es_valido:
-                    asig[g_mut] = t_libre
-                    ultimos_turnos_grupos[g_mut] = t_libre
-                    turnos_disponibles_pool.remove(t_libre)
-                    turno_encontrado = True
-                    break
-            
-            if not turno_encontrado:
-                if t_anterior in turnos_disponibles_pool:
-                    asig[g_mut] = t_anterior
-                    turnos_disponibles_pool.remove(t_anterior)
-                else:
-                    asig[g_mut] = "DISPONIBLE"
-                    ultimos_turnos_grupos[g_mut] = "DISPONIBLE"
+            if turnos_faltantes:
+                # Si falta un turno crítico, evaluamos si podemos asignarlo
+                for t_falta in list(turnos_faltantes):
+                    # Validación de transiciones permitidas (T1->T2, T1->T3, T2->T3)
+                    t_ant_eval = "T1" if t_anterior in ["T1", "T1 APOYO", "DISPONIBLE"] else t_anterior
+                    es_progresivo = (
+                        (t_ant_eval == "T1" and t_falta in ["T2", "T3"]) or
+                        (t_ant_eval == "T2" and t_falta == "T3") or
+                        (t_ant_eval == t_falta)
+                    )
                     
+                    # RESTRICCIÓN SOLICITADA: Si es T3, solo se permite si es el ULTIMO día antes de su descanso
+                    if t_falta == "T3" and not es_ultimo_dia_de_bloque:
+                        continue
+                        
+                    if es_progresivo:
+                        asig[g_mut] = t_falta
+                        ultimos_turnos_grupos[g_mut] = t_falta
+                        turnos_faltantes.remove(t_falta)
+                        asignado = True
+                        break
+            
+            # Si no faltaban turnos base o no cumplió la restricción de transición, se queda como T1 APOYO ordinario
+            if not asignado:
+                asig[g_mut] = "T1 APOYO"
+                ultimos_turnos_grupos[g_mut] = "T1 APOYO"
+                
             fue_descanso_ayer[g_mut] = False
 
         for g in GRUPOS_TEC:
@@ -278,10 +289,8 @@ def verificar_alarmas_cambios_drasticos(df_plano):
             semana_num = fecha_act.isocalendar()[1]
             
             novedad = None
-            if t_anterior == "T3" and t_actual in ["T1", "T1 APOYO"]: 
-                novedad = f"Fatiga Crítica (T3 -> {t_actual})"
-            elif t_anterior == "T2" and t_actual in ["T1", "T1 APOYO"]: 
-                novedad = f"Transición Corta (T2 -> {t_actual})"
+            if t_anterior == "T3" and t_actual in ["T1", "T1 APOYO"]: novedad = f"Fatiga Crítica (T3 -> {t_actual})"
+            elif t_anterior == "T2" and t_actual in ["T1", "T1 APOYO"]: novedad = f"Transición Corta (T2 -> {t_actual})"
                 
             if novedad:
                 alertas.append({
@@ -303,11 +312,7 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
         cargo_actual = emp['Cargo']
         nombre_real = emp['Nombre']
         
-        if "Supervisor" in str(cargo_actual):
-            malla_bloque = df_final[df_final['Sujeto'] == f"{g_pertenece} - Supervisor: {nombre_real}"]
-        else:
-            malla_bloque = df_final[df_final['Sujeto'] == g_pertenece]
-            
+        malla_bloque = df_final[df_final['Sujeto'] == g_pertenece]
         for _, m_fila in malla_bloque.iterrows():
             turno = m_fila['Turno']
             if matriz_tecnicos_capacidades and cargo_actual in matriz_tecnicos_capacidades:
@@ -326,7 +331,7 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
     return pd.DataFrame(filas_reporte)
 
 # =========================================================
-# 6. POP-UPS CON INTEGRACIÓN DE T1 APOYO (ST.DIALOG)
+# 6. POP-UPS (ST.DIALOG)
 # =========================================================
 @st.dialog("🛠️ Modificar Asignación de Turno", width="small")
 def popup_cambio_manual_directo(sujeto, fecha_str, turno_actual):
@@ -348,14 +353,14 @@ def popup_cambio_manual_directo(sujeto, fecha_str, turno_actual):
                 (t_ant_eval == t_nue_eval)
             )
             if not es_valido_manual:
-                st.error(f"❌ **Cambio Prohibido:** No puedes retroceder el turno de `{turno_actual}` a `{nuevo_turno}`. Se violan las reglas de transición progresiva.")
+                st.error(f"❌ **Cambio Prohibido:** Transición descendente inválida.")
                 return 
                 
-        df = st.session_state.m_base
-        idx = df[(df['Sujeto'] == sujeto) & (pd.to_datetime(df['Fecha']) == pd.to_datetime(fecha_str))].index
+        # Modificar el DataFrame maestro guardado en session_state
+        idx = st.session_state.m_base[(st.session_state.m_base['Sujeto'] == sujeto) & (pd.to_datetime(st.session_state.m_base['Fecha']) == pd.to_datetime(fecha_str))].index
         if not idx.empty:
             st.session_state.m_base.at[idx[0], 'Turno'] = nuevo_turno
-            st.toast(f"✅ Turno modificado exitosamente.")
+            st.toast("✅ Malla actualizada correctamente.")
             st.rerun()
 
 def procesar_archivo_malla_externa(df_externo):
@@ -366,7 +371,7 @@ def procesar_archivo_malla_externa(df_externo):
         df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
         df_plano["Turno"] = df_plano["Turno"].fillna("DESCANSO").astype(str).str.strip().str.upper()
         return df_plano
-    except Exception as e: return pd.DataFrame()
+    except: return pd.DataFrame()
 
 # =========================================================
 # 7. INTERFAZ OPERATIVA PRINCIPAL
@@ -419,9 +424,8 @@ def pantalla_programador():
 
     st.write("---")
     c1, c2 = st.columns(2)
-    inicio, fin = c1.date_input("Inicio", date(2026, 7, 1)), c2.date_input("Fin", date(2026, 12, 31))
+    inicio, fin = c1.date_input("Inicio Planificación", date(2026, 7, 1)), c2.date_input("Fin Planificación", date(2026, 12, 31))
     
-    st.write("##### 🗓️ Mapeo Inicial del Descanso Base de Cuadrillas:")
     cols = st.columns(4)
     desc_data = {"Grupo 1": cols[0].selectbox("Descanso G1", DIAS_ES, index=4), "Grupo 2": cols[1].selectbox("Descanso G2", DIAS_ES, index=5), "Grupo 3": cols[2].selectbox("Descanso G3", DIAS_ES, index=6), "Grupo 4": cols[3].selectbox("Descanso G4", DIAS_ES, index=0)}
 
@@ -447,7 +451,7 @@ def pantalla_programador():
             
         st.write("---")
         st.subheader("📋 Malla de Turnos Operativa e Interactiva")
-        st.caption("🔒 **Filtro de Seguridad Activo:** Restricción estricta de retrocesos horarios aplicada sobre T1 y T1 APOYO.")
+        st.caption("💡 **Modo Inteligente:** Haz clic sobre cualquier celda para abrir el Pop-up de edición.")
         
         pivot = df_final.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
@@ -463,7 +467,7 @@ def pantalla_programador():
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_completa_con_semaforo = pd.concat([pivot, df_semaforo_row])
         
-        # --- 🛠️ COMPONENTE CORREGIDO SEGURO PARA PYTHON 3.14 / NUEVO STREAMLIT ---
+        # --- 🛠️ PUNTO 3: CAPTURA DE SELECCIÓN PARA NUEVO STREAMLIT CORREGIDO ---
         df_editada_vista = st.dataframe(
             style_malla(pivot_completa_con_semaforo),
             use_container_width=True,
@@ -471,14 +475,13 @@ def pantalla_programador():
             key="malla_interactiva_clics"
         )
         
-        # Procesamiento adaptado del diccionario interno de Streamlit
+        # Extracción segura mapeando la jerarquía 'selection' -> 'cells' del objeto de estado
         seleccion_dict = st.session_state.malla_interactiva_clics.get("selection", {})
-        seleccionada = seleccion_dict.get("rows", [])
-        columnas_sel = seleccion_dict.get("columns", [])
+        celdas_seleccionadas = seleccion_dict.get("cells", [])
         
-        if seleccionada and columnas_sel:
-            fila_idx = seleccionada[0]
-            col_idx = columnas_sel[0]
+        if celdas_seleccionadas:
+            # Capturar la coordenada de la celda cliqueada [fila_idx, columna_idx]
+            fila_idx, col_idx = celdas_seleccionadas[0]
             
             sujeto_clic = pivot_completa_con_semaforo.index[fila_idx]
             fecha_clic = pivot_completa_con_semaforo.columns[col_idx]
@@ -509,10 +512,3 @@ def pantalla_programador():
                     resumen_grupo = rep_individual.groupby("GrupoAsignado")["Horas Prog"].sum().reset_index()
                     resumen_grupo.columns = ["Grupo / Cuadrilla", "Total Horas Acumuladas"]
                     st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Acumuladas"]), use_container_width=True)
-                
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer: 
-                    rep_individual.to_excel(writer, sheet_name="Detalle_Dias", index=False)
-                    resumen_persona.to_excel(writer, sheet_name="Total_Persona", index=False)
-                    resumen_grupo.to_excel(writer, sheet_name="Total_Grupo", index=False)
-                st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Completa_Tecnicos_{date.today()}.xlsx")
