@@ -48,13 +48,7 @@ def cargar_configuracion():
 if 'config_personal' not in st.session_state:
     st.session_state.config_personal = cargar_configuracion()
 
-# --- URLs DE IMÁGENES GITHUB ---
-URL_BASE = "https://raw.githubusercontent.com/RichGuep/movilgo/main/"
-LOGO_MÓVILGO = f"{URL_BASE}MovilGo.png"
-
-# =========================================================================
-# REEMPLAZA TU BLOQUE DE ESTILOS CSS ACTUAL POR ESTE BLOQUE EXACTO:
-# =========================================================================
+# --- 2. ESTILOS CSS PERSONALIZADOS ---
 PRIMARY_COLOR = "#1E3D59" 
 st.markdown(f"""
     <style>
@@ -62,7 +56,6 @@ st.markdown(f"""
     [data-testid="stSidebar"] {{ background-color: {PRIMARY_COLOR}; border-right: 1px solid #ffffff22; }}
     [data-testid="stSidebar"] * {{ color: white !important; font-weight: 500; }}
     
-    /* 🚨 CORRECCIÓN CRÍTICA: Hace visible el cuadro de carga sobre el fondo oscuro */
     [data-testid="stSidebar"] [data-testid="stFileUploader"] {{
         background-color: #ffffff !important;
         padding: 12px;
@@ -70,21 +63,15 @@ st.markdown(f"""
         border: 2px dashed #3a6073 !important;
         margin-bottom: 15px;
     }}
-    
-    /* Asegura que los textos internos del cargador sean oscuros para poder leerlos */
     [data-testid="stSidebar"] [data-testid="stFileUploader"] * {{
         color: #1E3D59 !important; 
         font-weight: bold !important;
     }}
-    
-    /* Botones Globales */
     .stButton>button {{ 
         width: 100%; border-radius: 12px; font-weight: bold; 
         height: 3em; transition: 0.3s; border: none; 
         box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
     }}
-    
-    /* Contenedor de Bienvenida (Inicio) */
     .welcome-card {{
         background: linear-gradient(135deg, {PRIMARY_COLOR} 0%, #3a6073 100%);
         color: white; padding: 2.5rem; border-radius: 20px; 
@@ -92,14 +79,13 @@ st.markdown(f"""
     }}
     </style>
     """, unsafe_allow_html=True)
-# =========================================================================
 
 def modulo_inicio():
     st.markdown(f'''
         <div class="welcome-card">
             <h1>👋 ¡Bienvenido al Panel de Control {st.session_state.empresa}!</h1>
             <p style="font-size: 1.2rem; opacity: 0.9;">
-                Garantizando cobertura técnica y operativa por Grupos bajo el cumplimiento estricto de la Reforma Laboral Colombiana 2026.
+                Garantizando cobertura técnica y operativa por Grupos bajo el cumplimiento de la Reforma Laboral Colombiana 2026.
             </p>
         </div>
     ''', unsafe_allow_html=True)
@@ -119,7 +105,6 @@ def modulo_inicio():
     with inf2:
         st.warning("🛌 **Descansos Compensatorios:** El sistema genera deudas automáticas individuales de compensación cuando las necesidades del servicio obligan a laborar en días de descanso base.")
 
-# --- Flujo de Estados de Sesión ---
 if 'splash_done' not in st.session_state: st.session_state.splash_done = False
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'empresa' not in st.session_state: st.session_state.empresa = "Grupo Movil"
