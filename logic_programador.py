@@ -28,7 +28,6 @@ def style_malla(df_pivot):
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
-        # Forzar texto blanco en las filas de auditoría para legibilidad total (Punto 2)
         txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
         return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB;'
     return df_pivot.style.map(apply_styles)
@@ -126,14 +125,14 @@ def pantalla_personal():
             column_config={
                 "GrupoAsignado": st.column_config.SelectboxColumn("📦 Grupo Asignado", options=opciones_grupos, required=True)
             },
-            key="personal_dropdown_v21"
+            key="personal_dropdown_v22"
         )
         if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR DE ASIGNACIÓN AVANZADO (COBERTURA RECONSTITUIDA)
+# 4. NUEVO MOTOR DE ASIGNACIÓN: COBERTURA 24/7 E INYECCIÓN MENSUAL
 # =========================================================
 def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_compensatorio, tipo_ciclo_descanso):
     df_emp = cargar_excel("empleados_grupos.xlsx")
@@ -143,27 +142,25 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     pool_descansos = ["Viernes", "Sábado", "Domingo", "Lunes"]
     supervisores_mapeo = df_emp[df_emp['Cargo'].str.contains('Supervisor', case=False, na=False)].set_index('GrupoAsignado')['Nombre'].to_dict()
     
-    ultimos_turnos_grupos = {
-        "Grupo 1": "T1", "Grupo 2": "T2", "Grupo 3": "T3", "Grupo 4": "T1 APOYO"
-    }
-    fue_descanso_ayer = {g: False for g in GRUPOS_TEC}
-
     for fecha in pd.date_range(inicio, fin):
         dia_n, sem, asig = DIAS_ES[fecha.weekday()], fecha.isocalendar()[1], {}
         
+        # Calcular delta de meses desde el arranque para las deudas y ciclos
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
-        if tipo_ciclo_descanso == "Mensual": desplazamiento = delta_meses
-        elif tipo_ciclo_descanso == "Trimestral": desplazamiento = delta_meses // 3
-        else: desplazamiento = 0
+        
+        # --- REGLA 1: CALCULAR EL DÍA DE DESCANSO ROTATIVO ---
+        if tipo_ciclo_descanso == "Mensual": desplazamiento_dias = delta_meses
+        elif tipo_ciclo_descanso == "Trimestral": desplazamiento_dias = delta_meses // 3
+        else: desplazamiento_dias = 0
             
         descansos_vivos = {}
         for idx_g, g in enumerate(GRUPOS_TEC):
             dia_inicial = descansos_iniciales[g]
             idx_inicial = pool_descansos.index(dia_inicial) if dia_inicial in pool_descansos else 0
-            idx_rotado = (idx_inicial + desplazamiento) % len(pool_descansos)
+            idx_rotado = (idx_inicial + desplazamiento_dias) % len(pool_descansos)
             descansos_vivos[g] = pool_descansos[idx_rotado]
 
-        # 1. Asignar Descansos Base
+        # Asignar Descanso del día
         gps_h = [g for g, d in descansos_vivos.items() if d == dia_n]
         if len(gps_h) > 1:
             idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
@@ -171,71 +168,50 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
                 if g != d_r and conceder_compensatorio: deudas[g] += 1
         elif len(gps_h) == 1: asig[gps_h[0]] = "DESCANSO"
         
-        # 2. Asignar Compensatorios
+        # Asignar Compensatorios de lunes a viernes
         if 0 <= fecha.weekday() <= 4 and conceder_compensatorio:
             g_d = sorted([g for g, d in deudas.items() if d > 0 and g not in asig], key=lambda x: deudas[x], reverse=True)
             if g_d: 
                 asig[g_d[0]] = "COMPENSADO"
                 deudas[g_d[0]] -= 1
         
-        for g in GRUPOS_TEC:
-            if asig.get(g) in ["DESCANSO", "COMPENSADO"]:
-                fue_descanso_ayer[g] = True
+        # --- REGLA 2: IDENTIFICAR EL GRUPO FIJO DE APOYO PARA ESTE MES ---
+        # El grupo asignado a T1 APOYO va rotando secuencialmente cada mes completo
+        idx_grupo_apoyo = delta_meses % len(GRUPOS_TEC)
+        grupo_apoyo_del_mes = GRUPOS_TEC[idx_grupo_apoyo]
         
         activos = [g for g in GRUPOS_TEC if g not in asig]
-        grupos_estables = [g for g in activos if not fue_descanso_ayer[g]]
-        grupos_mutables = [g for g in activos if fue_descanso_ayer[g]]
         
-        for g in grupos_estables:
-            asig[g] = ultimos_turnos_grupos[g]
+        # Si al grupo que le toca ser apoyo este mes está disponible hoy, se le inyecta T1 APOYO de inmediato
+        if grupo_apoyo_del_mes in activos:
+            asig[grupo_apoyo_del_mes] = "T1 APOYO"
+            activos.remove(grupo_apoyo_del_mes)
             
-        # Determinar qué turnos base faltan cubrir hoy
-        turnos_requeridos = ["T1", "T2", "T3"]
-        turnos_cubiertos = [asig[g] for g in grupos_estables if asig[g] in turnos_requeridos]
-        turnos_faltantes = [t for t in turnos_requeridos if t not in turnos_cubiertos]
+        # --- REGLA 3: GARANTÍA INQUEBRANTABLE COBERTURA 24/7 PARA EL RESTO ---
+        # Repartir obligatoriamente los 3 turnos base entre los grupos que quedan trabajando hoy
+        turnos_base_pool = ["T1", "T2", "T3"]
         
-        # 3. PUNTO 1: LÓGICA DE ASIGNACIÓN INTELIGENTE DE T1 APOYO POST-DESCANSO
-        for g_mut in sorted(grupos_mutables, key=lambda x: (GRUPOS_TEC.index(x) + sem) % 4):
-            # Saber si mañana este grupo entra a descansar
-            manana = fecha + timedelta(days=1)
-            manana_meses = (manana.year - inicio.year) * 12 + (manana.month - inicio.month)
-            m_desplazamiento = manana_meses if tipo_ciclo_descanso == "Mensual" else (manana_meses // 3 if tipo_ciclo_descanso == "Trimestral" else 0)
+        # Ordenación secuencial determinista original basada en el número de semana
+        activos_ordenados = sorted(activos, key=lambda x: (GRUPOS_TEC.index(x) + sem) % 4)
+        
+        for g_trabajador in activos_ordenados:
+            for t_base in list(turnos_base_pool):
+                asig[g_trabajador] = t_base
+                turnos_base_pool.remove(t_base)
+                break
             
-            m_idx_i = pool_descansos.index(descansos_iniciales[g_mut]) if descansos_iniciales[g_mut] in pool_descansos else 0
-            m_dia_descanso = pool_descansos[(m_idx_i + m_desplazamiento) % len(pool_descansos)]
-            es_ultimo_dia_de_bloque = (DIAS_ES[manana.weekday()] == m_dia_descanso)
-            
-            t_anterior = ultimos_turnos_grupos[g_mut]
-            asignado = False
-            
-            if turnos_faltantes:
-                # Si falta un turno crítico, evaluamos si podemos asignarlo
-                for t_falta in list(turnos_faltantes):
-                    # Validación de transiciones permitidas (T1->T2, T1->T3, T2->T3)
-                    t_ant_eval = "T1" if t_anterior in ["T1", "T1 APOYO", "DISPONIBLE"] else t_anterior
-                    es_progresivo = (
-                        (t_ant_eval == "T1" and t_falta in ["T2", "T3"]) or
-                        (t_ant_eval == "T2" and t_falta == "T3") or
-                        (t_ant_eval == t_falta)
-                    )
-                    
-                    # RESTRICCIÓN SOLICITADA: Si es T3, solo se permite si es el ULTIMO día antes de su descanso
-                    if t_falta == "T3" and not es_ultimo_dia_de_bloque:
-                        continue
-                        
-                    if es_progresivo:
-                        asig[g_mut] = t_falta
-                        ultimos_turnos_grupos[g_mut] = t_falta
-                        turnos_faltantes.remove(t_falta)
-                        asignado = True
-                        break
-            
-            # Si no faltaban turnos base o no cumplió la restricción de transición, se queda como T1 APOYO ordinario
-            if not asignado:
-                asig[g_mut] = "T1 APOYO"
-                ultimos_turnos_grupos[g_mut] = "T1 APOYO"
+            if g_trabajador not in asig:
+                asig[g_trabajador] = "DISPONIBLE"
                 
-            fue_descanso_ayer[g_mut] = False
+        # Si por fuerza mayor de descansos el grupo de apoyo no vino, y quedó un turno base libre, 
+        # re-mapeamos un grupo disponible para que la cobertura nunca se quede en 0.
+        if turnos_base_pool:
+            for t_libre in list(turnos_base_pool):
+                for g_remplazo in GRUPOS_TEC:
+                    if asig.get(g_remplazo) == "T1 APOYO":
+                        asig[g_remplazo] = t_libre
+                        turnos_base_pool.remove(t_libre)
+                        break
 
         for g in GRUPOS_TEC:
             turno_asignado = asig.get(g, "DESCANSO")
@@ -289,8 +265,10 @@ def verificar_alarmas_cambios_drasticos(df_plano):
             semana_num = fecha_act.isocalendar()[1]
             
             novedad = None
-            if t_anterior == "T3" and t_actual in ["T1", "T1 APOYO"]: novedad = f"Fatiga Crítica (T3 -> {t_actual})"
-            elif t_anterior == "T2" and t_actual in ["T1", "T1 APOYO"]: novedad = f"Transición Corta (T2 -> {t_actual})"
+            if t_anterior == "T3" and t_actual in ["T1", "T1 APOYO"]: 
+                novedad = f"Fatiga Crítica (T3 -> {t_actual})"
+            elif t_anterior == "T2" and t_actual in ["T1", "T1 APOYO"]: 
+                novedad = f"Transición Corta (T2 -> {t_actual})"
                 
             if novedad:
                 alertas.append({
@@ -331,7 +309,7 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
     return pd.DataFrame(filas_reporte)
 
 # =========================================================
-# 6. POP-UPS (ST.DIALOG)
+# 6. POP-UPS (ST.DIALOG) EN CALIENTE RECEPTIVO
 # =========================================================
 @st.dialog("🛠️ Modificar Asignación de Turno", width="small")
 def popup_cambio_manual_directo(sujeto, fecha_str, turno_actual):
@@ -356,22 +334,11 @@ def popup_cambio_manual_directo(sujeto, fecha_str, turno_actual):
                 st.error(f"❌ **Cambio Prohibido:** Transición descendente inválida.")
                 return 
                 
-        # Modificar el DataFrame maestro guardado en session_state
         idx = st.session_state.m_base[(st.session_state.m_base['Sujeto'] == sujeto) & (pd.to_datetime(st.session_state.m_base['Fecha']) == pd.to_datetime(fecha_str))].index
         if not idx.empty:
             st.session_state.m_base.at[idx[0], 'Turno'] = nuevo_turno
             st.toast("✅ Malla actualizada correctamente.")
             st.rerun()
-
-def procesar_archivo_malla_externa(df_externo):
-    try:
-        columna_clave = df_externo.columns[0]
-        df_externo = df_externo.rename(columns={columna_clave: "Sujeto"})
-        df_plano = df_externo.melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
-        df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
-        df_plano["Turno"] = df_plano["Turno"].fillna("DESCANSO").astype(str).str.strip().str.upper()
-        return df_plano
-    except: return pd.DataFrame()
 
 # =========================================================
 # 7. INTERFAZ OPERATIVA PRINCIPAL
@@ -451,7 +418,6 @@ def pantalla_programador():
             
         st.write("---")
         st.subheader("📋 Malla de Turnos Operativa e Interactiva")
-        st.caption("💡 **Modo Inteligente:** Haz clic sobre cualquier celda para abrir el Pop-up de edición.")
         
         pivot = df_final.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot.columns]
@@ -467,20 +433,19 @@ def pantalla_programador():
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_completa_con_semaforo = pd.concat([pivot, df_semaforo_row])
         
-        # --- 🛠️ PUNTO 3: CAPTURA DE SELECCIÓN PARA NUEVO STREAMLIT CORREGIDO ---
+        # --- 🛠️ COMPONENTE INTERACTIVO ADAPTADO AL NUEVO ESTÁNDAR (Punto 3) ---
         df_editada_vista = st.dataframe(
             style_malla(pivot_completa_con_semaforo),
             use_container_width=True,
-            on_select="rerun",
+            on_select="rerun",  # Captura la acción reactiva en el servidor
             key="malla_interactiva_clics"
         )
         
-        # Extracción segura mapeando la jerarquía 'selection' -> 'cells' del objeto de estado
+        # Mapeo de extracción estructural seguro para celdas
         seleccion_dict = st.session_state.malla_interactiva_clics.get("selection", {})
         celdas_seleccionadas = seleccion_dict.get("cells", [])
         
         if celdas_seleccionadas:
-            # Capturar la coordenada de la celda cliqueada [fila_idx, columna_idx]
             fila_idx, col_idx = celdas_seleccionadas[0]
             
             sujeto_clic = pivot_completa_con_semaforo.index[fila_idx]
@@ -512,3 +477,10 @@ def pantalla_programador():
                     resumen_grupo = rep_individual.groupby("GrupoAsignado")["Horas Prog"].sum().reset_index()
                     resumen_grupo.columns = ["Grupo / Cuadrilla", "Total Horas Acumuladas"]
                     st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Acumuladas"]), use_container_width=True)
+                
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer: 
+                    rep_individual.to_excel(writer, sheet_name="Detalle_Dias", index=False)
+                    resumen_persona.to_excel(writer, sheet_name="Total_Persona", index=False)
+                    resumen_grupo.to_excel(writer, sheet_name="Total_Grupo", index=False)
+                st.download_button("📥 Descargar Reporte Nómina Maestro (.xlsx)", output.getvalue(), f"Nomina_Completa_Tecnicos_{date.today()}.xlsx")
