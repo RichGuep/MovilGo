@@ -19,8 +19,7 @@ GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 COLORES_MAP = {
     "T1": "#D6EAF8", "T2": "#D5F5E3", "T3": "#FADBD8",
     "RELEVO": "#E8DAEF", "DISPONIBLE": "#EAEDED",
-    "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053",
-    "✅ OK 24/7": "#2ECC71", "❌ FALTA TURNO": "#E74C3C"
+    "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"
 }
 
 def style_malla(df_pivot):
@@ -28,9 +27,8 @@ def style_malla(df_pivot):
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
-        txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
-        # Se remueven bordes y fuentes complejas para que st.data_editor no rompa el renderizado de color
-        return f'background-color: {bg}; color: {txt};'
+        txt = "white" if key in ["DESCANSO", "COMPENSADO"] else "#17202A"
+        return f'background-color: {bg}; color: {txt}; font-weight: 700;'
     return df_pivot.style.map(apply_styles)
 
 # =========================================================
@@ -277,9 +275,6 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
             })
     return pd.DataFrame(filas_reporte)
 
-# =========================================================
-# 6. EXTRACTOR / TRADUCTOR DE EXCEL IMPORTADO (.MELT)
-# =========================================================
 def procesar_archivo_malla_externa(df_externo):
     try:
         columna_clave = df_externo.columns[0]
@@ -370,6 +365,7 @@ def pantalla_programador():
         
         cob, h_sem = ejecutar_auditoria_completa(df_audit, config_h)
         
+        # --- 🔍 REMODELACIÓN DEL BANNER SUPERIOR DE ADVERTENCIAS ---
         dias_sin_t1 = cob[cob["T1"] == 0].index.tolist()
         dias_sin_t2 = cob[cob["T2"] == 0].index.tolist()
         dias_sin_t3 = cob[cob["T3"] == 0].index.tolist()
@@ -378,7 +374,7 @@ def pantalla_programador():
         if fechas_novedad:
             st.error(f"⚠️ **Novedad en Cobertura 24/7:** Hay {len(fechas_novedad)} días desprotegidos en turnos críticos.")
         else:
-            st.success("✅ **Malla 100% Protegida:** Todos los días cumplen con el soporte operativo 24/7 sin novedad.")
+            st.success("✅ **Malla 100% Protegida:** Todos los días cumplen con el soporte operativo 24/7 sin deudas.")
             
         st.write("---")
         st.subheader("📋 Malla de Turnos Operativa por Grupo (Macro)")
@@ -387,43 +383,42 @@ def pantalla_programador():
         pivot_grupo = df_final.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot_grupo.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot_grupo.columns]
         
-        # Fila de semáforo de la Auditoría 24/7
-        fila_semaforo = {}
-        for col_fecha in pivot_grupo.columns:
+        # --- 🛠️ SOLUCIÓN: RENDERIZADO LIMPIO DE LA MATRIZ SIN CONCATENAR LA FILA EN BLANCO ---
+        opciones_dropdown = ["T1", "T2", "T3", "RELEVO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
+        configuracion_columnas_grupo = {
+            col: st.column_config.SelectboxColumn(col, options=opciones_dropdown, required=True)
+            for col in pivot_grupo.columns
+        }
+        
+        st.data_editor(
+            style_malla(pivot_grupo),
+            use_container_width=True,
+            column_config=configuracion_columnas_grupo,
+            key="editor_macro_grupos"
+        )
+        
+        # --- 🚨 NUEVO PANEL COMPACTO DE AUDITORÍA 24/7 EN ALTO CONTRASTE ---
+        st.markdown("#### 🔍 Semáforo de Auditoría Cobertura 24/7")
+        cols_semaforo = st.columns(len(pivot_grupo.columns))
+        for i, col_fecha in enumerate(pivot_grupo.columns):
             col_dt = pd.to_datetime(col_fecha)
             t1_ok = cob.at[col_dt, "T1"] > 0 if col_dt in cob.index else False
             t2_ok = cob.at[col_dt, "T2"] > 0 if col_dt in cob.index else False
             t3_ok = cob.at[col_dt, "T3"] > 0 if col_dt in cob.index else False
-            fila_semaforo[col_fecha] = "✅ OK 24/7" if (t1_ok and t2_ok and t3_ok) else "❌ FALTA TURNO"
-                
-        df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
-        pivot_g_completa = pd.concat([pivot_grupo, df_semaforo_row])
-        
-        opciones_dropdown = ["T1", "T2", "T3", "RELEVO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
-        
-        configuracion_columnas_grupo = {
-            col: st.column_config.SelectboxColumn(col, options=opciones_dropdown, required=True)
-            for col in pivot_g_completa.columns
-        }
-        
-        # --- 🎨 CON COLORES RECUPERADOS: Se pasa style_malla directamente ---
-        malla_g_editada = st.data_editor(
-            style_malla(pivot_g_completa),
-            use_container_width=True,
-            column_config=configuracion_columnas_grupo,
-            disabled=["🔍 AUDITORÍA 24/7"], 
-            key="editor_macro_grupos"
-        )
+            
+            with cols_semaforo[i]:
+                if t1_ok and t2_ok and t3_ok:
+                    st.markdown(f"<div style='background-color:#2ECC71; color:white; padding:5px; border-radius:4px; font-size:11px; font-weight:bold; text-align:center;'>✅ OK</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div style='background-color:#E74C3C; color:white; padding:5px; border-radius:4px; font-size:11px; font-weight:bold; text-align:center;'>❌ FALTA</div>", unsafe_allow_html=True)
         
         if "editor_macro_grupos" in st.session_state and st.session_state.editor_macro_grupos.get("edited_rows"):
             cambios = st.session_state.editor_macro_grupos["edited_rows"]
             for fila_idx_str, columnas_modificadas in cambios.items():
                 fila_num = int(fila_idx_str)
-                grupo_sujeto = pivot_g_completa.index[fila_num]
-                
-                if grupo_sujeto != "🔍 AUDITORÍA 24/7":
-                    for col_fecha, nuevo_turno in columnas_modificadas.items():
-                        st.session_state.ajustes_manuales[(grupo_sujeto, col_fecha)] = nuevo_turno
+                grupo_sujeto = pivot_grupo.index[fila_num]
+                for col_fecha, nuevo_turno in columnas_modificadas.items():
+                    st.session_state.ajustes_manuales[(grupo_sujeto, col_fecha)] = nuevo_turno
             st.rerun()
 
         # =========================================================
@@ -444,8 +439,7 @@ def pantalla_programador():
                 for col in pivot_persona.columns
             }
             
-            # --- 🎨 CON COLORES RECUPERADOS ---
-            malla_p_editada = st.data_editor(
+            st.data_editor(
                 style_malla(pivot_persona),
                 use_container_width=True,
                 column_config=configuracion_columnas_persona,
@@ -457,7 +451,6 @@ def pantalla_programador():
                 for fila_idx_str, columnas_modificadas in cambios_p.items():
                     fila_num = int(fila_idx_str)
                     persona_sujeto = pivot_persona.index[fila_num]
-                    
                     for col_fecha, nuevo_turno in columnas_modificadas.items():
                         st.session_state.m_personas_editada[(persona_sujeto, col_fecha)] = nuevo_turno
                 st.rerun()
@@ -484,7 +477,7 @@ def pantalla_programador():
                 with r_col2:
                     resumen_grupo = rep_maestro_base.groupby("GrupoAsignado")["Horas Prog"].sum().reset_index()
                     resumen_grupo.columns = ["Grupo / Cuadrilla", "Total Horas Acumuladas"]
-                    st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Laboradas"]), use_container_width=True)
+                    st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Acumuladas"]), use_container_width=True)
                 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: 
