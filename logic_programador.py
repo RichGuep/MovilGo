@@ -156,7 +156,6 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     
     filas, deudas = [], {g: 0 for g in GRUPOS_TEC}
     pool_descansos = ["Viernes", "Sábado", "Domingo", "Lunes"]
-    
     secuencia_turnos = ["T1", "T2", "T3", "DISPONIBLE"]
 
     for fecha in pd.date_range(inicio, fin):
@@ -219,7 +218,7 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     return pd.DataFrame(filas)
 
 # =========================================================
-# 5. CÁLCULO DE HORAS Y AUDITORÍAS COMPLETAS
+# 5. CÁLCULO DE HORAS, DETALLES Y PROCESAMIENTO EXTERNO
 # =========================================================
 def calcular_delta_horas(inicio_str, fin_str):
     if inicio_str == "OFF" or fin_str == "OFF" or pd.isna(inicio_str) or pd.isna(fin_str): return 0.0
@@ -229,6 +228,19 @@ def calcular_delta_horas(inicio_str, fin_str):
         if t_fin >= t_ini: return (t_fin - t_ini).seconds / 3600.0
         else: return ((t_fin + timedelta(days=1)) - t_ini).seconds / 3600.0
     except: return 0.0
+
+def procesar_archivo_malla_externa(df_externo):
+    """Procesa el Excel cargado externamente convirtiéndolo al formato plano del motor."""
+    try:
+        columna_clave = df_externo.columns[0]
+        df_externo = df_externo.rename(columns={columna_clave: "Sujeto"})
+        df_plano = df_externo.melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
+        df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
+        df_plano["Turno"] = df_plano["Turno"].fillna("DESCANSO").astype(str).str.strip().str.upper()
+        return df_plano
+    except Exception as e:
+        st.sidebar.error(f"Estructura inválida en el Excel subido: {str(e)}")
+        return pd.DataFrame()
 
 def ejecutar_auditoria_completa(df_plano, config_horas):
     df_aud = df_plano.copy()
@@ -284,7 +296,7 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
             turno = m_fila['Turno']
             fecha_str = m_fila['Fecha'].strftime('%Y-%m-%d')
             
-            # 🔥 NUEVA REGLA: Si el grupo quedó disponible, se divide de forma equitativa SOLAMENTE entre T1 y T2
+            # 🔥 REGLA: Si el grupo quedó disponible, se divide de forma equitativa SOLAMENTE entre T1 y T2
             if turno == "DISPONIBLE":
                 turnos_reparto_apoyo = ["T1", "T2"]
                 turno = turnos_reparto_apoyo[idx_persona_cargo % len(turnos_reparto_apoyo)]
@@ -341,6 +353,7 @@ def pantalla_programador():
                         f_str = pd.to_datetime(row["Fecha"]).strftime('%Y-%m-%d')
                         st.session_state.ajustes_manuales[(row["Sujeto"], f_str)] = row["Turno"]
                     st.sidebar.success("✅ Malla importada con éxito.")
+                    st.rerun()
         except Exception as e: st.sidebar.error(f"Error de lectura: {str(e)}")
 
     st.markdown("### ⚙️ Panel de Parámetros Avanzados de Cuadrilla")
@@ -439,7 +452,7 @@ def pantalla_programador():
             st.dataframe(style_malla(pivot_persona), use_container_width=True)
 
         # =========================================================
-        # 🛠️ PANEL DE CONTROL TRANSACCIONAL MEDIANTE BOTONES FLOTANTES
+        # 🛠️ PANEL DE CONTROL TRANSACCIONAL
         # =========================================================
         st.write("---")
         st.subheader("⚙️ Panel de Gestión y Corrección de Turnos")
