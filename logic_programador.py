@@ -24,7 +24,7 @@ COLORES_MAP = {
 }
 
 def style_malla(df_pivot):
-    """Aplica el color de celda limpio compatible con el editor interactivo st.data_editor."""
+    """Aplica el formato visual de celdas completo con los colores exactos recuperados."""
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
@@ -259,10 +259,12 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
             turno = m_fila['Turno']
             fecha_str = m_fila['Fecha'].strftime('%Y-%m-%d')
             
+            # Repartición equitativa si el bloque macro es DISPONIBLE
             if turno == "DISPONIBLE":
                 turnos_reparto = ["T1", "T2", "T3"]
                 turno = turnos_reparto[idx_persona_cargo % len(turnos_reparto)]
 
+            # Persistencia micro por persona
             if "m_personas_editada" in st.session_state and (nombre_real, fecha_str) in st.session_state.m_personas_editada:
                 turno = st.session_state.m_personas_editada[(nombre_real, fecha_str)]
 
@@ -289,6 +291,25 @@ def procesar_archivo_malla_externa(df_externo):
         return pd.DataFrame()
 
 # =========================================================
+# 6. POP-UP FLOTANTE CONTROLADO PARA VENTANA EMERGENTE
+# =========================================================
+@st.dialog("🛠️ Forzar Cambio de Turno Específico", width="small")
+def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_persona=False):
+    st.markdown(f"📅 **Fecha de Operación:** `{fecha_solicitada}`")
+    
+    sujeto_sel = st.selectbox("🎯 Seleccione el Elemento a Modificar:", opciones_sujetos)
+    opciones_turnos = ["T1", "T2", "T3", "RELEVO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
+    nuevo_turno = st.selectbox("🆕 Turno Destino Asignado:", opciones_turnos, index=0)
+    
+    if st.button("💾 Guardar y Re-calcular Malla"):
+        if es_modo_persona:
+            st.session_state.m_personas_editada[(sujeto_sel, fecha_solicitada)] = nuevo_turno
+        else:
+            st.session_state.ajustes_manuales[(sujeto_sel, fecha_solicitada)] = nuevo_turno
+        st.success("¡Turno registrado!")
+        st.rerun()
+
+# =========================================================
 # 7. INTERFAZ OPERATIVA PRINCIPAL
 # =========================================================
 def pantalla_programador():
@@ -311,8 +332,7 @@ def pantalla_programador():
                         f_str = pd.to_datetime(row["Fecha"]).strftime('%Y-%m-%d')
                         st.session_state.ajustes_manuales[(row["Sujeto"], f_str)] = row["Turno"]
                     st.sidebar.success("✅ Malla importada con éxito.")
-        except Exception as e: 
-            st.sidebar.error(f"Error de lectura: {str(e)}")
+        except Exception as e: st.sidebar.error(f"Error de lectura: {str(e)}")
 
     st.markdown("### ⚙️ Panel de Parámetros Avanzados de Cuadrilla")
     conceder_compensatorio = st.checkbox("⚖️ Otorgar días Compensatorios por Cobertura Dominical (Reforma Laboral)", value=True)
@@ -372,86 +392,75 @@ def pantalla_programador():
         fechas_novedad = sorted(list(set(dias_sin_t1 + dias_sin_t2 + dias_sin_t3)))
         
         if fechas_novedad:
-            st.error(f"⚠️ **Novedad en Cobertura 24/7:** Hay {len(fechas_novedad)} días desprotegidos en turnos críticos.")
+            st.error(f"⚠️ **Novedad en Cobertura 24/7:** Hay {len(fechas_novedad)} días desprotegidos.")
         else:
             st.success("✅ **Malla 100% Protegida:** Todos los días cumplen con el soporte operativo 24/7 sin novedad.")
             
         st.write("---")
         st.subheader("📋 Malla de Turnos Operativa por Grupo (Macro)")
-        st.caption("⚡ **Modo Súper Rápido:** Haz doble clic sobre cualquier turno para desplegar las opciones y cambiarlo ahí mismo.")
         
         pivot_grupo = df_final.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot_grupo.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot_grupo.columns]
         
-        # --- 🛠️ REFORMATEO: SEMÁFORO DE AUDITORÍA COMO FILA DETERMINISTA CON COLOR ---
+        # --- 🛠️ RECUPERADO: Fila unificada de Auditoría integrada dentro del dataframe de lectura ---
         fila_semaforo = {}
+        dias_criticos_lista = []
         for col_fecha in pivot_grupo.columns:
             col_dt = pd.to_datetime(col_fecha)
             t1_ok = cob.at[col_dt, "T1"] > 0 if col_dt in cob.index else False
             t2_ok = cob.at[col_dt, "T2"] > 0 if col_dt in cob.index else False
             t3_ok = cob.at[col_dt, "T3"] > 0 if col_dt in cob.index else False
-            fila_semaforo[col_fecha] = "✅ OK 24/7" if (t1_ok and t2_ok and t3_ok) else "❌ FALTA TURNO"
+            
+            status_hoy = "✅ OK 24/7" if (t1_ok and t2_ok and t3_ok) else "❌ FALTA TURNO"
+            fila_semaforo[col_fecha] = status_hoy
+            if status_hoy == "❌ FALTA TURNO":
+                dias_criticos_lista.append(col_fecha)
                 
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_g_completa = pd.concat([pivot_grupo, df_semaforo_row])
         
-        opciones_dropdown = ["T1", "T2", "T3", "RELEVO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
-        configuracion_columnas_grupo = {
-            col: st.column_config.SelectboxColumn(col, options=opciones_dropdown, required=True)
-            for col in pivot_g_completa.columns
-        }
-        
-        malla_g_editada = st.data_editor(
-            style_malla(pivot_g_completa),
-            use_container_width=True,
-            column_config=configuracion_columnas_grupo,
-            disabled=["🔍 AUDITORÍA 24/7"], 
-            key="editor_macro_grupos"
-        )
-        
-        if "editor_macro_grupos" in st.session_state and st.session_state.editor_macro_grupos.get("edited_rows"):
-            cambios = st.session_state.editor_macro_grupos["edited_rows"]
-            for fila_idx_str, columnas_modificadas in cambios.items():
-                fila_num = int(fila_idx_str)
-                grupo_sujeto = pivot_g_completa.index[fila_num]
-                if grupo_sujeto != "🔍 AUDITORÍA 24/7":
-                    for col_fecha, nuevo_turno in columnas_modificadas.items():
-                        st.session_state.ajustes_manuales[(grupo_sujeto, col_fecha)] = nuevo_turno
-            st.rerun()
+        # Muestra las tablas coloridas fijas usando st.dataframe
+        st.dataframe(style_malla(pivot_g_completa), use_container_width=True)
 
         # =========================================================
-        # 👤 SECCIÓN: MALLA ADICIONAL POR PERSONA (INTERACTIVA EN CELDA)
+        # 👤 VISUALIZACIÓN: MALLA ADICIONAL POR PERSONA
         # =========================================================
         st.write("---")
         st.subheader("👤 Malla de Turnos Detallada por Persona (Desglosada)")
-        st.caption("⚡ **Modo Súper Rápido:** Haz doble clic sobre el turno de cualquier técnico para desplegar el menú de alternativas ahí mismo.")
         
         rep_maestro_base = generar_reporte_detallado(df_audit, config_h, desc_data, matriz_tecnicos_cap)
         
         if not rep_maestro_base.empty:
             pivot_persona = rep_maestro_base.pivot(index="Nombre", columns="Fecha", values="Turno").fillna("DESCANSO")
             pivot_persona.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot_persona.columns]
+            st.dataframe(style_malla(pivot_persona), use_container_width=True)
+
+        # =========================================================
+        # 🛠️ NUEVO PANEL DE CONTROL TRANSACCIONAL MEDIANTE BOTONES FLOTANTES
+        # =========================================================
+        st.write("---")
+        st.subheader("⚙️ Panel de Gestión y Corrección de Turnos")
+        
+        opt_b_modo = st.radio("🎯 Nivel de Cobertura a Modificar:", ["Ajustar Grupo (Macro)", "Ajustar Empleado (Micro)"], horizontal=True)
+        
+        if dias_criticos_lista:
+            st.markdown(f"🚨 **Días con huecos operativos detectados ({len(dias_criticos_lista)}):**")
+            # Mostrar botones en bloques horizontales compactos para no saturar la pantalla
+            cols_botones = st.columns(min(len(dias_criticos_lista), 5))
+            for idx_b, f_critica in enumerate(dias_criticos_lista[:15]):
+                with cols_botones[idx_b % 5]:
+                    if st.button(f"🛠️ Corregir {f_critica[5:]}", key=f"btn_crit_{f_critica}"):
+                        opciones_s = sorted(list(pivot_persona.index)) if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
+                        popup_forzar_ajuste_fecha(f_critica, opciones_s, es_modo_persona=(opt_b_modo == "Ajustar Empleado (Micro)"))
+        else:
+            st.success("🎉 ¡Excelente! No hay días desprotegidos en el semestre actual.")
             
-            configuracion_columnas_persona = {
-                col: st.column_config.SelectboxColumn(col, options=opciones_dropdown, required=True)
-                for col in pivot_persona.columns
-            }
-            
-            malla_p_editada = st.data_editor(
-                style_malla(pivot_persona),
-                use_container_width=True,
-                column_config=configuracion_columnas_persona,
-                key="editor_micro_personas"
-            )
-            
-            if "editor_micro_personas" in st.session_state and st.session_state.editor_micro_personas.get("edited_rows"):
-                cambios_p = st.session_state.editor_micro_personas["edited_rows"]
-                for fila_idx_str, columnas_modificadas in cambios_p.items():
-                    fila_num = int(fila_idx_str)
-                    persona_sujeto = pivot_persona.index[fila_num]
-                    for col_fecha, nuevo_turno in columnas_modificadas.items():
-                        st.session_state.m_personas_editada[(persona_sujeto, col_fecha)] = nuevo_turno
-                st.rerun()
+        with st.expander("🔍 Forzar cambio en cualquier otra fecha de la Malla (Planificación libre)"):
+            c_f1, c_f2 = st.columns(2)
+            f_libre_sel = c_f1.selectbox("Seleccione la Fecha:", list(pivot_grupo.columns), key="f_libre_dropdown")
+            if c_f2.button("⚙️ Abrir Gestor de Turno para esta Fecha", use_container_width=True):
+                opciones_s = sorted(list(pivot_persona.index)) if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
+                popup_forzar_ajuste_fecha(f_libre_sel, opciones_s, es_modo_persona=(opt_b_modo == "Ajustar Empleado (Micro)"))
 
         # =========================================================
         # 📊 TABLAS DE CONTROL Y BOTONES DE DESCARGA
