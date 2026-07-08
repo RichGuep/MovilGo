@@ -303,7 +303,6 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos):
             fecha_dt = m_fila['Fecha']
             fecha_str = fecha_dt.strftime('%Y-%m-%d')
             
-            # Si el grupo quedó disponible, se divide equitativamente SOLAMENTE entre T1 y T2
             if turno == "DISPONIBLE":
                 turnos_reparto_apoyo = ["T1", "T2"]
                 turno = turnos_reparto_apoyo[idx_persona_cargo % len(turnos_reparto_apoyo)]
@@ -372,7 +371,8 @@ def pantalla_programador():
     with st.expander("⏰ Configuración Rangos de Jornada", expanded=False):
         config_h = {}
         t_l = ["T1", "T2", "T3", "RELEVO", "DISPONIBLE"]
-        def_h = {"T1": [time(5,30), time(13,30)], "T2": [time(13,30), time(21,30)], "T3": [time(21,30), time(5,30)], "RELEVO": [time(8,0), time(15,0)], "DISPONIBLE": [time(8,0), time(15,0)]}
+        def_h = {"T1": [time(5,30), time(13,30)], "T2": [time(13,30), time(21,30)], "T3": [time(21,30), time(5,30)], "RELEVO": [time(8,0), time(15,0)], "DISBLUE": [time(8,0), time(15,0)]}
+        def_h["DISPONIBLE"] = [time(8,0), time(15,0)]
         cols = st.columns(3)
         for i, t in enumerate(t_l):
             with cols[i%3]:
@@ -407,7 +407,7 @@ def pantalla_programador():
         fechas_novedad = sorted(list(set(dias_sin_t1 + dias_sin_t2 + dias_sin_t3)))
         
         if fechas_novedad: st.error(f"⚠️ **Novedad en Cobertura 24/7:** Hay {len(fechas_novedad)} días desprotegidos.")
-        else: st.success("✅ **Malla 100% Protegida:** Todos los días cumplen con el soporte operativo 24/7 sin novedad.")
+        else: st.success("✅ **Malla 100% Protegida:** Todos los días cumplen con el soporte operativo 24/7 sin deudas.")
             
         st.write("---")
         st.subheader("📋 Malla de Turnos Operativa por Grupo (Macro)")
@@ -441,7 +441,7 @@ def pantalla_programador():
             st.dataframe(style_malla(pivot_persona), use_container_width=True)
 
         # =========================================================
-        # 🛠️ PANEL DE CONTROL TRANSACCIONAL (BOTONES DE EDICIÓN DE VUELTA)
+        # 🛠️ PANEL DE CONTROL TRANSACCIONAL
         # =========================================================
         st.write("---")
         st.subheader("⚙️ Panel de Gestión y Corrección de Turnos")
@@ -481,8 +481,11 @@ def pantalla_programador():
                 df_descansos = rep_maestro_base[rep_maestro_base["Turno"].isin(["DESCANSO", "COMPENSADO"])]
                 if not df_descansos.empty:
                     df_d_g = df_descansos.groupby(["Mes", "GrupoAsignado", "Turno"]).size().unstack(fill_value=0).reset_index()
+                    # 🚨 BLINDAJE ANTI-KEYERROR: Forzar que las columnas existan físicamente en el df para no romper Streamlit
+                    for c_req in ["DESCANSO", "COMPENSADO"]:
+                        if c_req not in df_d_g.columns: df_d_g[c_req] = 0
                     st.bar_chart(df_d_g, x="GrupoAsignado", y=["DESCANSO", "COMPENSADO"], stack=False)
-                else: st.caption("Sin datos de francos.")
+                else: st.caption("Sin datos de francos en el rango temporal.")
                 
             with c_g2:
                 st.markdown("#### ⏳ Horas Laboradas por Semana y Grupo")
