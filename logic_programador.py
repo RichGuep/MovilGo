@@ -13,7 +13,7 @@ from github import Github
 # =========================================================
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
-festivos_co = holidays.Colombia()
+festivos_co = holidays.Colombia(years=range(2025, 2030)) # Asegurar cobertura de años
 GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 
 COLORES_MAP = {
@@ -24,13 +24,39 @@ COLORES_MAP = {
 }
 
 def style_malla(df_pivot):
-    """Aplica el formato visual de celdas completo con los colores exactos recuperados."""
-    def apply_styles(val):
-        key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
-        bg = COLORES_MAP.get(key, "#1B2631")
-        txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
-        return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB'
-    return df_pivot.style.map(apply_styles)
+    """Aplica el formato visual con colores de turnos y resalta Sábados, Domingos y Festivos de Colombia."""
+    styles = pd.DataFrame('', index=df_pivot.index, columns=df_pivot.columns)
+    
+    for col in df_pivot.columns:
+        # Verificar si la columna es una fecha válida en formato YYYY-MM-DD
+        es_fin_semana = False
+        es_festivo = False
+        try:
+            fecha_dt = pd.to_datetime(col)
+            # 6 = Domingo, 5 = Sábado
+            if fecha_dt.weekday() in [5, 6]:
+                es_fin_semana = True
+            if fecha_dt in festivos_co:
+                es_festivo = True
+        except:
+            pass # No es una columna de fecha (ej. nombres de auditoría o índices)
+
+        for idx in df_pivot.index:
+            val = df_pivot.at[idx, col]
+            key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
+            bg = COLORES_MAP.get(key, "#1B2631")
+            txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
+            
+            # Construcción de bordes y efectos según el tipo de día
+            border_style = "0.5px solid #D5DBDB"
+            if es_festivo:
+                border_style = "2px solid #E67E22" # Borde naranja fuerte para festivos reconocidos
+            elif es_fin_semana:
+                border_style = "1.5px solid #7F8C8D" # Borde gris oscuro para diferenciar Sáb/Dom
+                
+            styles.at[idx, col] = f'background-color: {bg}; color: {txt}; font-weight: 700; border: {border_style};'
+            
+    return df_pivot.style.apply(lambda _: styles, axis=None)
 
 # =========================================================
 # 2. CONECTIVIDAD GITHUB Y CARGA DE DATOS
@@ -259,12 +285,10 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
             turno = m_fila['Turno']
             fecha_str = m_fila['Fecha'].strftime('%Y-%m-%d')
             
-            # Repartición equitativa si el bloque macro es DISPONIBLE
             if turno == "DISPONIBLE":
                 turnos_reparto = ["T1", "T2", "T3"]
                 turno = turnos_reparto[idx_persona_cargo % len(turnos_reparto)]
 
-            # Persistencia micro por persona
             if "m_personas_editada" in st.session_state and (nombre_real, fecha_str) in st.session_state.m_personas_editada:
                 turno = st.session_state.m_personas_editada[(nombre_real, fecha_str)]
 
@@ -402,7 +426,6 @@ def pantalla_programador():
         pivot_grupo = df_final.pivot(index="Sujeto", columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot_grupo.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot_grupo.columns]
         
-        # --- 🛠️ RECUPERADO: Fila unificada de Auditoría integrada dentro del dataframe de lectura ---
         fila_semaforo = {}
         dias_criticos_lista = []
         for col_fecha in pivot_grupo.columns:
@@ -419,11 +442,10 @@ def pantalla_programador():
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_g_completa = pd.concat([pivot_grupo, df_semaforo_row])
         
-        # Muestra las tablas coloridas fijas usando st.dataframe
         st.dataframe(style_malla(pivot_g_completa), use_container_width=True)
 
         # =========================================================
-        # 👤 VISUALIZACIÓN: MALLA ADICIONAL POR PERSONA
+        # 👤 VISUALIZACIÓN: MALLA ADICIONAL POR PERSONA (CON GRUPO INTEGRADO)
         # =========================================================
         st.write("---")
         st.subheader("👤 Malla de Turnos Detallada por Persona (Desglosada)")
@@ -431,26 +453,27 @@ def pantalla_programador():
         rep_maestro_base = generar_reporte_detallado(df_audit, config_h, desc_data, matriz_tecnicos_cap)
         
         if not rep_maestro_base.empty:
-            pivot_persona = rep_maestro_base.pivot(index="Nombre", columns="Fecha", values="Turno").fillna("DESCANSO")
+            pivot_persona = rep_maestro_base.pivot(index=["GrupoAsignado", "Nombre"], columns="Fecha", values="Turno").fillna("DESCANSO")
             pivot_persona.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot_persona.columns]
             st.dataframe(style_malla(pivot_persona), use_container_width=True)
 
         # =========================================================
-        # 🛠️ NUEVO PANEL DE CONTROL TRANSACCIONAL MEDIANTE BOTONES FLOTANTES
+        # 🛠️ PANEL DE CONTROL TRANSACCIONAL MEDIANTE BOTONES FLOTANTES
         # =========================================================
         st.write("---")
         st.subheader("⚙️ Panel de Gestión y Corrección de Turnos")
         
         opt_b_modo = st.radio("🎯 Nivel de Cobertura a Modificar:", ["Ajustar Grupo (Macro)", "Ajustar Empleado (Micro)"], horizontal=True)
         
+        lista_nombres_unicos = sorted(list(rep_maestro_base["Nombre"].unique())) if not rep_maestro_base.empty else []
+
         if dias_criticos_lista:
             st.markdown(f"🚨 **Días con huecos operativos detectados ({len(dias_criticos_lista)}):**")
-            # Mostrar botones en bloques horizontales compactos para no saturar la pantalla
             cols_botones = st.columns(min(len(dias_criticos_lista), 5))
             for idx_b, f_critica in enumerate(dias_criticos_lista[:15]):
                 with cols_botones[idx_b % 5]:
                     if st.button(f"🛠️ Corregir {f_critica[5:]}", key=f"btn_crit_{f_critica}"):
-                        opciones_s = sorted(list(pivot_persona.index)) if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
+                        opciones_s = lista_nombres_unicos if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
                         popup_forzar_ajuste_fecha(f_critica, opciones_s, es_modo_persona=(opt_b_modo == "Ajustar Empleado (Micro)"))
         else:
             st.success("🎉 ¡Excelente! No hay días desprotegidos en el semestre actual.")
@@ -459,7 +482,7 @@ def pantalla_programador():
             c_f1, c_f2 = st.columns(2)
             f_libre_sel = c_f1.selectbox("Seleccione la Fecha:", list(pivot_grupo.columns), key="f_libre_dropdown")
             if c_f2.button("⚙️ Abrir Gestor de Turno para esta Fecha", use_container_width=True):
-                opciones_s = sorted(list(pivot_persona.index)) if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
+                opciones_s = lista_nombres_unicos if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
                 popup_forzar_ajuste_fecha(f_libre_sel, opciones_s, es_modo_persona=(opt_b_modo == "Ajustar Empleado (Micro)"))
 
         # =========================================================
