@@ -240,12 +240,11 @@ def calcular_metricas_reforma(inicio_str, fin_str, fecha_dt):
                 minutos_nocturnos += 1
             dt_actual += timedelta(minutes=1)
             
-        horas_nocturnas = minutos_nocturnos / 60.0
+        horas_nocturnas = minutes_nocturnos / 60.0
         return total_horas, horas_extras, horas_nocturnas
     except:
         return 0.0, 0.0, 0.0
 
-# 🚨 DECLARACIÓN ANTICIPADA PARA RIGEL 🚨
 def procesar_archivo_malla_externa(df_externo):
     try:
         columna_clave = df_externo.columns[0]
@@ -291,11 +290,16 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos):
     df_sub = df_emp[df_emp['GrupoAsignado'].isin(GRUPOS_TEC)].copy()
     df_sub['idx_cargo'] = df_sub.groupby(['GrupoAsignado', 'Cargo']).cumcount()
     
+    # Identificar la columna de identificación de forma flexible
+    col_cedula = 'Cedula' if 'Cedula' in df_sub.columns else ('Cédula' if 'Cédula' in df_sub.columns else None)
+
     for _, emp in df_sub.iterrows():
         g_pertenece = emp['GrupoAsignado']
         cargo_actual = emp['Cargo']
         nombre_real = emp['Nombre']
         idx_persona_cargo = emp['idx_cargo']
+        # Traer la cédula o dejar "N/A" si no existe en la base original
+        cedula_real = str(emp[col_cedula]) if col_cedula else "N/A"
         
         malla_bloque = df_final[df_final['Sujeto'] == g_pertenece]
             
@@ -304,7 +308,6 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos):
             fecha_dt = m_fila['Fecha']
             fecha_str = fecha_dt.strftime('%Y-%m-%d')
             
-            # Repartición equitativa de apoyo ordinario (Solo T1 y T2)
             if turno == "DISPONIBLE":
                 turnos_reparto_apoyo = ["T1", "T2"]
                 turno = turnos_reparto_apoyo[idx_persona_cargo % len(turnos_reparto_apoyo)]
@@ -319,8 +322,7 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos):
 
             filas_reporte.append({
                 "Fecha": fecha_str, 
-                "Mes": fecha_dt.strftime('%B'), 
-                "Semana": fecha_dt.isocalendar()[1],
+                "Cedula": cedula_real,
                 "Nombre": nombre_real, 
                 "Cargo": cargo_actual, 
                 "Grupo Asignado": g_pertenece,
@@ -330,7 +332,9 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos):
                 "Hora fin": fin, 
                 "Horas Programado": h_prog,
                 "Horas Extras": h_extra,
-                "Recargos Nocturnos": h_noc
+                "Recargos Nocturnos": h_noc,
+                "Mes": fecha_dt.strftime('%B'), 
+                "Semana": fecha_dt.isocalendar()[1]
             })
     return pd.DataFrame(filas_reporte)
 
@@ -440,8 +444,12 @@ def pantalla_programador():
                 
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_g_completa = pd.concat([pivot_grupo, df_semaforo_row])
+        
         st.dataframe(style_malla(pivot_g_completa), use_container_width=True)
 
+        # =========================================================
+        # 👤 VISUALIZACIÓN: MALLA ADICIONAL POR PERSONA
+        # =========================================================
         st.write("---")
         st.subheader("👤 Malla de Turnos Detallada por Persona (Desglosada)")
         rep_maestro_base = generar_reporte_detallado(df_audit, config_h, desc_data)
@@ -452,7 +460,7 @@ def pantalla_programador():
             st.dataframe(style_malla(pivot_persona), use_container_width=True)
 
         # =========================================================
-        # 🛠️ PANEL DE CONTROL TRANSACCIONAL
+        # 🛠_ PANEL DE CONTROL TRANSACCIONAL
         # =========================================================
         st.write("---")
         st.subheader("⚙️ Panel de Gestión y Corrección de Turnos")
@@ -527,9 +535,9 @@ def pantalla_programador():
             
         with t_nomina:
             if not rep_maestro_base.empty:
-                # Ordenar columnas exactas solicitadas para el reporte diario
+                # Ordenar columnas exactas solicitadas con Cédula mapeada en primera línea
                 columnas_ordenadas_solicitadas = [
-                    "Fecha", "Nombre", "Cargo", "Grupo Asignado", 
+                    "Fecha", "Cedula", "Nombre", "Cargo", "Grupo Asignado", 
                     "Día Descanso Asignado", "Turno realizado", 
                     "Hora inicio", "Hora fin", "Horas Programado", 
                     "Horas Extras", "Recargos Nocturnos"
@@ -539,7 +547,7 @@ def pantalla_programador():
                 
                 r_col1, r_col2 = st.columns(2)
                 with r_col1:
-                    resumen_persona = rep_maestro_base.groupby("Nombre")[["Horas Programado", "Horas Extras", "Recargos Nocturnos"]].sum().reset_index()
+                    resumen_persona = rep_maestro_base.groupby(["Cedula", "Nombre"])[["Horas Programado", "Horas Extras", "Recargos Nocturnos"]].sum().reset_index()
                     st.markdown("**💰 Consolidado Acumulado por Colaborador:**")
                     st.dataframe(resumen_persona, use_container_width=True)
                 with r_col2:
