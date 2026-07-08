@@ -148,7 +148,7 @@ def pantalla_personal():
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR DE ASIGNACIÓN CON COBERTURA Y RESCATE AUTOMÁTICO
+# 4. MOTOR DE ASIGNACIÓN CON PROTECCIÓN CIRCADIANA ESTRICTA
 # =========================================================
 def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_compensatorio, tipo_ciclo_descanso, activar_t4=False):
     df_emp = cargar_excel("empleados_grupos.xlsx")
@@ -157,11 +157,14 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     filas, deudas = [], {g: 0 for g in GRUPOS_TEC}
     pool_descansos = ["Viernes", "Sábado", "Domingo", "Lunes"]
     
+    # Rastrear el último turno real trabajado por cada grupo para memoria de retorno
+    ultimo_turno_trabajado = {g: "T1" for g in GRUPOS_TEC}
+
     for fecha in pd.date_range(inicio, fin):
         dia_n, sem, asig = DIAS_ES[fecha.weekday()], fecha.isocalendar()[1], {}
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         fecha_str = fecha.strftime('%Y-%m-%d')
-        es_fin_semana = (fecha.weekday() in [5, 6]) # 5=Sábado, 6=Domingo
+        es_fin_semana = (fecha.weekday() in [5, 6])
         
         if tipo_ciclo_descanso == "Mensual": desplazamiento = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento = delta_meses // 3
@@ -189,7 +192,7 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
                 asig[g_d[0]] = "COMPENSADO"
                 deudas[g_d[0]] -= 1
         
-        # Determinar secuencia de turnos activa según el botón y el día de la semana
+        # Determinar secuencia base de turnos activa según el botón y el día
         if activar_t4 and not es_fin_semana:
             secuencia_turnos = ["T1", "T2", "T3", "T4"]
             turnos_operativos_necesarios = ["T1", "T2", "T3", "T4"]
@@ -199,11 +202,19 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
         
         # Asignación Teórica Semanal
         for idx_g, g in enumerate(GRUPOS_TEC):
-            idx_turno = (sem + idx_g) % len(secuencia_turnos)
             if g not in asig:
-                asig[g] = secuencia_turnos[idx_turno]
+                idx_turno = (sem + idx_g) % len(secuencia_turnos)
+                turno_propuesto = secuencia_turnos[idx_turno]
+                
+                # 🔥 BLINDAJE MOTOR AUTOMÁTICO (Filtro Circadiano de Retorno)
+                # Si viene de un turno nocturno pesado, bloqueamos el retorno a turnos de la mañana/tarde
+                if ultimo_turno_trabajado[g] in ["T3", "T4"] and turno_propuesto in ["T1", "T2", "DISPONIBLE"]:
+                    # Forzar una transición segura o mantenerlo en el ciclo superior nocturno
+                    turno_propuesto = "T3" if "T3" in turnos_operativos_necesarios else "T2"
+                
+                asig[g] = turno_propuesto
 
-        # Algoritmo de Rescate Automático de Cobertura
+        # Algoritmo de Rescate Automático de Cobertura 24/7
         turnos_cubiertos_hoy = [asig[g] for g in GRUPOS_TEC if asig[g] in turnos_operativos_necesarios]
         turnos_faltantes = [t for t in turnos_operativos_necesarios if t not in turnos_cubiertos_hoy]
         
@@ -213,6 +224,12 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
                     asig[g] = turnos_faltantes[0]
                     break
 
+        # Guardar en memoria el turno de hoy si fue de trabajo real
+        for g in GRUPOS_TEC:
+            if asig[g] in ["T1", "T2", "T3", "T4"]:
+                ultimo_turno_trabajado[g] = asig[g]
+
+        # Forzar Persistencia de cambios manuales macro
         for g in GRUPOS_TEC:
             turno_final = asig.get(g, "DESCANSO")
             if "ajustes_manuales" in st.session_state and (g, fecha_str) in st.session_state.ajustes_manuales:
@@ -225,13 +242,10 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
 # 5. CÁLCULO DE RECARGOS Y HORAS EXTRAS INTEGRAL (REFORMA)
 # =========================================================
 def obtener_minutos_desde_time(objeto_hora):
-    """Convierte cualquier variante de hora (string o datetime.time) a minutos totales desde medianoche."""
     if objeto_hora is None: return None
     if isinstance(objeto_hora, time): return objeto_hora.hour * 60 + objeto_hora.minute
-        
     s = str(objeto_hora).strip().upper()
     if s in ["OFF", "NAN", ""]: return None
-        
     for fmt in ("%H:%M:%S", "%H:%M"):
         try:
             dt = datetime.strptime(s, fmt)
@@ -240,16 +254,13 @@ def obtener_minutos_desde_time(objeto_hora):
     return None
 
 def calcular_metricas_reforma(inicio_str, fin_str, fecha_ts):
-    """Calcula horas laboradas, extras (base 7h) y recargos nocturnos mediante aritmética de minutos."""
     if pd.isna(inicio_str) or pd.isna(fin_str): return 0.0, 0.0, 0.0
-        
     s_ini = str(inicio_str).strip().upper()
     s_fin = str(fin_str).strip().upper()
     if "OFF" in s_ini or "OFF" in s_fin: return 0.0, 0.0, 0.0
 
     min_inicio = obtener_minutos_desde_time(inicio_str)
     min_fin = obtener_minutos_desde_time(fin_str)
-    
     if min_inicio is None or min_fin is None: return 0.0, 0.0, 0.0
 
     if min_fin >= min_inicio:
@@ -389,12 +400,13 @@ def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_person
             if "ajustes_manuales" in st.session_state and (sujeto_sel, fecha_ayer_str) in st.session_state.ajustes_manuales:
                 turno_ayer = st.session_state.ajustes_manuales[(sujeto_sel, fecha_ayer_str)]
 
+        # 🚨 RESTRICCIÓN RADICAL EN EL POP-UP MANUAL
         if turno_ayer in ["T3", "T4"] and nuevo_turno in ["T1", "T2", "DISPONIBLE"]:
-            st.error(f"❌ **Cambio Denegado por Fatiga Crítica:** No se permite pasar de un turno Nocturno ({turno_ayer}) a turnos diurnos ({nuevo_turno}) sin un día intermedio de descanso.")
+            st.error(f"❌ **Bloqueo de Seguridad Circadiana ({turno_ayer} ➡️ {nuevo_turno}):** El sistema no permite programar un turno diurno inmediatamente después de una jornada nocturna o de madrugada. Forzaría un salto descendente peligroso.")
             return
 
         if turno_ayer == "T2" and nuevo_turno == "T1":
-            st.error("❌ **Cambio Denegado:** Transición descendente corta inválida (T2 -> T1).")
+            st.error("❌ **Bloqueo de Dirección:** Las transiciones de turnos deben ser estrictamente ascendentes hacia adelante (T2 no puede bajar a T1).")
             return
 
         if es_modo_persona: 
@@ -435,14 +447,12 @@ def pantalla_programador():
     conceder_compensatorio = st.checkbox("⚖️ Otorgar días Compensatorios por Cobertura Dominical (Reforma Laboral)", value=True)
     tipo_ciclo_descanso = st.selectbox("🔄 Ciclo de Rotación Temporal para los días de Descanso Base:", options=["Fijo sin rotación", "Mensual", "Trimestral"])
     
-    # 🌟 BOTÓN DE ACTIVACIÓN DE T4 INTELIGENTE 🌟
-    activar_t4 = st.toggle("⚡ Activar Esquema de Cuadrilla Eficiente (T4 - 7 Horas L-V)", value=False, help="Activa el T4 de Lunes a Viernes para optimizar costos de operación y mitigar recargos. Sábados y Domingos regresará automáticamente a esquema T3 para proteger fines de semana.")
+    activar_t4 = st.toggle("⚡ Activar Esquema de Cuadrilla Eficiente (T4 - 7 Horas L-V)", value=False)
 
     with st.expander("⏰ Configuración Rangos de Jornada", expanded=False):
         config_h = {}
         t_l = ["T1", "T2", "T3", "T4", "RELEVO", "DISPONIBLE"]
         
-        # Horarios por defecto optimizados con T4 de 7h incluidos
         def_h = {
             "T1": [time(4,0), time(11,0)], 
             "T2": [time(11,0), time(18,0)], 
@@ -479,10 +489,6 @@ def pantalla_programador():
         
         cob = ejecutar_auditoria_completa(df_audit, config_h)
         
-        dias_sin_t1 = cob[cob["T1"] == 0].index.tolist()
-        dias_sin_t2 = cob[cob["T2"] == 0].index.tolist()
-        
-        # Validar cobertura de T3/T4 de forma dinámica según el día
         fechas_novedad = []
         for d_f in cob.index:
             es_f_s = (d_f.weekday() in [5, 6])
