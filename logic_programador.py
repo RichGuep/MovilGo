@@ -143,7 +143,7 @@ def pantalla_personal():
             },
             key="personal_dropdown_v20"
         )
-        if st.button("💾 Guardar Estructura Definiva en GitHub"):
+        if st.button("💾 Guardar Estructura Definitiva en GitHub"):
             st.session_state.df_pers_ready = df_edit
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
@@ -215,32 +215,37 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     return pd.DataFrame(filas)
 
 # =========================================================
-# 5. CÁLCULO DE RECARGOS, HORAS EXTRAS Y NÓMINA (REFORMA)
+# 5. CÁLCULO DE RECARGOS Y HORAS EXTRAS CORREGIDO (REFORMA)
 # =========================================================
-def calcular_metricas_reforma(inicio_str, fin_str, fecha_dt):
+def calcular_metricas_reforma(inicio_str, fin_str, fecha_ts):
+    """Calcula horas laboradas, extras (base 7h) y recargos nocturnos usando pd.Timestamp."""
     if inicio_str == "OFF" or fin_str == "OFF" or pd.isna(inicio_str) or pd.isna(fin_str):
         return 0.0, 0.0, 0.0
     try:
         t_ini = datetime.strptime(str(inicio_str).strip(), "%H:%M").time()
         t_fin = datetime.strptime(str(fin_str).strip(), "%H:%M").time()
         
-        dt_inicio = datetime.combine(fecha_dt, t_ini)
-        if t_fin >= t_ini:
-            dt_fin = datetime.combine(fecha_dt, t_fin)
-        else:
-            dt_fin = datetime.combine(fecha_dt + timedelta(days=1), t_fin)
-            
-        total_horas = (dt_fin - dt_inicio).seconds / 3600.0
-        horas_extras = max(0.0, total_horas - 7.0) # Reforma 2026: Base 7h diarias
+        # 🛠️ FIX DEFINITIVO: Mantener consistencia de tipos usando pd.Timestamp nativo de Pandas
+        base_date = pd.to_datetime(fecha_ts).normalize()
+        dt_inicio = base_date + pd.Timedelta(hours=t_ini.hour, minutes=t_ini.minute)
         
+        if t_fin >= t_ini:
+            dt_fin = base_date + pd.Timedelta(hours=t_fin.hour, minutes=t_fin.minute)
+        else:
+            dt_fin = base_date + pd.Timedelta(days=1) + pd.Timedelta(hours=t_fin.hour, minutes=t_fin.minute)
+            
+        total_horas = (dt_fin - dt_inicio).total_seconds() / 3600.0
+        horas_extras = max(0.0, total_horas - 7.0) # Reforma 2026: 7h ordinarias diarias
+        
+        # Auditoría minuto a minuto para recargo nocturno (19:00 - 06:00)
         minutos_nocturnos = 0
         dt_actual = dt_inicio
         while dt_actual < dt_fin:
-            if dt_actual.hour >= 19 or dt_actual.hour < 6: # Ventana Nocturna 19:00 - 06:00
+            if dt_actual.hour >= 19 or dt_actual.hour < 6:
                 minutos_nocturnos += 1
             dt_actual += timedelta(minutes=1)
             
-        horas_nocturnas = minutes_nocturnos / 60.0
+        horas_nocturnas = minutos_nocturnos / 60.0
         return total_horas, horas_extras, horas_nocturnas
     except:
         return 0.0, 0.0, 0.0
@@ -317,7 +322,8 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos):
             ini = config_horas.get(turno, {}).get("Inicio", "OFF")
             fin = config_horas.get(turno, {}).get("Fin", "OFF")
 
-            h_prog, h_extra, h_noc = calcular_metricas_reforma(ini, fin, fecha_dt.date())
+            # 🛠️ FIX DEFINITIVO: Se pasa el Timestamp original directamente para evitar la pérdida de zona de Pandas
+            h_prog, h_extra, h_noc = calcular_metricas_reforma(ini, fin, fecha_dt)
 
             filas_reporte.append({
                 "Fecha": fecha_str, 
@@ -344,7 +350,6 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos):
 def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_persona=False):
     st.markdown(f"📅 **Fecha de Operación:** `{fecha_solicitada}`")
     sujeto_sel = st.selectbox("🎯 Seleccione el Elemento a Modificar:", opciones_sujetos)
-    
     opciones_turnos = ["T1", "T2", "T3", "RELEVO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
     nuevo_turno = st.selectbox("🆕 Turno Destino Asignado:", opciones_turnos, index=0)
     
@@ -470,7 +475,7 @@ def pantalla_programador():
 
         st.write("---")
         st.subheader("👤 Malla de Turnos Detallada por Persona (Desglosada)")
-        rep_maestro_base = generar_reporte_detallado(df_audit, config_h, desc_data)
+        rep_maestro_base = generar_reporte_detallado(df_final, config_h, desc_data)
         
         if not rep_maestro_base.empty:
             pivot_persona = rep_maestro_base.pivot(index=["Grupo Asignado", "Nombre"], columns="Fecha", values="Turno realizado").fillna("DESCANSO")
@@ -515,7 +520,6 @@ def pantalla_programador():
             c_g1, c_g2 = st.columns(2)
             with c_g1:
                 st.markdown("#### 📅 Descansos y Compensados al Mes por Grupo")
-                # 🛠️ CORRECCIÓN: Se cambia "Turno" por "Turno realizado" y "GrupoAsignado" por "Grupo Asignado"
                 df_descansos = rep_maestro_base[rep_maestro_base["Turno realizado"].isin(["DESCANSO", "COMPENSADO"])]
                 if not df_descansos.empty:
                     df_d_g = df_descansos.groupby(["Mes", "Grupo Asignado", "Turno realizado"]).size().unstack(fill_value=0).reset_index()
@@ -550,7 +554,7 @@ def pantalla_programador():
             lista_alertas = verificar_alarmas_cambios_drasticos(df_audit)
             if lista_alertas:
                 for al in lista_alertas: st.markdown(al["Mensaje"])
-            else: st.success("Refresco limpio: Estructura libre de alertas de fatiga.")
+            else: st.success("✅ Estructura libre de alertas de fatiga.")
             
         with t_nomina:
             if not rep_maestro_base.empty:
