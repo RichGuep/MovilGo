@@ -24,12 +24,13 @@ COLORES_MAP = {
 }
 
 def style_malla(df_pivot):
-    """Aplica el formato visual de celdas según el turno con los colores exactos."""
+    """Aplica el color de celda limpio compatible con el editor interactivo st.data_editor."""
     def apply_styles(val):
         key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
         bg = COLORES_MAP.get(key, "#1B2631")
         txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
-        return f'background-color: {bg}; color: {txt}; font-weight: 700; border: 0.5px solid #D5DBDB'
+        # Se remueven bordes y fuentes complejas para que st.data_editor no rompa el renderizado de color
+        return f'background-color: {bg}; color: {txt};'
     return df_pivot.style.map(apply_styles)
 
 # =========================================================
@@ -259,12 +260,10 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
             turno = m_fila['Turno']
             fecha_str = m_fila['Fecha'].strftime('%Y-%m-%d')
             
-            # Repartición equitativa interna si el bloque macro es DISPONIBLE
             if turno == "DISPONIBLE":
                 turnos_reparto = ["T1", "T2", "T3"]
                 turno = turnos_reparto[idx_persona_cargo % len(turnos_reparto)]
 
-            # Persistencia micro por persona
             if "m_personas_editada" in st.session_state and (nombre_real, fecha_str) in st.session_state.m_personas_editada:
                 turno = st.session_state.m_personas_editada[(nombre_real, fecha_str)]
 
@@ -400,25 +399,22 @@ def pantalla_programador():
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_g_completa = pd.concat([pivot_grupo, df_semaforo_row])
         
-        # --- 🛠️ REVOLUCIÓN INTERACTIVA: LISTA DESPLEGABLE DIRECTA EN CELDA ---
         opciones_dropdown = ["T1", "T2", "T3", "RELEVO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
         
-        # Creamos configuraciones de columna dinámicas para inyectar los selectboxes a cada fecha
         configuracion_columnas_grupo = {
             col: st.column_config.SelectboxColumn(col, options=opciones_dropdown, required=True)
             for col in pivot_g_completa.columns
         }
         
-        # st.data_editor nos permite desplegar las listas directamente al hacer clic en las celdas de color
+        # --- 🎨 CON COLORES RECUPERADOS: Se pasa style_malla directamente ---
         malla_g_editada = st.data_editor(
             style_malla(pivot_g_completa),
             use_container_width=True,
             column_config=configuracion_columnas_grupo,
-            disabled=["🔍 AUDITORÍA 24/7"], # Impedir que alteren la auditoría
+            disabled=["🔍 AUDITORÍA 24/7"], 
             key="editor_macro_grupos"
         )
         
-        # Capturar y procesar los cambios realizados en caliente desde la celda
         if "editor_macro_grupos" in st.session_state and st.session_state.editor_macro_grupos.get("edited_rows"):
             cambios = st.session_state.editor_macro_grupos["edited_rows"]
             for fila_idx_str, columnas_modificadas in cambios.items():
@@ -448,6 +444,7 @@ def pantalla_programador():
                 for col in pivot_persona.columns
             }
             
+            # --- 🎨 CON COLORES RECUPERADOS ---
             malla_p_editada = st.data_editor(
                 style_malla(pivot_persona),
                 use_container_width=True,
@@ -455,7 +452,6 @@ def pantalla_programador():
                 key="editor_micro_personas"
             )
             
-            # Capturar y procesar los cambios micro en caliente
             if "editor_micro_personas" in st.session_state and st.session_state.editor_micro_personas.get("edited_rows"):
                 cambios_p = st.session_state.editor_micro_personas["edited_rows"]
                 for fila_idx_str, columnas_modificadas in cambios_p.items():
@@ -488,7 +484,7 @@ def pantalla_programador():
                 with r_col2:
                     resumen_grupo = rep_maestro_base.groupby("GrupoAsignado")["Horas Prog"].sum().reset_index()
                     resumen_grupo.columns = ["Grupo / Cuadrilla", "Total Horas Acumuladas"]
-                    st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Acumuladas"]), use_container_width=True)
+                    st.dataframe(resumen_grupo.style.background_gradient(cmap="Purples", subset=["Total Horas Laboradas"]), use_container_width=True)
                 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: 
