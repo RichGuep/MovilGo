@@ -13,7 +13,7 @@ from github import Github
 # =========================================================
 DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
 INICIALES = {"Lunes": "L", "Martes": "M", "Miércoles": "X", "Jueves": "J", "Viernes": "V", "Sábado": "S", "Domingo": "D"}
-festivos_co = holidays.Colombia(years=range(2025, 2030)) # Asegurar cobertura de años
+festivos_co = holidays.Colombia(years=range(2025, 2030))
 GRUPOS_TEC = ["Grupo 1","Grupo 2","Grupo 3","Grupo 4"]
 
 COLORES_MAP = {
@@ -26,20 +26,14 @@ COLORES_MAP = {
 def style_malla(df_pivot):
     """Aplica el formato visual con colores de turnos y resalta Sábados, Domingos y Festivos de Colombia."""
     styles = pd.DataFrame('', index=df_pivot.index, columns=df_pivot.columns)
-    
     for col in df_pivot.columns:
-        # Verificar si la columna es una fecha válida en formato YYYY-MM-DD
         es_fin_semana = False
         es_festivo = False
         try:
             fecha_dt = pd.to_datetime(col)
-            # 6 = Domingo, 5 = Sábado
-            if fecha_dt.weekday() in [5, 6]:
-                es_fin_semana = True
-            if fecha_dt in festivos_co:
-                es_festivo = True
-        except:
-            pass # No es una columna de fecha (ej. nombres de auditoría o índices)
+            if fecha_dt.weekday() in [5, 6]: es_fin_semana = True
+            if fecha_dt in festivos_co: es_festivo = True
+        except: pass
 
         for idx in df_pivot.index:
             val = df_pivot.at[idx, col]
@@ -47,15 +41,11 @@ def style_malla(df_pivot):
             bg = COLORES_MAP.get(key, "#1B2631")
             txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
             
-            # Construcción de bordes y efectos según el tipo de día
             border_style = "0.5px solid #D5DBDB"
-            if es_festivo:
-                border_style = "2px solid #E67E22" # Borde naranja fuerte para festivos reconocidos
-            elif es_fin_semana:
-                border_style = "1.5px solid #7F8C8D" # Borde gris oscuro para diferenciar Sáb/Dom
+            if es_festivo: border_style = "2px solid #E67E22"
+            elif es_fin_semana: border_style = "1.5px solid #7F8C8D"
                 
             styles.at[idx, col] = f'background-color: {bg}; color: {txt}; font-weight: 700; border: {border_style};'
-            
     return df_pivot.style.apply(lambda _: styles, axis=None)
 
 # =========================================================
@@ -158,7 +148,7 @@ def pantalla_personal():
             guardar_github(df_edit, "empleados_grupos.xlsx")
 
 # =========================================================
-# 4. MOTOR DE ASIGNACIÓN AVANZADO CON PERSISTENCIA GRUPAL
+# 4. MOTOR DE ASIGNACIÓN CON COBERTURA Y RESCATE AUTOMÁTICO
 # =========================================================
 def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_compensatorio, tipo_ciclo_descanso):
     df_emp = cargar_excel("empleados_grupos.xlsx")
@@ -200,13 +190,25 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
                 asig[g_d[0]] = "COMPENSADO"
                 deudas[g_d[0]] -= 1
         
-        # Asignación de Turnos Base con Rotación Semanal
+        # Asignación Teórica Semanal
         for idx_g, g in enumerate(GRUPOS_TEC):
             idx_turno = (sem + idx_g) % len(secuencia_turnos)
             if g not in asig:
                 asig[g] = secuencia_turnos[idx_turno]
 
-        # Inyectar Persistencia de los cambios manuales macro
+        # 🔥 ALGORITMO DE RESCATE: Identificar turnos huérfanos por descansos
+        turnos_operativos_necesarios = ["T1", "T2", "T3"]
+        turnos_cubiertos_hoy = [asig[g] for g in GRUPOS_TEC if asig[g] in turnos_operativos_necesarios]
+        turnos_faltantes = [t for t in turnos_operativos_necesarios if t not in turnos_cubiertos_hoy]
+        
+        # Si falta un turno crítico, el grupo asignado a DISPONIBLE cambia su turno para rescatar la cobertura
+        if turnos_faltantes:
+            for g in GRUPOS_TEC:
+                if asig.get(g) == "DISPONIBLE":
+                    asig[g] = turnos_faltantes[0] # Se convierte en el turno faltante
+                    break
+
+        # Persistencia e Inyección final
         for g in GRUPOS_TEC:
             turno_final = asig.get(g, "DESCANSO")
             if "ajustes_manuales" in st.session_state and (g, fecha_str) in st.session_state.ajustes_manuales:
@@ -257,11 +259,8 @@ def verificar_alarmas_cambios_drasticos(df_plano):
             t_anterior = lista_turnos[i-1]
             t_actual = lista_turnos[i]
             fecha_act = lista_fechas[i]
-            
             if t_anterior == "T3" and t_actual == "T1": 
                 alertas.append({"Sujeto": sujeto, "Mensaje": f"🚨 **Fatiga Crítica (T3 -> T1)** en '{sujeto}' el {fecha_act.strftime('%Y-%m-%d')}."})
-            elif t_anterior == "T2" and t_actual == "T1":
-                alertas.append({"Sujeto": sujeto, "Mensaje": f"⚠️ **Transición Corta (T2 -> T1)** en '{sujeto}' el {fecha_act.strftime('%Y-%m-%d')}."})
     return alertas
 
 def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_tecnicos_capacidades=None):
@@ -285,9 +284,10 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
             turno = m_fila['Turno']
             fecha_str = m_fila['Fecha'].strftime('%Y-%m-%d')
             
+            # 🔥 NUEVA REGLA: Si el grupo quedó disponible, se divide de forma equitativa SOLAMENTE entre T1 y T2
             if turno == "DISPONIBLE":
-                turnos_reparto = ["T1", "T2", "T3"]
-                turno = turnos_reparto[idx_persona_cargo % len(turnos_reparto)]
+                turnos_reparto_apoyo = ["T1", "T2"]
+                turno = turnos_reparto_apoyo[idx_persona_cargo % len(turnos_reparto_apoyo)]
 
             if "m_personas_editada" in st.session_state and (nombre_real, fecha_str) in st.session_state.m_personas_editada:
                 turno = st.session_state.m_personas_editada[(nombre_real, fecha_str)]
@@ -302,34 +302,19 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, matriz_t
             })
     return pd.DataFrame(filas_reporte)
 
-def procesar_archivo_malla_externa(df_externo):
-    try:
-        columna_clave = df_externo.columns[0]
-        df_externo = df_externo.rename(columns={columna_clave: "Sujeto"})
-        df_plano = df_externo.melt(id_vars="Sujeto", var_name="Fecha", value_name="Turno")
-        df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
-        df_plano["Turno"] = df_plano["Turno"].fillna("DESCANSO").astype(str).str.strip().str.upper()
-        return df_plano
-    except Exception as e:
-        st.sidebar.error(f"Estructura inválida: {str(e)}")
-        return pd.DataFrame()
-
 # =========================================================
 # 6. POP-UP FLOTANTE CONTROLADO PARA VENTANA EMERGENTE
 # =========================================================
 @st.dialog("🛠️ Forzar Cambio de Turno Específico", width="small")
 def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_persona=False):
     st.markdown(f"📅 **Fecha de Operación:** `{fecha_solicitada}`")
-    
     sujeto_sel = st.selectbox("🎯 Seleccione el Elemento a Modificar:", opciones_sujetos)
     opciones_turnos = ["T1", "T2", "T3", "RELEVO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
     nuevo_turno = st.selectbox("🆕 Turno Destino Asignado:", opciones_turnos, index=0)
     
     if st.button("💾 Guardar y Re-calcular Malla"):
-        if es_modo_persona:
-            st.session_state.m_personas_editada[(sujeto_sel, fecha_solicitada)] = nuevo_turno
-        else:
-            st.session_state.ajustes_manuales[(sujeto_sel, fecha_solicitada)] = nuevo_turno
+        if es_modo_persona: st.session_state.m_personas_editada[(sujeto_sel, fecha_solicitada)] = nuevo_turno
+        else: st.session_state.ajustes_manuales[(sujeto_sel, fecha_solicitada)] = nuevo_turno
         st.success("¡Turno registrado!")
         st.rerun()
 
@@ -391,7 +376,6 @@ def pantalla_programador():
     st.write("---")
     c1, c2 = st.columns(2)
     inicio, fin = c1.date_input("Inicio Planificación", date(2026, 7, 1)), c2.date_input("Fin Planificación", date(2026, 12, 31))
-    
     cols = st.columns(4)
     desc_data = {"Grupo 1": cols[0].selectbox("Descanso G1", DIAS_ES, index=4), "Grupo 2": cols[1].selectbox("Descanso G2", DIAS_ES, index=5), "Grupo 3": cols[2].selectbox("Descanso G3", DIAS_ES, index=6), "Grupo 4": cols[3].selectbox("Descanso G4", DIAS_ES, index=0)}
 
@@ -415,10 +399,8 @@ def pantalla_programador():
         dias_sin_t3 = cob[cob["T3"] == 0].index.tolist()
         fechas_novedad = sorted(list(set(dias_sin_t1 + dias_sin_t2 + dias_sin_t3)))
         
-        if fechas_novedad:
-            st.error(f"⚠️ **Novedad en Cobertura 24/7:** Hay {len(fechas_novedad)} días desprotegidos.")
-        else:
-            st.success("✅ **Malla 100% Protegida:** Todos los días cumplen con el soporte operativo 24/7 sin novedad.")
+        if fechas_novedad: st.error(f"⚠️ **Novedad en Cobertura 24/7:** Hay {len(fechas_novedad)} días desprotegidos.")
+        else: st.success("✅ **Malla 100% Protegida:** Todos los días cumplen con el soporte operativo 24/7 sin novedad.")
             
         st.write("---")
         st.subheader("📋 Malla de Turnos Operativa por Grupo (Macro)")
@@ -436,8 +418,7 @@ def pantalla_programador():
             
             status_hoy = "✅ OK 24/7" if (t1_ok and t2_ok and t3_ok) else "❌ FALTA TURNO"
             fila_semaforo[col_fecha] = status_hoy
-            if status_hoy == "❌ FALTA TURNO":
-                dias_criticos_lista.append(col_fecha)
+            if status_hoy == "❌ FALTA TURNO": dias_criticos_lista.append(col_fecha)
                 
         df_semaforo_row = pd.DataFrame([fila_semaforo], index=["🔍 AUDITORÍA 24/7"])
         pivot_g_completa = pd.concat([pivot_grupo, df_semaforo_row])
@@ -445,7 +426,7 @@ def pantalla_programador():
         st.dataframe(style_malla(pivot_g_completa), use_container_width=True)
 
         # =========================================================
-        # 👤 VISUALIZACIÓN: MALLA ADICIONAL POR PERSONA (CON GRUPO INTEGRADO)
+        # 👤 VISUALIZACIÓN: MALLA ADICIONAL POR PERSONA
         # =========================================================
         st.write("---")
         st.subheader("👤 Malla de Turnos Detallada por Persona (Desglosada)")
@@ -462,9 +443,7 @@ def pantalla_programador():
         # =========================================================
         st.write("---")
         st.subheader("⚙️ Panel de Gestión y Corrección de Turnos")
-        
         opt_b_modo = st.radio("🎯 Nivel de Cobertura a Modificar:", ["Ajustar Grupo (Macro)", "Ajustar Empleado (Micro)"], horizontal=True)
-        
         lista_nombres_unicos = sorted(list(rep_maestro_base["Nombre"].unique())) if not rep_maestro_base.empty else []
 
         if dias_criticos_lista:
