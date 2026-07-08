@@ -215,40 +215,62 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     return pd.DataFrame(filas)
 
 # =========================================================
-# 5. CÁLCULO DE RECARGOS Y HORAS EXTRAS CORREGIDO (REFORMA)
+# 5. CÁLCULO DE RECARGOS Y HORAS EXTRAS INTEGRAL (REFORMA)
 # =========================================================
+def obtener_minutos_desde_time(objeto_hora):
+    """Convierte cualquier variante de hora (string o datetime.time) a minutos totales desde medianoche."""
+    if objeto_hora is None:
+        return None
+    if isinstance(objeto_hora, time):
+        return objeto_hora.hour * 60 + objeto_hora.minute
+        
+    s = str(objeto_hora).strip().upper()
+    if s in ["OFF", "NAN", ""]:
+        return None
+        
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.hour * 60 + dt.minute
+        except:
+            pass
+    return None
+
 def calcular_metricas_reforma(inicio_str, fin_str, fecha_ts):
-    """Calcula horas laboradas, extras (base 7h) y recargos nocturnos usando pd.Timestamp."""
-    if inicio_str == "OFF" or fin_str == "OFF" or pd.isna(inicio_str) or pd.isna(fin_str):
+    """Calcula horas laboradas, extras (base 7h) y recargos nocturnos mediante aritmética de minutos."""
+    if pd.isna(inicio_str) or pd.isna(fin_str):
         return 0.0, 0.0, 0.0
-    try:
-        t_ini = datetime.strptime(str(inicio_str).strip(), "%H:%M").time()
-        t_fin = datetime.strptime(str(fin_str).strip(), "%H:%M").time()
         
-        # 🛠️ FIX DEFINITIVO: Mantener consistencia de tipos usando pd.Timestamp nativo de Pandas
-        base_date = pd.to_datetime(fecha_ts).normalize()
-        dt_inicio = base_date + pd.Timedelta(hours=t_ini.hour, minutes=t_ini.minute)
-        
-        if t_fin >= t_ini:
-            dt_fin = base_date + pd.Timedelta(hours=t_fin.hour, minutes=t_fin.minute)
-        else:
-            dt_fin = base_date + pd.Timedelta(days=1) + pd.Timedelta(hours=t_fin.hour, minutes=t_fin.minute)
-            
-        total_horas = (dt_fin - dt_inicio).total_seconds() / 3600.0
-        horas_extras = max(0.0, total_horas - 7.0) # Reforma 2026: 7h ordinarias diarias
-        
-        # Auditoría minuto a minuto para recargo nocturno (19:00 - 06:00)
-        minutos_nocturnos = 0
-        dt_actual = dt_inicio
-        while dt_actual < dt_fin:
-            if dt_actual.hour >= 19 or dt_actual.hour < 6:
-                minutos_nocturnos += 1
-            dt_actual += timedelta(minutes=1)
-            
-        horas_nocturnas = minutos_nocturnos / 60.0
-        return total_horas, horas_extras, horas_nocturnas
-    except:
+    s_ini = str(inicio_str).strip().upper()
+    s_fin = str(fin_str).strip().upper()
+    if "OFF" in s_ini or "OFF" in s_fin:
         return 0.0, 0.0, 0.0
+
+    min_inicio = obtener_minutos_desde_time(inicio_str)
+    min_fin = obtener_minutos_desde_time(fin_str)
+    
+    if min_inicio is None or min_fin is None:
+        return 0.0, 0.0, 0.0
+
+    if min_fin >= min_inicio:
+        minutos_totales = min_fin - min_inicio
+    else:
+        minutos_totales = (1440 - min_inicio) + min_fin
+        
+    total_horas = minutos_totales / 60.0
+    horas_extras = max(0.0, total_horas - 7.0) # Reforma 2026: 7h ordinarias
+    
+    minutos_nocturnos = 0
+    min_actual = min_inicio
+    for _ in range(int(minutos_totales)):
+        min_ciclo = min_actual % 1440
+        # 19:00 son 1140 min | 06:00 son 360 min
+        if min_ciclo >= 1140 or min_ciclo < 360:
+            minutos_nocturnos += 1
+        min_actual += 1
+        
+    horas_nocturnas = minutos_nocturnos / 60.0
+    return round(total_horas, 2), round(horas_extras, 2), round(horas_nocturnas, 2)
 
 def procesar_archivo_malla_externa(df_externo):
     try:
@@ -319,10 +341,10 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos):
             if "m_personas_editada" in st.session_state and (nombre_real, fecha_str) in st.session_state.m_personas_editada:
                 turno = st.session_state.m_personas_editada[(nombre_real, fecha_str)]
 
-            ini = config_horas.get(turno, {}).get("Inicio", "OFF")
-            fin = config_horas.get(turno, {}).get("Fin", "OFF")
+            info_turno = config_horas.get(turno, {"Inicio": "OFF", "Fin": "OFF"})
+            ini = info_turno.get("Inicio", "OFF")
+            fin = info_turno.get("Fin", "OFF")
 
-            # 🛠️ FIX DEFINITIVO: Se pasa el Timestamp original directamente para evitar la pérdida de zona de Pandas
             h_prog, h_extra, h_noc = calcular_metricas_reforma(ini, fin, fecha_dt)
 
             filas_reporte.append({
