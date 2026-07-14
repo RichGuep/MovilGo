@@ -174,9 +174,7 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
             idx_rotado = (idx_inicial + desplazamiento) % len(pool_descansos)
             descansos_vivos[g] = pool_descansos[idx_rotado]
 
-        # -------------------------------------------------------------
         # LÓGICA ORIGINAL DE DESCANSOS (ESTRICTAMENTE INTACTA)
-        # -------------------------------------------------------------
         gps_h = [g for g, d in descansos_vivos.items() if d == dia_n]
         if len(gps_h) > 1:
             idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
@@ -192,21 +190,16 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
                 asig[g_d[0]] = "COMPENSADO"
                 deudas[g_d[0]] -= 1
 
-        # -------------------------------------------------------------
         # ASIGNACIÓN DINÁMICA DE TURNOS SEGÚN EQUIPOS ACTIVOS
-        # -------------------------------------------------------------
-        # Identificar si hay algún grupo descansando hoy
         hay_descanso_hoy = any(asig.get(g) in ["DESCANSO", "COMPENSADO"] for g in GRUPOS_TEC)
 
         if hay_descanso_hoy:
-            # 🚨 REGLA CRÍTICA: Solo hay 3 equipos activos. Desaparece T4 y se cubren T1, T2 y T3
             activos = [g for g in GRUPOS_TEC if g not in asig]
             turnos_3 = ["T1", "T2", "T3"]
             for idx_act, g in enumerate(activos):
                 idx_turno = (sem + idx_act) % 3
                 asig[g] = turnos_3[idx_turno]
         else:
-            # ⚡ Hay 4 equipos activos (Días sin descansos configurados)
             if activar_t4 and not es_fin_semana:
                 secuencia_turnos = ["T1", "T2", "T3", "T4"]
             else:
@@ -217,7 +210,6 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
                     idx_turno = (sem + idx_g) % len(secuencia_turnos)
                     asig[g] = secuencia_turnos[idx_turno]
 
-        # Guardar estado final aplicando ajustes manuales si existen
         for g in GRUPOS_TEC:
             turno_final = asig.get(g, "DESCANSO")
             if "ajustes_manuales" in st.session_state and (g, fecha_str) in st.session_state.ajustes_manuales:
@@ -261,7 +253,12 @@ def calcular_metricas_reforma(inicio_str, fin_str, fecha_ts):
         minutos_totales = (1440 - min_inicio) + min_fin
         
     total_horas = minutos_totales / 60.0
-    horas_extras = max(0.0, total_horas - 7.0)
+    
+    # Si las horas corresponden a la franja del disponible de 7 horas, garantizamos 0 extras
+    if (inicio_str == "06:30" and fin_str == "13:30") or (inicio_str == "13:30" and fin_str == "20:30"):
+        horas_extras = 0.0
+    else:
+        horas_extras = max(0.0, total_horas - 7.0)
     
     minutos_nocturnos = 0
     min_actual = min_inicio
@@ -336,19 +333,22 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, activar_
             fecha_str = fecha_dt.strftime('%Y-%m-%d')
             es_fin_semana = (fecha_dt.weekday() in [5, 6])
             
+            # 🌟 ASIGNACIÓN EQUITATIVA DE DISPONIBLE (50% T1 y 50% T2 usando el día de la fecha)
             if turno == "DISPONIBLE":
-                if activar_t4 and not es_fin_semana:
-                    turnos_reparto_apoyo = ["T1", "T2", "T3"]
-                else:
-                    turnos_reparto_apoyo = ["T1", "T2"]
-                turno = turnos_reparto_apoyo[idx_persona_cargo % len(turnos_reparto_apoyo)]
+                factor_rotacion = idx_persona_cargo + fecha_dt.day
+                turno = "T1" if (factor_rotacion % 2 == 0) else "T2"
 
             if "m_personas_editada" in st.session_state and (nombre_real, fecha_str) in st.session_state.m_personas_editada:
                 turno = st.session_state.m_personas_editada[(nombre_real, fecha_str)]
 
-            info_turno = config_horas.get(turno, {"Inicio": "OFF", "Fin": "OFF"})
-            ini = info_turno.get("Inicio", "OFF")
-            fin = info_turno.get("Fin", "OFF")
+            # Ajuste de horario dinámico si el turno resultó de un Disponible desglosado
+            if m_fila['Turno'] == "DISPONIBLE":
+                ini = "06:30" if turno == "T1" else "13:30"
+                fin = "13:30" if turno == "T1" else "20:30"
+            else:
+                info_turno = config_horas.get(turno, {"Inicio": "OFF", "Fin": "OFF"})
+                ini = info_turno.get("Inicio", "OFF")
+                fin = info_turno.get("Fin", "OFF")
 
             h_prog, h_extra, h_noc = calcular_metricas_reforma(ini, fin, fecha_dt)
 
@@ -359,7 +359,7 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, activar_
                 "Cargo": cargo_actual, 
                 "Grupo Asignado": g_pertenece,
                 "Día Descanso Asignado": config_descansos.get(g_pertenece, "Domingo"),
-                "Turno realizado": turno, 
+                "Turno realizado": "DISP (" + turno + ")" if m_fila['Turno'] == "DISPONIBLE" else turno, 
                 "Hora inicio": ini, 
                 "Hora fin": fin, 
                 "Horas Programado": h_prog,
@@ -450,7 +450,7 @@ def pantalla_programador():
             "T3": [time(15,0), time(22,0)], 
             "T4": [time(21,0), time(4,0)], 
             "RELEVO": [time(8,0), time(15,0)], 
-            "DISPONIBLE": [time(8,0), time(15,0)]
+            "DISPONIBLE": [time(6,30), time(13,30)]
         }
         cols = st.columns(3)
         for i, t in enumerate(t_l):
@@ -484,10 +484,8 @@ def pantalla_programador():
         for d_f in cob.index:
             hay_descanso_hoy = (cob.at[d_f, "DESCANSO"] > 0 or cob.at[d_f, "COMPENSADO"] > 0)
             
-            # Auditoría Inteligente: Si hay un descanso, solo exige T1, T2 y T3.
             if cob.at[d_f, "T1"] == 0 or cob.at[d_f, "T2"] == 0 or cob.at[d_f, "T3"] == 0:
                 fechas_novedad.append(d_f)
-            # Si NO hay descansos y T4 está activo (L-V), T4 debe cumplirse.
             elif not hay_descanso_hoy and activar_t4 and (d_f.weekday() not in [5, 6]) and cob.at[d_f, "T4"] == 0:
                 fechas_novedad.append(d_f)
         
