@@ -161,7 +161,7 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
         dia_n, sem, asig = DIAS_ES[fecha.weekday()], fecha.isocalendar()[1], {}
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         fecha_str = fecha.strftime('%Y-%m-%d')
-        es_fin_semana = (fecha.weekday() in [5, 6]) # 5=Sábado, 6=Domingo
+        es_fin_semana = (fecha.weekday() in [5, 6])
         
         if tipo_ciclo_descanso == "Mensual": desplazamiento = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento = delta_meses // 3
@@ -174,45 +174,59 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
             idx_rotado = (idx_inicial + desplazamiento) % len(pool_descansos)
             descansos_vivos[g] = pool_descansos[idx_rotado]
 
-        # Descansos Base
+        # 1. Determinar quiénes están de descanso base hoy
         gps_h = [g for g, d in descansos_vivos.items() if d == dia_n]
-        if len(gps_h) > 1:
-            idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
-            for g in gps_h: 
-                if g != d_r and conceder_compensatorio: deudas[g] += 1
-        elif len(gps_h) == 1: asig[gps_h[0]] = "DESCANSO"
+        grupo_efectivo_descanso = None
         
-        # Compensatorios L-V
-        if 0 <= fecha.weekday() <= 4 and conceder_compensatorio:
+        if len(gps_h) > 1:
+            idx = sem % len(gps_h)
+            grupo_efectivo_descanso = gps_h[idx]
+            asig[grupo_efectivo_descanso] = "DESCANSO"
+            for g in gps_h: 
+                if g != grupo_efectivo_descanso and conceder_compensatorio: deudas[g] += 1
+        elif len(gps_h) == 1:
+            grupo_efectivo_descanso = gps_h[0]
+            asig[grupo_efectivo_descanso] = "DESCANSO"
+        
+        # 2. Compensatorios L-V (si aplica)
+        if 0 <= fecha.weekday() <= 4 and conceder_compensatorio and grupo_efectivo_descanso is None:
             g_d = sorted([g for g, d in deudas.items() if d > 0 and g not in asig], key=lambda x: deudas[x], reverse=True)
             if g_d: 
-                asig[g_d[0]] = "COMPENSADO"
-                deudas[g_d[0]] -= 1
-        
-        # Determinar secuencia de turnos activa según el botón y el día de la semana
-        if activar_t4 and not es_fin_semana:
-            secuencia_turnos = ["T1", "T2", "T3", "T4"]
-            turnos_operativos_necesarios = ["T1", "T2", "T3", "T4"]
-        else:
-            secuencia_turnos = ["T1", "T2", "T3", "DISPONIBLE"]
+                grupo_efectivo_descanso = g_d[0]
+                asig[grupo_efectivo_descanso] = "COMPENSADO"
+                deudas[grupo_efectivo_descanso] -= 1
+
+        # 3. Definición Dinámica de Cobertura según disponibilidad del día
+        # SI HAY ALGUIEN DE DESCANSO: Solo tenemos 3 grupos disponibles -> Forzar estrictamente T1, T2 y T3
+        if grupo_efectivo_descanso is not None:
             turnos_operativos_necesarios = ["T1", "T2", "T3"]
+            secuencia_turnos = ["T1", "T2", "T3", "DESCANSO"]
+        else:
+            # SI NO HAY DESCANSOS (4 grupos activos): Validamos si T4 está activo por parámetro
+            if activar_t4 and not es_fin_semana:
+                turnos_operativos_necesarios = ["T1", "T2", "T3", "T4"]
+                secuencia_turnos = ["T1", "T2", "T3", "T4"]
+            else:
+                turnos_operativos_necesarios = ["T1", "T2", "T3"]
+                secuencia_turnos = ["T1", "T2", "T3", "DISPONIBLE"]
         
-        # Asignación Teórica Semanal
+        # 4. Asignación Teórica en Cascada
         for idx_g, g in enumerate(GRUPOS_TEC):
-            idx_turno = (sem + idx_g) % len(secuencia_turnos)
             if g not in asig:
+                idx_turno = (sem + idx_g) % len(secuencia_turnos)
                 asig[g] = secuencia_turnos[idx_turno]
 
-        # Algoritmo de Rescate Automático de Cobertura
-        turnos_cubiertos_hoy = [asig[g] for g in GRUPOS_TEC if asig[g] in turnos_operativos_necesarios]
-        turnos_faltantes = [t for t in turnos_operativos_necesarios if t not in turnos_cubiertos_hoy]
-        
-        if turnos_faltantes:
-            for g in GRUPOS_TEC:
-                if asig.get(g) == "DISPONIBLE":
-                    asig[g] = turnos_faltantes[0]
-                    break
+        # 5. Algoritmo de Rescate de Cobertura Crítica (Garantizar siempre T1, T2, T3)
+        for t_critico in ["T1", "T2", "T3"]:
+            turnos_actuales = [asig[x] for x in GRUPOS_TEC if x in asig]
+            if t_critico not in turnos_actuales:
+                # Buscar un grupo asignado a DISPONIBLE o T4 para reubicarlo al turno crítico faltante
+                for g_cambio in GRUPOS_TEC:
+                    if asig.get(g_cambio) in ["DISPONIBLE", "T4"]:
+                        asig[g_cambio] = t_critico
+                        break
 
+        # 6. Guardar estado final aplicando ajustes manuales si existen
         for g in GRUPOS_TEC:
             turno_final = asig.get(g, "DESCANSO")
             if "ajustes_manuales" in st.session_state and (g, fecha_str) in st.session_state.ajustes_manuales:
@@ -225,7 +239,6 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
 # 5. CÁLCULO DE RECARGOS Y HORAS EXTRAS INTEGRAL (REFORMA)
 # =========================================================
 def obtener_minutos_desde_time(objeto_hora):
-    """Convierte cualquier variante de hora (string o datetime.time) a minutos totales desde medianoche."""
     if objeto_hora is None: return None
     if isinstance(objeto_hora, time): return objeto_hora.hour * 60 + objeto_hora.minute
         
@@ -240,7 +253,6 @@ def obtener_minutos_desde_time(objeto_hora):
     return None
 
 def calcular_metricas_reforma(inicio_str, fin_str, fecha_ts):
-    """Calcula horas laboradas, extras (base 7h) y recargos nocturnos mediante aritmética de minutos."""
     if pd.isna(inicio_str) or pd.isna(fin_str): return 0.0, 0.0, 0.0
         
     s_ini = str(inicio_str).strip().upper()
@@ -374,7 +386,7 @@ def generar_reporte_detallado(df_final, config_horas, config_descansos, activar_
 def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_persona=False):
     st.markdown(f"📅 **Fecha de Operación:** `{fecha_solicitada}`")
     sujeto_sel = st.selectbox("🎯 Seleccione el Elemento a Modificar:", opciones_sujetos)
-    opciones_turnos = ["T1", "T2", "T3", "T4", "RELEVO", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
+    opciones_turnos = ["T1", "T2", "T3", "T4", "RELEVE", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
     nuevo_turno = st.selectbox("🆕 Turno Destino Asignado:", opciones_turnos, index=0)
     
     if st.button("💾 Guardar y Re-calcular Malla"):
@@ -435,14 +447,12 @@ def pantalla_programador():
     conceder_compensatorio = st.checkbox("⚖️ Otorgar días Compensatorios por Cobertura Dominical (Reforma Laboral)", value=True)
     tipo_ciclo_descanso = st.selectbox("🔄 Ciclo de Rotación Temporal para los días de Descanso Base:", options=["Fijo sin rotación", "Mensual", "Trimestral"])
     
-    # 🌟 BOTÓN DE ACTIVACIÓN DE T4 INTELIGENTE 🌟
     activar_t4 = st.toggle("⚡ Activar Esquema de Cuadrilla Eficiente (T4 - 7 Horas L-V)", value=False, help="Activa el T4 de Lunes a Viernes para optimizar costos de operación y mitigar recargos. Sábados y Domingos regresará automáticamente a esquema T3 para proteger fines de semana.")
 
     with st.expander("⏰ Configuración Rangos de Jornada", expanded=False):
         config_h = {}
         t_l = ["T1", "T2", "T3", "T4", "RELEVO", "DISPONIBLE"]
         
-        # Horarios por defecto optimizados con T4 de 7h incluidos
         def_h = {
             "T1": [time(4,0), time(11,0)], 
             "T2": [time(11,0), time(18,0)], 
@@ -479,20 +489,14 @@ def pantalla_programador():
         
         cob = ejecutar_auditoria_completa(df_audit, config_h)
         
-        dias_sin_t1 = cob[cob["T1"] == 0].index.tolist()
-        dias_sin_t2 = cob[cob["T2"] == 0].index.tolist()
-        
-        # Validar cobertura de T3/T4 de forma dinámica según el día
         fechas_novedad = []
         for d_f in cob.index:
-            es_f_s = (d_f.weekday() in [5, 6])
-            if cob.at[d_f, "T1"] == 0 or cob.at[d_f, "T2"] == 0:
+            # Validación Inteligente: Si hay un grupo de descanso, solo exigimos T1, T2 y T3 obligatoriamente
+            hay_descanso_hoy = (cob.at[d_f, "DESCANSO"] > 0 or cob.at[d_f, "COMPENSADO"] > 0)
+            
+            if cob.at[d_f, "T1"] == 0 or cob.at[d_f, "T2"] == 0 or cob.at[d_f, "T3"] == 0:
                 fechas_novedad.append(d_f)
-            elif es_f_s and cob.at[d_f, "T3"] == 0:
-                fechas_novedad.append(d_f)
-            elif not es_f_s and activar_t4 and (cob.at[d_f, "T3"] == 0 or cob.at[d_f, "T4"] == 0):
-                fechas_novedad.append(d_f)
-            elif not es_f_s and not activar_t4 and cob.at[d_f, "T3"] == 0:
+            elif not hay_descanso_hoy and activar_t4 and (d_f.weekday() not in [5, 6]) and cob.at[d_f, "T4"] == 0:
                 fechas_novedad.append(d_f)
         
         fechas_novedad = sorted(list(set(fechas_novedad)))
@@ -511,12 +515,14 @@ def pantalla_programador():
         for col_fecha in pivot_grupo.columns:
             col_dt = pd.to_datetime(col_fecha)
             es_f_s = (col_dt.weekday() in [5, 6])
+            hay_descanso_hoy = (cob.at[col_dt, "DESCANSO"] > 0 or cob.at[col_dt, "COMPENSADO"] > 0) if col_dt in cob.index else False
+            
             t1_ok = cob.at[col_dt, "T1"] > 0 if col_dt in cob.index else False
             t2_ok = cob.at[col_dt, "T2"] > 0 if col_dt in cob.index else False
             t3_ok = cob.at[col_dt, "T3"] > 0 if col_dt in cob.index else False
             t4_ok = cob.at[col_dt, "T4"] > 0 if col_dt in cob.index else False
             
-            if activar_t4 and not es_f_s:
+            if activar_t4 and not es_f_s and not hay_descanso_hoy:
                 status_hoy = "✅ OK 24/7" if (t1_ok and t2_ok and t3_ok and t4_ok) else "❌ FALTA TURNO"
             else:
                 status_hoy = "✅ OK 24/7" if (t1_ok and t2_ok and t3_ok) else "❌ FALTA TURNO"
