@@ -154,70 +154,122 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     df_emp = cargar_excel("empleados_grupos.xlsx")
     if df_emp.empty: return pd.DataFrame()
     
-    filas, deudas = [], {g: 0 for g in GRUPOS_TEC}
-    
-    # 🌟 EL TRUCO MAGISTRAL: Crear el pool dinámico a partir de lo que seleccionaste en la UI
+    filas = []
+    deudas = {g: 0 for g in GRUPOS_TEC}
     pool_descansos_dinamico = [descansos_iniciales[g] for g in GRUPOS_TEC]
     
+    # Memoria histórica para Reglas de Salud y Equidad
+    turno_ayer_dict = {g: "DESCANSO" for g in GRUPOS_TEC}
+    counts = {g: {s: 0 for s in ["T1", "T2", "T3", "T4", "DISPONIBLE"]} for g in GRUPOS_TEC}
+    
+    # Función interna para clasificar la "latencia" o peso del turno
+    def get_state(turno):
+        if turno in ["DESCANSO", "COMPENSADO"]: return 0
+        if turno in ["T1", "DISPONIBLE"]: return 1
+        if turno == "T2": return 2
+        if turno == "T3": return 3
+        if turno == "T4": return 4
+        return 0
+        
+    def is_valid(state_ayer, shift_hoy):
+        val_hoy = get_state(shift_hoy)
+        if val_hoy < state_ayer: return False # Prohibido rotar hacia atrás
+        if state_ayer >= 3 and val_hoy < 3: return False # Prohibido salir de T3/T4 sin descansar
+        return True
+
     for fecha in pd.date_range(inicio, fin):
-        dia_n, sem, asig = DIAS_ES[fecha.weekday()], fecha.isocalendar()[1], {}
+        dia_n = DIAS_ES[fecha.weekday()]
+        sem = fecha.isocalendar()[1]
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         fecha_str = fecha.strftime('%Y-%m-%d')
         es_fin_semana = (fecha.weekday() in [5, 6])
         
-        # Cálculo del desplazamiento para la rotación (Mensual, Trimestral o Fijo)
         if tipo_ciclo_descanso == "Mensual": desplazamiento = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento = delta_meses // 3
         else: desplazamiento = 0
             
         descansos_vivos = {}
-        # Aplicamos la rotación estrictamente sobre los 4 días elegidos
         for idx_g, g in enumerate(GRUPOS_TEC):
             idx_rotado = (idx_g + desplazamiento) % len(pool_descansos_dinamico)
             descansos_vivos[g] = pool_descansos_dinamico[idx_rotado]
 
-        # LÓGICA DE DESCANSOS Y DEUDAS ORIGINAL
+        asig = {}
         gps_h = [g for g, d in descansos_vivos.items() if d == dia_n]
         if len(gps_h) > 1:
-            idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
+            idx = sem % len(gps_h)
+            d_r = gps_h[idx]
+            asig[d_r] = "DESCANSO"
             for g in gps_h: 
                 if g != d_r and conceder_compensatorio: deudas[g] += 1
         elif len(gps_h) == 1: 
             asig[gps_h[0]] = "DESCANSO"
         
-        # Compensatorios L-V Original
         if 0 <= fecha.weekday() <= 4 and conceder_compensatorio:
             g_d = sorted([g for g, d in deudas.items() if d > 0 and g not in asig], key=lambda x: deudas[x], reverse=True)
             if g_d: 
                 asig[g_d[0]] = "COMPENSADO"
                 deudas[g_d[0]] -= 1
 
-        # ASIGNACIÓN DINÁMICA DE TURNOS SEGÚN EQUIPOS ACTIVOS
-        hay_descanso_hoy = any(asig.get(g) in ["DESCANSO", "COMPENSADO"] for g in GRUPOS_TEC)
-
-        if hay_descanso_hoy:
-            activos = [g for g in GRUPOS_TEC if g not in asig]
-            turnos_3 = ["T1", "T2", "T3"]
-            for idx_act, g in enumerate(activos):
-                idx_turno = (sem + idx_act) % 3
-                asig[g] = turnos_3[idx_turno]
+        activos = [g for g in GRUPOS_TEC if g not in asig]
+        
+        # 🌟 CÁLCULO DE TURNOS REQUERIDOS HOY (Ordenados del más crítico al más suave)
+        if activar_t4 and not es_fin_semana:
+            req_shifts = ["T4", "T3", "T2", "T1"]
         else:
-            if activar_t4 and not es_fin_semana:
-                secuencia_turnos = ["T1", "T2", "T3", "T4"]
-            else:
-                secuencia_turnos = ["T1", "T2", "T3", "DISPONIBLE"]
+            req_shifts = ["T3", "T2", "DISPONIBLE", "T1"]
+            
+        # Ajustar si hay menos de 4 grupos activos (ej. 3 grupos -> quitamos el comodín)
+        req_shifts = req_shifts[:len(activos)]
+        
+        asignacion_hoy = {}
+        
+        # 🌟 MOTOR DE SATISFACCIÓN DE RESTRICCIONES
+        for shift in req_shifts:
+            best_group = None
+            best_flex = 999  # Flexibilidad (menor = más atrapado, mayor prioridad)
+            best_count = 999 # Equidad (menor = menos horas hechas, mayor prioridad)
+            
+            for g in activos:
+                if g in asignacion_hoy: continue
+                s_ayer = get_state(turno_ayer_dict[g])
                 
-            for idx_g, g in enumerate(GRUPOS_TEC):
-                if g not in asig:
-                    idx_turno = (sem + idx_g) % len(secuencia_turnos)
-                    asig[g] = secuencia_turnos[idx_turno]
+                # REGLA DE SALUD: Si el salto es ilegal, lo descartamos inmediatamente
+                if not is_valid(s_ayer, shift): continue
+                
+                # Calculamos qué tan "atrapado" está este grupo
+                flex = sum(1 for rs in req_shifts if rs not in asignacion_hoy.values() and is_valid(s_ayer, rs))
+                c = counts[g].get(shift, 0)
+                
+                # Priorizamos al que tiene menos opciones válidas. En caso de empate, priorizamos la equidad.
+                if flex < best_flex or (flex == best_flex and c < best_count):
+                    best_flex = flex
+                    best_count = c
+                    best_group = g
+                    
+            if best_group:
+                asignacion_hoy[best_group] = shift
+                counts[best_group][shift] += 1
+            else:
+                # Rescate de emergencia (Solo ocurre si la configuración de descansos es matemáticamente imposible de cubrir)
+                unassigned = [g for g in activos if g not in asignacion_hoy]
+                if unassigned:
+                    fallback_g = min(unassigned, key=lambda g: counts[g].get(shift, 0))
+                    asignacion_hoy[fallback_g] = shift
+                    counts[fallback_g][shift] += 1
 
         for g in GRUPOS_TEC:
-            turno_final = asig.get(g, "DESCANSO")
+            if g in asig:
+                turno_final = asig[g]
+                turno_ayer_dict[g] = "DESCANSO"
+            else:
+                turno_final = asignacion_hoy[g]
+                turno_ayer_dict[g] = turno_final
+                
             if "ajustes_manuales" in st.session_state and (g, fecha_str) in st.session_state.ajustes_manuales:
                 turno_final = st.session_state.ajustes_manuales[(g, fecha_str)]
-            filas.append({"Fecha": fecha, "Sujeto": g, "Turno": turno_final})
                 
+            filas.append({"Fecha": fecha, "Sujeto": g, "Turno": turno_final})
+            
     return pd.DataFrame(filas)
 
 # =========================================================
