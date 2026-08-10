@@ -155,7 +155,9 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
     if df_emp.empty: return pd.DataFrame()
     
     filas, deudas = [], {g: 0 for g in GRUPOS_TEC}
-    pool_descansos = ["Viernes", "Sábado", "Domingo", "Lunes"]
+    
+    # 🌟 EL TRUCO MAGISTRAL: Crear el pool dinámico a partir de lo que seleccionaste en la UI
+    pool_descansos_dinamico = [descansos_iniciales[g] for g in GRUPOS_TEC]
     
     for fecha in pd.date_range(inicio, fin):
         dia_n, sem, asig = DIAS_ES[fecha.weekday()], fecha.isocalendar()[1], {}
@@ -163,18 +165,18 @@ def generar_malla_tecnicos_avanzado(inicio, fin, descansos_iniciales, conceder_c
         fecha_str = fecha.strftime('%Y-%m-%d')
         es_fin_semana = (fecha.weekday() in [5, 6])
         
+        # Cálculo del desplazamiento para la rotación (Mensual, Trimestral o Fijo)
         if tipo_ciclo_descanso == "Mensual": desplazamiento = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento = delta_meses // 3
         else: desplazamiento = 0
             
         descansos_vivos = {}
+        # Aplicamos la rotación estrictamente sobre los 4 días elegidos
         for idx_g, g in enumerate(GRUPOS_TEC):
-            dia_inicial = descansos_iniciales[g]
-            idx_inicial = pool_descansos.index(dia_inicial) if dia_inicial in pool_descansos else 0
-            idx_rotado = (idx_inicial + desplazamiento) % len(pool_descansos)
-            descansos_vivos[g] = pool_descansos[idx_rotado]
+            idx_rotado = (idx_g + desplazamiento) % len(pool_descansos_dinamico)
+            descansos_vivos[g] = pool_descansos_dinamico[idx_rotado]
 
-        # LÓGICA ORIGINAL DE DESCANSOS (ESTRICTAMENTE INTACTA)
+        # LÓGICA DE DESCANSOS Y DEUDAS ORIGINAL
         gps_h = [g for g, d in descansos_vivos.items() if d == dia_n]
         if len(gps_h) > 1:
             idx = sem % len(gps_h); d_r = gps_h[idx]; asig[d_r] = "DESCANSO"
