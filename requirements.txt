@@ -3,8 +3,10 @@ pandas
 openpyxl
 plotly
 datetime
-PyGithub
 holidays
-openpyxl
 xlsxwriter
 matplotlib
+# --- Nuevas dependencias para BD ---
+SQLAlchemy
+psycopg2-binary
+python-dotenv
