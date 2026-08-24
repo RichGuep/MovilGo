@@ -896,22 +896,23 @@ def pantalla_programador():
 # =========================================================
 # 8. MOTOR Y PANEL DE ABORDAJE
 # =========================================================
-GRUPOS_ABO = ["Grupo A1", "Grupo A2", "Grupo A3", "Grupo A4", "Grupo A5", "Grupo A6"]
 
-def crear_personal_abordaje(total_personas):
+def crear_personal_abordaje(total_personas, lista_grupos):
     filas = []
-    # Eliminamos los Flotantes Fijos. Todos son Abordaje regular.
+    num_g = len(lista_grupos)
     for i in range(total_personas):
-        filas.append({"Nombre": f"Abordaje_{i+1:02d}", "Grupo": GRUPOS_ABO[i % 6]})
+        # Reparte a las personas equitativamente entre los grupos creados
+        filas.append({"Nombre": f"Abordaje_{i+1:02d}", "Grupo": lista_grupos[i % num_g]})
     return pd.DataFrame(filas)
 
-def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos):
-    df_pers = crear_personal_abordaje(total_personas)
+def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos):
+    df_pers = crear_personal_abordaje(total_personas, lista_grupos)
     filas = []
-    dias_unicos = [descansos_iniciales[g] for g in GRUPOS_ABO]
+    dias_unicos = [descansos_iniciales[g] for g in lista_grupos]
     empleados = df_pers["Nombre"].tolist()
+    num_g = len(lista_grupos)
     
-    # 🧠 MEMORIA CIRCADIANA: Recuerda el turno exacto que hizo cada persona ayer
+    # 🧠 MEMORIA CIRCADIANA
     turno_ayer = {p: None for p in empleados}
     
     for fecha in pd.date_range(inicio, fin):
@@ -920,15 +921,15 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         sem = fecha.isocalendar()[1]
         
-        # 1. Asignar Descansos Base de la Regla de Oro
+        # 1. Asignar Descansos Base
         if tipo_ciclo_descanso == "Mensual": desplazamiento_desc = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento_desc = delta_meses // 3
         elif tipo_ciclo_descanso == "Semestral": desplazamiento_desc = delta_meses // 6
         else: desplazamiento_desc = 0
             
         descansos_hoy_g = []
-        for idx_g, g in enumerate(GRUPOS_ABO):
-            if dias_unicos[(idx_g + desplazamiento_desc) % 6] == dia_n:
+        for idx_g, g in enumerate(lista_grupos):
+            if dias_unicos[(idx_g + desplazamiento_desc) % num_g] == dia_n:
                 descansos_hoy_g.append(g)
                 
         asig_hoy = {}
@@ -938,7 +939,7 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
                 
         activos = [p for p in empleados if p not in asig_hoy]
         
-        # 2. Calcular la Rotación Global (Target Ideal)
+        # 2. Calcular la Rotación Global
         if tipo_rotacion_turnos == "Semanal": delta_rot = sem
         elif tipo_rotacion_turnos == "Quincenal": delta_rot = sem // 2
         elif tipo_rotacion_turnos == "Mensual": delta_rot = delta_meses
@@ -955,22 +956,20 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         pool_rotado = pool_base[-desp:] + pool_base[:-desp] if desp > 0 else pool_base
         target_shift = {empleados[i]: pool_rotado[i] for i in range(total_personas)}
         
-        # 3. 🛡️ REGLA DE INERCIA BIOLÓGICA (Evita los saltos T2 -> T1 sin descanso)
+        # 3. 🛡️ REGLA DE INERCIA BIOLÓGICA
         t1_asig, t2_asig, f_asig = 0, 0, 0
-        libres_hoy = [] # Son los "Agentes Libres" que recién vuelven de descansar
+        libres_hoy = []
         
         for p in activos:
             if turno_ayer[p] in ["T1", "T2", "FLOTANTE"]:
-                # Si ayer trabajó, se queda amarrado a su mismo turno hoy (Inercia)
                 asig_hoy[p] = turno_ayer[p]
                 if turno_ayer[p] == "T1": t1_asig += 1
                 elif turno_ayer[p] == "T2": t2_asig += 1
                 elif turno_ayer[p] == "FLOTANTE": f_asig += 1
             else:
-                # Si ayer descansó, hoy es libre de rotar a un nuevo turno
                 libres_hoy.append(p)
                 
-        # 4. Acomodar a los Agentes Libres en los huecos de la Cuota Diaria
+        # 4. Acomodar a los Agentes Libres en las Cuotas Diarias
         faltan_t1 = max(0, req_t1 - t1_asig)
         faltan_t2 = max(0, req_t2 - t2_asig)
         faltan_f = max(0, req_f - f_asig)
@@ -979,23 +978,21 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
             pref = target_shift[p]
             asignado = False
             
-            # Intentar darle su turno ideal de la rotación
             if pref == "T1" and faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1; asignado = True
             elif pref == "T2" and faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1; asignado = True
             elif pref == "FLOTANTE" and faltan_f > 0: asig_hoy[p] = "FLOTANTE"; faltan_f -= 1; asignado = True
             
             if not asignado:
-                # Si el turno ideal ya está lleno, se le da lo que quede disponible en la cuota
                 if faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1
                 elif faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
                 elif faltan_f > 0: asig_hoy[p] = "FLOTANTE"; faltan_f -= 1
-                else: asig_hoy[p] = "DESCANSO" # Si ya se llenaron todos, se va a Descanso forzado
+                else: asig_hoy[p] = "DESCANSO" 
                 
-        # 5. Actualizar la memoria circadiana para el día siguiente
+        # 5. Actualizar la memoria circadiana
         for p in empleados:
             turno_ayer[p] = asig_hoy.get(p, "DESCANSO")
             
-        # 6. Volcado Final y Ajustes del Coordinador
+        # 6. Volcado Final
         for _, p in df_pers.iterrows():
             turno_final = asig_hoy.get(p["Nombre"], "DESCANSO")
             if "ajustes_manuales_abo" in st.session_state and (p["Nombre"], fecha_str) in st.session_state.ajustes_manuales_abo:
@@ -1065,11 +1062,15 @@ def pantalla_abordaje():
     if "ajustes_manuales_abo" not in st.session_state: st.session_state.ajustes_manuales_abo = {}
     st.markdown("## 🚀 Panel de Programación - Abordaje Operativo")
 
-    c1, c2, c3, c4 = st.columns(4)
-    total_p = c1.number_input("Total Planta (Regulares + Flotantes)", 20, 50, 29)
-    req_t1 = c2.number_input("Cobertura Requerida T1", 1, 20, 11)
-    req_t2 = c3.number_input("Cobertura Requerida T2", 1, 20, 11)
-    req_f = c4.number_input("Cobertura Flotantes", 0, 10, 4)
+    # 🌟 NUEVOS CAMPOS: Número de Grupos Parametrizable
+    c_tot, c_grp, c_t1, c_t2, c_f = st.columns(5)
+    total_p = c_tot.number_input("Total Planta", 10, 100, 28)
+    num_grupos = c_grp.number_input("Cant. de Grupos", 1, 15, 4)
+    req_t1 = c_t1.number_input("Cobertura T1", 1, 50, 11)
+    req_t2 = c_t2.number_input("Cobertura T2", 1, 50, 11)
+    req_f = c_f.number_input("Flotantes", 0, 20, 2)
+    
+    lista_grupos = [f"Grupo A{i+1}" for i in range(num_grupos)]
     
     valor_hora = st.number_input("💰 Valor Hora Ordinaria Proyectada ($):", min_value=0, value=6500, step=500, key="vh_abo")
     
@@ -1080,19 +1081,26 @@ def pantalla_abordaje():
     tipo_ciclo_descanso = c_rot.selectbox("🔄 Ciclo Descanso:", ["Fijo sin rotación", "Mensual", "Trimestral", "Semestral"], key="ciclo_desc_abo")
     tipo_rotacion_turnos = c_rot_turnos.selectbox("🔄 Ciclo Turnos (T1/T2):", ["Fijo sin rotación", "Semanal", "Quincenal", "Mensual", "Bimensual", "Trimestral"], key="ciclo_turn_abo")
 
-    st.markdown("### 📅 Días de Descanso Base (Regla de Oro: Elegir 6 días únicos)")
-    cols = st.columns(6)
-    desc_data = {g: cols[i].selectbox(f"Desc. {g[-2:]}", DIAS_ES, index=i, key=f"desc_{g}") for i, g in enumerate(GRUPOS_ABO)}
+    # 🌟 GENERACIÓN DINÁMICA DE SELECTORES DE DESCANSO
+    st.markdown("### 📅 Días de Descanso Base (Regla de Oro: Máxima Diversidad de Días)")
+    cols = st.columns(min(num_grupos, 7))
+    desc_data = {}
+    for i, g in enumerate(lista_grupos):
+        desc_data[g] = cols[i % 7].selectbox(f"Desc. {g}", DIAS_ES, index=i % 7, key=f"desc_{g}")
         
     dias_seleccionados = list(desc_data.values())
-    bloquear_generacion = len(dias_seleccionados) != len(set(dias_seleccionados))
-    if bloquear_generacion: st.error("🚨 **Error de Regla de Oro:** Has seleccionado el mismo día de descanso para dos o más grupos.")
+    dias_distintos = len(set(dias_seleccionados))
+    max_dias_posibles = min(num_grupos, 7)
+    
+    bloquear_generacion = dias_distintos < max_dias_posibles
+    if bloquear_generacion: 
+        st.error(f"🚨 **Error de Regla de Oro:** Debes seleccionar {max_dias_posibles} días de descanso diferentes para evitar desprotección operativa.")
                                   
     if st.button("👁️ PREVISUALIZAR MALLA (Sin Guardar)", disabled=bloquear_generacion):
-        st.session_state.m_base_abo = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos)
+        st.session_state.m_base_abo = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos)
         
     if 'm_base_abo' in st.session_state and not st.session_state.m_base_abo.empty:
-        df_final = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos)
+        df_final = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos)
         st.session_state.m_base_abo = df_final
         
         st.write("---")
