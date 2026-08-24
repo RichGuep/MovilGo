@@ -1041,13 +1041,27 @@ def popup_forzar_ajuste_fecha_abo(fecha_solicitada, opciones_sujetos):
 
 def pantalla_abordaje():
     if "ajustes_manuales_abo" not in st.session_state: st.session_state.ajustes_manuales_abo = {}
-    st.markdown("## 🚀 Panel de Programación - Abordaje Operativo")
+    st.markdown("---")
+    c_i, c_f, c_rot, c_rot_turnos = st.columns(4)
+    inicio = c_i.date_input("Inicio Planificación", date(2026, 7, 1), key="i_abo")
+    fin = c_f.date_input("Fin Planificación", date(2026, 12, 31), key="f_abo")
+    tipo_ciclo_descanso = c_rot.selectbox("🔄 Ciclo Descanso:", ["Fijo sin rotación", "Mensual", "Trimestral", "Semestral"])
+    tipo_rotacion_turnos = c_rot_turnos.selectbox("🔄 Ciclo Turnos (T1/T2):", ["Fijo sin rotación", "Semanal", "Quincenal", "Mensual", "Bimensual", "Trimestral"])
 
-    c1, c2, c3, c4 = st.columns(4)
-    total_p = c1.number_input("Total Planta (Regulares + Flotantes)", 20, 50, 29)
-    req_t1 = c2.number_input("Cobertura Requerida T1", 1, 20, 11)
-    req_t2 = c3.number_input("Cobertura Requerida T2", 1, 20, 11)
-    req_f = c4.number_input("Cobertura Flotantes", 0, 10, 4)
+    st.markdown("### 📅 Días de Descanso Base (Regla de Oro: Elegir 6 días únicos)")
+    cols = st.columns(6)
+    desc_data = {g: cols[i].selectbox(f"Desc. {g[-2:]}", DIAS_ES, index=i, key=f"desc_{g}") for i, g in enumerate(GRUPOS_ABO)}
+        
+    dias_seleccionados = list(desc_data.values())
+    bloquear_generacion = len(dias_seleccionados) != len(set(dias_seleccionados))
+    if bloquear_generacion: st.error("🚨 **Error de Regla de Oro:** Has seleccionado el mismo día de descanso para dos o más grupos.")
+                                  
+    if st.button("👁️ PREVISUALIZAR MALLA (Sin Guardar)", disabled=bloquear_generacion):
+        st.session_state.m_base_abo = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos)
+        
+    if 'm_base_abo' in st.session_state and not st.session_state.m_base_abo.empty:
+        df_final = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos)
+        st.session_state.m_base_abo = df_final
     
     # 🌟 NUEVO INPUT PARA DASHBOARDS
     valor_hora = st.number_input("💰 Valor Hora Ordinaria Proyectada ($):", min_value=0, value=6500, step=500, key="vh_abo")
