@@ -923,6 +923,7 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         sem = fecha.isocalendar()[1]
         
+        # 1. Asignación de Descansos Base y Bono Fin de Semana
         if tipo_ciclo_descanso == "Mensual": desplazamiento_desc = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento_desc = delta_meses // 3
         elif tipo_ciclo_descanso == "Semestral": desplazamiento_desc = delta_meses // 6
@@ -931,17 +932,20 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         descansos_hoy_g = []
         for idx_g, g in enumerate(lista_grupos):
             dia_base_str = dias_unicos_str[(idx_g + desplazamiento_desc) % num_g]
-            idx_base = DIAS_ES.index(dia_base_str)
             
-            # 1. ¿Le toca su descanso normal?
-            if idx_dia_actual == idx_base:
-                descansos_hoy_g.append(g)
-            # 2. 🎁 ¿Le toca DOBLE descanso esta semana? (Día siguiente al base)
-            elif frec_doble_desc > 0:
-                idx_secundario = (idx_base + 1) % 7
-                # Escalonamos las semanas para que no todos descansen doble la misma semana
-                es_semana_doble = ((sem + idx_g) % frec_doble_desc) == 0
-                if idx_dia_actual == idx_secundario and es_semana_doble:
+            # 🎁 ¿Le toca su BONO de FIN DE SEMANA esta semana?
+            es_semana_doble = False
+            if frec_doble_desc > 0:
+                # Rotamos el beneficio: Cada semana le toca a un grupo diferente
+                es_semana_doble = ((sem - idx_g) % frec_doble_desc) == 0
+            
+            if es_semana_doble:
+                # Si es su semana de bono, su descanso se mueve a SÁBADO y DOMINGO obligatoriamente.
+                if dia_n in ["Sábado", "Domingo"]:
+                    descansos_hoy_g.append(g)
+            else:
+                # Si no es su semana de bono, descansa su día base normal de Lunes a Viernes.
+                if dia_n == dia_base_str:
                     descansos_hoy_g.append(g)
                 
         asig_hoy = {}
