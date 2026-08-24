@@ -900,7 +900,7 @@ GRUPOS_ABO = ["Grupo A1", "Grupo A2", "Grupo A3", "Grupo A4", "Grupo A5", "Grupo
 
 def crear_personal_abordaje(total_personas):
     filas = []
-    # Eliminamos los "Flotantes Fijos". Todos son regulares y rotarán.
+    # Eliminamos los Flotantes Fijos. Todos son Abordaje regular.
     for i in range(total_personas):
         filas.append({"Nombre": f"Abordaje_{i+1:02d}", "Grupo": GRUPOS_ABO[i % 6]})
     return pd.DataFrame(filas)
@@ -909,9 +909,10 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
     df_pers = crear_personal_abordaje(total_personas)
     filas = []
     dias_unicos = [descansos_iniciales[g] for g in GRUPOS_ABO]
-    
-    # Lista redonda para garantizar que los grupos se mezclen
     empleados = df_pers["Nombre"].tolist()
+    
+    # 🧠 MEMORIA CIRCADIANA: Recuerda el turno exacto que hizo cada persona ayer
+    turno_ayer = {p: None for p in empleados}
     
     for fecha in pd.date_range(inicio, fin):
         dia_n = DIAS_ES[fecha.weekday()]
@@ -919,21 +920,25 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         sem = fecha.isocalendar()[1]
         
-        # 1. Aplicar Descansos Base de la Regla de Oro
+        # 1. Asignar Descansos Base de la Regla de Oro
         if tipo_ciclo_descanso == "Mensual": desplazamiento_desc = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento_desc = delta_meses // 3
         elif tipo_ciclo_descanso == "Semestral": desplazamiento_desc = delta_meses // 6
         else: desplazamiento_desc = 0
             
-        descansos_hoy = []
+        descansos_hoy_g = []
         for idx_g, g in enumerate(GRUPOS_ABO):
             if dias_unicos[(idx_g + desplazamiento_desc) % 6] == dia_n:
-                descansos_hoy.append(g)
+                descansos_hoy_g.append(g)
                 
-        asig_hoy = {p["Nombre"]: "DESCANSO" for _, p in df_pers.iterrows() if p["Grupo"] in descansos_hoy}
+        asig_hoy = {}
+        for _, p in df_pers.iterrows():
+            if p["Grupo"] in descansos_hoy_g:
+                asig_hoy[p["Nombre"]] = "DESCANSO"
+                
         activos = [p for p in empleados if p not in asig_hoy]
         
-        # 2. Rotación de Turnos (Bloques Semanales)
+        # 2. Calcular la Rotación Global (Target Ideal)
         if tipo_rotacion_turnos == "Semanal": delta_rot = sem
         elif tipo_rotacion_turnos == "Quincenal": delta_rot = sem // 2
         elif tipo_rotacion_turnos == "Mensual": delta_rot = delta_meses
@@ -941,59 +946,56 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         elif tipo_rotacion_turnos == "Trimestral": delta_rot = delta_meses // 3
         else: delta_rot = 0
         
-        # Rotamos a la plantilla entera según el ciclo
+        pool_base = ["T1"] * req_t1 + ["T2"] * req_t2 + ["FLOTANTE"] * req_f
+        while len(pool_base) < total_personas:
+            pool_base.append("FLOTANTE")
+        pool_base = pool_base[:total_personas]
+        
         desp = (delta_rot * (total_personas // 2)) % total_personas
-        empleados_rotados = empleados[-desp:] + empleados[:-desp] if desp > 0 else empleados
+        pool_rotado = pool_base[-desp:] + pool_base[:-desp] if desp > 0 else pool_base
+        target_shift = {empleados[i]: pool_rotado[i] for i in range(total_personas)}
         
-        # Dividimos en dos grandes "Piscinas de Preferencia" para la semana (Esto evita los saltos)
-        mitad = total_personas // 2
-        pool_T1_pref = empleados_rotados[:mitad]
-        pool_T2_pref = empleados_rotados[mitad:]
+        # 3. 🛡️ REGLA DE INERCIA BIOLÓGICA (Evita los saltos T2 -> T1 sin descanso)
+        t1_asig, t2_asig, f_asig = 0, 0, 0
+        libres_hoy = [] # Son los "Agentes Libres" que recién vuelven de descansar
         
-        activos_T1 = [p for p in pool_T1_pref if p in activos]
-        activos_T2 = [p for p in pool_T2_pref if p in activos]
-        
-        sobrantes = []
-        
-        # 3. Llenado Estricto de Cuotas Diarias
-        # Asignar T1
-        t1_asignados = 0
-        for p in activos_T1:
-            if t1_asignados < req_t1:
-                asig_hoy[p] = "T1"
-                t1_asignados += 1
-            else: sobrantes.append(p)
+        for p in activos:
+            if turno_ayer[p] in ["T1", "T2", "FLOTANTE"]:
+                # Si ayer trabajó, se queda amarrado a su mismo turno hoy (Inercia)
+                asig_hoy[p] = turno_ayer[p]
+                if turno_ayer[p] == "T1": t1_asig += 1
+                elif turno_ayer[p] == "T2": t2_asig += 1
+                elif turno_ayer[p] == "FLOTANTE": f_asig += 1
+            else:
+                # Si ayer descansó, hoy es libre de rotar a un nuevo turno
+                libres_hoy.append(p)
                 
-        # Asignar T2
-        t2_asignados = 0
-        for p in activos_T2:
-            if t2_asignados < req_t2:
-                asig_hoy[p] = "T2"
-                t2_asignados += 1
-            else: sobrantes.append(p)
+        # 4. Acomodar a los Agentes Libres en los huecos de la Cuota Diaria
+        faltan_t1 = max(0, req_t1 - t1_asig)
+        faltan_t2 = max(0, req_t2 - t2_asig)
+        faltan_f = max(0, req_f - f_asig)
+        
+        for p in libres_hoy:
+            pref = target_shift[p]
+            asignado = False
+            
+            # Intentar darle su turno ideal de la rotación
+            if pref == "T1" and faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1; asignado = True
+            elif pref == "T2" and faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1; asignado = True
+            elif pref == "FLOTANTE" and faltan_f > 0: asig_hoy[p] = "FLOTANTE"; faltan_f -= 1; asignado = True
+            
+            if not asignado:
+                # Si el turno ideal ya está lleno, se le da lo que quede disponible en la cuota
+                if faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1
+                elif faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
+                elif faltan_f > 0: asig_hoy[p] = "FLOTANTE"; faltan_f -= 1
+                else: asig_hoy[p] = "DESCANSO" # Si ya se llenaron todos, se va a Descanso forzado
                 
-        # Si hubo déficit en alguna piscina, tomamos de los sobrantes
-        faltan_t1 = req_t1 - t1_asignados
-        while faltan_t1 > 0 and sobrantes:
-            asig_hoy[sobrantes.pop(0)] = "T1"
-            faltan_t1 -= 1
+        # 5. Actualizar la memoria circadiana para el día siguiente
+        for p in empleados:
+            turno_ayer[p] = asig_hoy.get(p, "DESCANSO")
             
-        faltan_t2 = req_t2 - t2_asignados
-        while faltan_t2 > 0 and sobrantes:
-            asig_hoy[sobrantes.pop(0)] = "T2"
-            faltan_t2 -= 1
-            
-        # Asignar FLOTANTES (Solo el cupo exacto solicitado)
-        f_asignados = 0
-        while f_asignados < req_f and sobrantes:
-            asig_hoy[sobrantes.pop(0)] = "FLOTANTE"
-            f_asignados += 1
-            
-        # El resto a DESCANSO FORZADO (Garantiza que no haya más flotantes de la cuenta)
-        for p in sobrantes:
-            asig_hoy[p] = "DESCANSO"
-            
-        # 4. Volcado Final
+        # 6. Volcado Final y Ajustes del Coordinador
         for _, p in df_pers.iterrows():
             turno_final = asig_hoy.get(p["Nombre"], "DESCANSO")
             if "ajustes_manuales_abo" in st.session_state and (p["Nombre"], fecha_str) in st.session_state.ajustes_manuales_abo:
