@@ -904,14 +904,22 @@ def crear_personal_abordaje(total_personas, lista_grupos):
         filas.append({"Nombre": f"Abordaje_{i+1:02d}", "Grupo": lista_grupos[i % num_g]})
     return pd.DataFrame(filas)
 
-def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos, frec_doble_desc):
+def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos, frec_doble_desc, modo_flotantes):
     df_pers = crear_personal_abordaje(total_personas, lista_grupos)
     filas = []
     dias_unicos_str = [descansos_iniciales.get(g, "Domingo") for g in lista_grupos]
     empleados = df_pers["Nombre"].tolist()
     num_g = len(lista_grupos)
     
-    # 🧠 CONTADORES MEJORADOS: Memoria de turnos, trabajo y fatiga de descanso
+    # Separar Flotantes Fijos de Operativos si aplica
+    if "Fijos" in modo_flotantes and req_f > 0:
+        flotantes_fijos = empleados[-req_f:]
+        operativos = [p for p in empleados if p not in flotantes_fijos]
+    else:
+        flotantes_fijos = []
+        operativos = empleados
+    
+    # 🧠 CONTADORES: Memoria de fatiga y bloques
     turno_ayer = {p: "DESCANSO" for p in empleados}
     consecutivos_trabajo = {p: 0 for p in empleados}
     consecutivos_descanso = {p: 0 for p in empleados}
@@ -923,7 +931,7 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         sem = fecha.isocalendar()[1]
         
-        # 1. Asignación de Descansos Base y Bono Fin de Semana
+        # 1. Asignación de Descansos (Regla 1 y 2)
         if tipo_ciclo_descanso == "Mensual": desplazamiento_desc = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento_desc = delta_meses // 3
         elif tipo_ciclo_descanso == "Semestral": desplazamiento_desc = delta_meses // 6
@@ -933,18 +941,16 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         for idx_g, g in enumerate(lista_grupos):
             dia_base_str = dias_unicos_str[(idx_g + desplazamiento_desc) % num_g]
             
-            # 🎁 ¿Le toca su BONO de FIN DE SEMANA esta semana?
             es_semana_doble = False
             if frec_doble_desc > 0:
-                # Rotamos el beneficio: Cada semana le toca a un grupo diferente
                 es_semana_doble = ((sem - idx_g) % frec_doble_desc) == 0
             
             if es_semana_doble:
-                # Si es su semana de bono, su descanso se mueve a SÁBADO y DOMINGO obligatoriamente.
+                # Bono: Descansa Sábado y Domingo estrictamente
                 if dia_n in ["Sábado", "Domingo"]:
                     descansos_hoy_g.append(g)
             else:
-                # Si no es su semana de bono, descansa su día base normal de Lunes a Viernes.
+                # Normal: Descansa su día parametrizado único
                 if dia_n == dia_base_str:
                     descansos_hoy_g.append(g)
                 
@@ -956,40 +962,68 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         activos = [p for p in empleados if p not in asig_hoy]
         req_total = req_t1 + req_t2 + req_f
         
-        # 3. ⚖️ FRENO DE DESCANSO (Evita los 3 días de descanso)
+        # 2. ⚖️ REPARADOR DE EXCEDENTES
         if len(activos) > req_total:
             sobrante = len(activos) - req_total
-            # Priorizamos mandar a descansar a quienes NO descansaron ayer y llevan más días trabajando.
-            # Orden: 1ro (¿Tiene 0 descansos consecutivos?), 2do (Días trabajados consecutivos)
-            activos_ordenados = sorted(activos, key=lambda x: (consecutivos_descanso[x] == 0, consecutivos_trabajo[x]), reverse=True)
+            activos.sort(key=lambda p: (
+                1 if (turno_ayer[p] == "DESCANSO" and consecutivos_descanso[p] == 1) else 0,
+                consecutivos_trabajo[p]
+            ), reverse=True)
             
-            for p in activos_ordenados[:sobrante]:
+            for p in activos[:sobrante]:
                 asig_hoy[p] = "DESCANSO"
+            activos = activos[sobrante:]
             
-            activos = activos_ordenados[sobrante:]
+        # 3. ⚖️ REPARADOR DE DÉFICIT
+        elif len(activos) < req_total:
+            faltan = req_total - len(activos)
+            descansando = [p for p, t in asig_hoy.items() if t == "DESCANSO"]
+            descansando.sort(key=lambda p: (
+                1 if turno_ayer[p] == "DESCANSO" else 0,
+                -consecutivos_trabajo.get(p, 0)
+            ), reverse=True)
             
-        # 4. Rotación Global de Turnos
+            for p in descansando[:faltan]:
+                del asig_hoy[p]
+                activos.append(p)
+            
+        # 4. Rotación Global (Cálculo del turno objetivo - Regla 3)
         if tipo_rotacion_turnos == "Semanal": delta_rot = sem
         elif tipo_rotacion_turnos == "Quincenal": delta_rot = sem // 2
         elif tipo_rotacion_turnos == "Mensual": delta_rot = delta_meses
         else: delta_rot = 0
         
-        pool_base = ["T1"] * req_t1 + ["T2"] * req_t2 + ["FLOTANTE"] * req_f
-        while len(pool_base) < total_personas:
-            pool_base.append("FLOTANTE")
-        pool_base = pool_base[:total_personas]
+        target_shift = {}
+        if "Fijos" in modo_flotantes:
+            pool_base = ["T1"] * req_t1 + ["T2"] * req_t2
+            while len(pool_base) < len(operativos): pool_base.append("T1")
+            pool_base = pool_base[:len(operativos)]
+            
+            desp = (delta_rot * (len(operativos) // 2)) % len(operativos) if operativos else 0
+            pool_rotado = pool_base[-desp:] + pool_base[:-desp] if desp > 0 else pool_base
+            target_shift = {operativos[i]: pool_rotado[i] for i in range(len(operativos))}
+            for f in flotantes_fijos: target_shift[f] = "FLOTANTE"
+        else:
+            pool_base = ["T1"] * req_t1 + ["T2"] * req_t2 + ["FLOTANTE"] * req_f
+            while len(pool_base) < total_personas: pool_base.append("FLOTANTE")
+            pool_base = pool_base[:total_personas]
+            
+            desp = (delta_rot * (total_personas // 2)) % total_personas
+            pool_rotado = pool_base[-desp:] + pool_base[:-desp] if desp > 0 else pool_base
+            target_shift = {empleados[i]: pool_rotado[i] for i in range(total_personas)}
         
-        desp = (delta_rot * (total_personas // 2)) % total_personas
-        pool_rotado = pool_base[-desp:] + pool_base[:-desp] if desp > 0 else pool_base
-        target_shift = {empleados[i]: pool_rotado[i] for i in range(total_personas)}
-        
-        # 5. 🛡️ INERCIA DE TURNO
+        # 5. 🛡️ INERCIA DE TURNO (Evita los cruces dañinos)
         t1_asig, t2_asig, f_asig = 0, 0, 0
         libres_hoy = []
         
         for p in activos:
             if turno_ayer[p] in ["T1", "T2", "FLOTANTE"]:
-                if turno_ayer[p] == "T1" and t1_asig < req_t1: asig_hoy[p] = "T1"; t1_asig += 1
+                if "Fijos" in modo_flotantes and p in flotantes_fijos:
+                    if f_asig < req_f: asig_hoy[p] = "FLOTANTE"; f_asig += 1
+                    else: libres_hoy.append(p)
+                elif "Fijos" in modo_flotantes and p in operativos and turno_ayer[p] == "FLOTANTE":
+                    libres_hoy.append(p)
+                elif turno_ayer[p] == "T1" and t1_asig < req_t1: asig_hoy[p] = "T1"; t1_asig += 1
                 elif turno_ayer[p] == "T2" and t2_asig < req_t2: asig_hoy[p] = "T2"; t2_asig += 1
                 elif turno_ayer[p] == "FLOTANTE" and f_asig < req_f: asig_hoy[p] = "FLOTANTE"; f_asig += 1
                 else: libres_hoy.append(p)
@@ -1001,7 +1035,7 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
         faltan_f = max(0, req_f - f_asig)
         
         for p in libres_hoy:
-            pref = target_shift[p]
+            pref = target_shift.get(p, "T1")
             asignado = False
             if pref == "T1" and faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1; asignado = True
             elif pref == "T2" and faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1; asignado = True
@@ -1011,7 +1045,6 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
                 if faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1
                 elif faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
                 elif faltan_f > 0: asig_hoy[p] = "FLOTANTE"; faltan_f -= 1
-                else: asig_hoy[p] = "DESCANSO"
                 
         # 6. Actualizar Contadores Diarios
         for p in empleados:
@@ -1024,7 +1057,7 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
                 consecutivos_trabajo[p] += 1
                 consecutivos_descanso[p] = 0
                 
-        # 7. Volcado Final y Ajustes Manuales
+        # 7. Volcado Final y Ajustes
         for _, p in df_pers.iterrows():
             turno_final = asig_hoy.get(p["Nombre"], "DESCANSO")
             if "ajustes_manuales_abo" in st.session_state and (p["Nombre"], fecha_str) in st.session_state.ajustes_manuales_abo:
@@ -1106,11 +1139,12 @@ def pantalla_abordaje():
     
     st.markdown("---")
     
-    # 🌟 NUEVO PARÁMETRO: Doble Descanso 
-    st.markdown("### 🎁 Bono de Descanso (Otorgar 2 días seguidos)")
-    c_doble1, c_doble2 = st.columns(2)
-    activar_doble = c_doble1.checkbox("Activar 2 días de descanso consecutivos", value=True)
-    frec_doble = c_doble2.number_input("Cada cuántas semanas aplica:", 1, 12, 4, disabled=not activar_doble)
+    # 🌟 NUEVO PARÁMETRO: Configuración de Flotantes y Bonos
+    st.markdown("### ⚙️ Configuración Especial de Turnos")
+    c_esp1, c_esp2, c_esp3 = st.columns(3)
+    modo_flotantes = c_esp1.radio("🔄 Modalidad Turno Flotante:", ["Rotativo (Toda la planta rota)", "Fijos (Personal exclusivo)"], horizontal=True)
+    activar_doble = c_esp2.checkbox("Activar Bono de Sáb y Dom libres", value=True)
+    frec_doble = c_esp3.number_input("Cada cuántas semanas aplica el Bono:", 1, 12, 4, disabled=not activar_doble)
     frecuencia_final = frec_doble if activar_doble else 0
     
     st.markdown("---")
@@ -1135,10 +1169,10 @@ def pantalla_abordaje():
         st.error(f"🚨 **Error de Regla de Oro:** Debes seleccionar {max_dias_posibles} días de descanso diferentes para evitar desprotección operativa.")
                                   
     if st.button("👁️ PREVISUALIZAR MALLA (Sin Guardar)", disabled=bloquear_generacion):
-        st.session_state.m_base_abo = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos, frecuencia_final)
+        st.session_state.m_base_abo = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos, frecuencia_final, modo_flotantes)
         
     if 'm_base_abo' in st.session_state and not st.session_state.m_base_abo.empty:
-        df_final = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos, frecuencia_final)
+        df_final = generar_malla_abordaje(inicio, fin, desc_data, total_p, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos, lista_grupos, frecuencia_final, modo_flotantes)
         st.session_state.m_base_abo = df_final
         
         st.write("---")
