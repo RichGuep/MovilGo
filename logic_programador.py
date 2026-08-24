@@ -908,25 +908,26 @@ def crear_personal_abordaje(total_personas):
         filas.append({"Nombre": f"Flotante_{i+1:02d}", "Grupo": "Flotantes"})
     return pd.DataFrame(filas)
 
-def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req_t1, req_t2, req_f, tipo_ciclo):
+def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req_t1, req_t2, req_f, tipo_ciclo_descanso, tipo_rotacion_turnos):
     df_pers = crear_personal_abordaje(total_personas)
     filas = []
-    historia_turno = {row["Nombre"]: ("T1" if idx % 2 == 0 else "T2") for idx, row in df_pers.iterrows()}
     dias_unicos = [descansos_iniciales[g] for g in GRUPOS_ABO]
     
     for fecha in pd.date_range(inicio, fin):
         dia_n = DIAS_ES[fecha.weekday()]
         fecha_str = fecha.strftime('%Y-%m-%d')
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
+        sem = fecha.isocalendar()[1]
         
-        if tipo_ciclo == "Mensual": desplazamiento = delta_meses
-        elif tipo_ciclo == "Trimestral": desplazamiento = delta_meses // 3
-        elif tipo_ciclo == "Semestral": desplazamiento = delta_meses // 6
-        else: desplazamiento = 0
+        # 1. Rotación de Descansos
+        if tipo_ciclo_descanso == "Mensual": desplazamiento_desc = delta_meses
+        elif tipo_ciclo_descanso == "Trimestral": desplazamiento_desc = delta_meses // 3
+        elif tipo_ciclo_descanso == "Semestral": desplazamiento_desc = delta_meses // 6
+        else: desplazamiento_desc = 0
             
         descansos_hoy = []
         for idx_g, g in enumerate(GRUPOS_ABO):
-            if dias_unicos[(idx_g + desplazamiento) % 6] == dia_n:
+            if dias_unicos[(idx_g + desplazamiento_desc) % 6] == dia_n:
                 descansos_hoy.append(g)
                 
         asig_hoy = {p["Nombre"]: "DESCANSO" for _, p in df_pers.iterrows() if p["Grupo"] in descansos_hoy}
@@ -939,23 +940,40 @@ def generar_malla_abordaje(inicio, fin, descansos_iniciales, total_personas, req
             asig_hoy[sacado] = "DESCANSO"
             activos.remove(sacado)
             
-        pool_t1 = [a for a in activos if historia_turno[a] == "T1"]
-        pool_t2 = [a for a in activos if historia_turno[a] == "T2"]
+        # 2. Rotación de Turnos (T1 / T2)
+        if tipo_rotacion_turnos == "Semanal": delta_rot = sem
+        elif tipo_rotacion_turnos == "Quincenal": delta_rot = sem // 2
+        elif tipo_rotacion_turnos == "Mensual": delta_rot = delta_meses
+        elif tipo_rotacion_turnos == "Bimensual": delta_rot = delta_meses // 2
+        elif tipo_rotacion_turnos == "Trimestral": delta_rot = delta_meses // 3
+        else: delta_rot = 0
         
+        # Calculamos el turno base deseado para hoy según la rotación
+        deseado_hoy = {}
+        for idx, row in df_pers.iterrows():
+            # (Indice + Desplazamiento) % 2 permite alternar entre T1 y T2
+            turno_idx = (idx + delta_rot) % 2
+            deseado_hoy[row["Nombre"]] = "T1" if turno_idx == 0 else "T2"
+            
+        pool_t1 = [a for a in activos if deseado_hoy.get(a) == "T1"]
+        pool_t2 = [a for a in activos if deseado_hoy.get(a) == "T2"]
+        
+        # 3. Asignación Llenando Cuotas
         t1_asig = 0
         for a in list(pool_t1):
             if t1_asig < req_t1: asig_hoy[a] = "T1"; activos.remove(a); t1_asig += 1
         while t1_asig < req_t1 and activos:
-            a = activos.pop(0); asig_hoy[a] = "T1"; historia_turno[a] = "T1"; t1_asig += 1
+            a = activos.pop(0); asig_hoy[a] = "T1"; t1_asig += 1
             
         t2_asig = 0
         for a in list(pool_t2):
             if a in activos and t2_asig < req_t2: asig_hoy[a] = "T2"; activos.remove(a); t2_asig += 1
         while t2_asig < req_t2 and activos:
-            a = activos.pop(0); asig_hoy[a] = "T2"; historia_turno[a] = "T2"; t2_asig += 1
+            a = activos.pop(0); asig_hoy[a] = "T2"; t2_asig += 1
             
         for a in activos: asig_hoy[a] = "FLOTANTE"
             
+        # 4. Volcado final considerando ajustes manuales
         for _, p in df_pers.iterrows():
             turno_final = asig_hoy.get(p["Nombre"], "DESCANSO")
             if "ajustes_manuales_abo" in st.session_state and (p["Nombre"], fecha_str) in st.session_state.ajustes_manuales_abo:
