@@ -973,7 +973,7 @@ def pantalla_programador():
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Tecnicos_{date.today()}.xlsx")
 
 # =========================================================
-# 8. MOTOR Y PANEL DE ABORDAJE (ROTACIÓN + ALERTAS DE COBERTURA)
+# 8. MOTOR Y PANEL DE ABORDAJE (AUDITORÍA DINÁMICA DE FLOTANTES)
 # =========================================================
 
 def crear_personal_abordaje_dinamico(total_personas, num_flotantes, dias_permitidos):
@@ -1073,8 +1073,12 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                     
             descanso_real_del_mes[nombre] = dia_asignado_actual
             
-            if es_descanso: descansos_teoricos.append(nombre)
-            elif nombre not in inmunes: activos_teoricos.append(nombre)
+            if es_descanso: 
+                descansos_teoricos.append(nombre)
+                if p["Rol"] == "Flotante" and config_flotantes.get("proteger", False):
+                    inmunes.add(nombre)
+            elif nombre not in inmunes: 
+                activos_teoricos.append(nombre)
 
         flotantes_nombres = df_personal[df_personal["Rol"] == "Flotante"]["Nombre"].tolist()
         regulares_nombres = df_personal[df_personal["Rol"] == "Regular"]["Nombre"].tolist()
@@ -1092,8 +1096,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 drafted = disponibles.pop(0)
                 descansos_list.remove(drafted)
                 activos_list.append(drafted)
-                
-                # REGLA ESTRICTA: Solo gana compensado si el día cancelado es literalmente su día asignado
                 if dia_n == descanso_real_del_mes[drafted]:
                     debe_compensado[drafted] = True
                     cancelados_mes[drafted] += 1
@@ -1119,7 +1121,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 debe_compensado[drafted] = True
                 cancelados_mes[drafted] += 1
 
-        # 2. RESCATE OPERATIVO: Flotantes
         reclutar_personal(act_f, desc_f, req_f)
             
         while len(act_f) > req_f and (len(desc_f) + len(desc_r)) < max_descansos:
@@ -1135,7 +1136,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         for n in desc_f: 
             if n not in asig_hoy: asig_hoy[n] = "DESCANSO"
 
-        # 3. RESCATE OPERATIVO: Regulares
         req_reg = req_t1 + req_t2
         reclutar_personal(act_r, desc_r, req_reg)
 
@@ -1151,7 +1151,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         for n in desc_r: 
             if n not in asig_hoy: asig_hoy[n] = "DESCANSO"
 
-        # 4. Asignar T1 y T2 protegiendo fatiga
         faltan_t1 = req_t1
         faltan_t2 = req_t2
         flexibles = []
@@ -1179,7 +1178,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 elif faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
                 else: asig_hoy[p] = t_previo
 
-        # 5. Actualizar Memoria y Filas
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             t_final = asig_hoy.get(nombre, "DESCANSO")
@@ -1247,12 +1245,11 @@ def generar_reporte_abordaje(df_final):
         })
     return pd.DataFrame(filas)
 
-# 🟢 MODIFICADA PARA ALERTAR SOBRE FATIGA Y COBERTURA (FALTANTES)
-def verificar_alarmas_abordaje(df_final, req_t1, req_t2, req_f):
+# 🟢 MODIFICADA PARA PERMITIR QUE FLOTANTE REQ = 0 EN SU DÍA DE DESCANSO
+def verificar_alarmas_abordaje(df_final, req_t1, req_t2, req_f, activar_finde_largo, dias_permitidos):
     df_plano = df_final.sort_values(by=["Nombre", "Fecha"])
     alertas = []
     
-    # 1. Alarmas de Fatiga
     for sujeto, group in df_plano.groupby("Nombre"):
         lista_turnos = group["Turno"].tolist()
         lista_fechas = group["Fecha"].tolist()
@@ -1264,22 +1261,37 @@ def verificar_alarmas_abordaje(df_final, req_t1, req_t2, req_f):
                     "Fecha": lista_fechas[i].strftime('%Y-%m-%d')
                 })
                 
-    # 2. Alarmas de Cobertura Diaria (Huecos operativos)
     df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
     cob = df_plano.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
     for c in ["T1", "T2", "FLOTANTE"]:
         if c not in cob.columns: cob[c] = 0
         
     for d_f in cob.index:
+        dia_n = DIAS_ES[d_f.weekday()]
+        week = d_f.isocalendar()[1]
+        mes_str_col = d_f.strftime('%Y-%m')
+        
+        # 🟢 Evaluar si HOY es el día de descanso oficial de los flotantes
+        flotantes_df = df_plano[(df_plano['Descanso_Base'] == 'Flotante') & (df_plano['Mes'] == mes_str_col)]
+        req_f_hoy = req_f
+        if not flotantes_df.empty:
+            dia_descanso_f = flotantes_df.iloc[0]['Descanso_Actual']
+            idx_ref = dias_permitidos.index(dia_descanso_f) if dia_descanso_f in dias_permitidos else 0
+            es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_ref) % 5 == 0
+            
+            # Si a los flotantes les toca descansar hoy, el requerimiento operativo de flotantes es CERO
+            if dia_n == dia_descanso_f or es_finde_largo:
+                req_f_hoy = 0
+
         faltan = []
         if cob.at[d_f, "T1"] < req_t1: faltan.append(f"T1 ({cob.at[d_f, 'T1']}/{req_t1})")
         if cob.at[d_f, "T2"] < req_t2: faltan.append(f"T2 ({cob.at[d_f, 'T2']}/{req_t2})")
-        if cob.at[d_f, "FLOTANTE"] < req_f: faltan.append(f"FLOTANTES ({cob.at[d_f, 'FLOTANTE']}/{req_f})")
+        if cob.at[d_f, "FLOTANTE"] < req_f_hoy: faltan.append(f"FLOTANTES ({cob.at[d_f, 'FLOTANTE']}/{req_f_hoy})")
         
         if faltan:
             alertas.append({
                 "Mensaje": f"⚠️ **Falta Cobertura Operativa el {d_f.strftime('%Y-%m-%d')}:** Hay déficit en {', '.join(faltan)}.",
-                "Sujeto": None, # No preseleccionamos a nadie para que elijas libremente a quién asignar
+                "Sujeto": None,
                 "Fecha": d_f.strftime('%Y-%m-%d')
             })
             
@@ -1369,7 +1381,9 @@ def pantalla_abordaje():
     c_flo1, c_flo2 = st.columns(2)
     rot_flotantes = c_flo1.radio("Descanso de Flotantes:", ["Fijo", "Rotativo"], horizontal=True)
     dia_base_flotantes = c_flo2.selectbox("Día de Descanso Base (Flotantes):", DIAS_ES, index=6)
-    config_flotantes = {"rotacion": rot_flotantes, "dia_base": dia_base_flotantes}
+    
+    proteger_f = st.checkbox("🛡️ Blindar descanso de Flotantes (Evita que el sistema los obligue a trabajar en su día libre si falta cobertura)", value=True)
+    config_flotantes = {"rotacion": rot_flotantes, "dia_base": dia_base_flotantes, "proteger": proteger_f}
 
     # =========================================================
     # 3. GENERACIÓN Y GUARDADO DE MALLA
@@ -1441,13 +1455,27 @@ def pantalla_abordaje():
         fila_descansos = {}
         for col_fecha in pivot_persona.columns:
             col_dt = pd.to_datetime(col_fecha)
+            dia_n = DIAS_ES[col_dt.weekday()]
+            week = col_dt.isocalendar()[1]
+            mes_str_col = col_dt.strftime('%Y-%m')
+
             if col_dt in cob.index:
                 t1_val = cob.at[col_dt, "T1"]
                 t2_val = cob.at[col_dt, "T2"]
                 f_val = cob.at[col_dt, "FLOTANTE"]
                 desc_val = cob.at[col_dt, "DESCANSO"] + cob.at[col_dt, "COMPENSADO"]
                 
-                status = "✅ OK" if (t1_val >= req_t1 and t2_val >= req_t2 and f_val >= req_f) else "❌ FALTA TURNO"
+                # 🟢 Calcular el requerimiento dinámico para Flotantes
+                flotantes_df = df_mostrar[(df_mostrar['Descanso_Base'] == 'Flotante') & (df_mostrar['Mes'] == mes_str_col)]
+                req_f_hoy = req_f
+                if not flotantes_df.empty:
+                    dia_descanso_f = flotantes_df.iloc[0]['Descanso_Actual']
+                    idx_ref = dias_permitidos.index(dia_descanso_f) if dia_descanso_f in dias_permitidos else 0
+                    es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_ref) % 5 == 0
+                    if dia_n == dia_descanso_f or es_finde_largo:
+                        req_f_hoy = 0
+                
+                status = "✅ OK" if (t1_val >= req_t1 and t2_val >= req_t2 and f_val >= req_f_hoy) else "❌ FALTA TURNO"
                 fila_semaforo[col_fecha] = status
                 fila_descansos[col_fecha] = f"🛌 {desc_val} Descansos"
             else:
@@ -1487,7 +1515,6 @@ def pantalla_abordaje():
                 popup_forzar_ajuste_fecha_abo(f_libre_sel, sorted(list(df_final["Nombre"].unique())), df_context=df_final)
 
         st.write("---")
-        # 🟢 CAMBIO DE TÍTULO PARA INCLUIR COBERTURA EN LA PESTAÑA
         t_dash, t_fatiga, t_nomina, t_hist, t_audit = st.tabs(["📊 Dashboard de Costos", "⚠️ Alarmas (Fatiga y Cobertura)", "📋 Reporte Nómina", "🗄️ Histórico BD", "🔎 Auditoría Personal"])
         rep_maestro_abo = generar_reporte_abordaje(df_final)
         
@@ -1509,8 +1536,8 @@ def pantalla_abordaje():
                 st.bar_chart(rep_maestro_abo.groupby("Nombre")['Costo Total ($)'].sum().reset_index(), x="Nombre", y="Costo Total ($)")
 
         with t_fatiga:
-            # 🟢 SE PASAN LOS REQUERIMIENTOS PARA EVALUAR FALTANTES
-            lista_alertas = verificar_alarmas_abordaje(df_final, req_t1, req_t2, req_f)
+            # 🟢 PASAMOS VARIABLES ADICIONALES PARA LA LÓGICA DE DÍAS PERMITIDOS Y FINDE LARGO
+            lista_alertas = verificar_alarmas_abordaje(df_final, req_t1, req_t2, req_f, activar_finde_largo, dias_permitidos)
             if lista_alertas:
                 for idx_al, al in enumerate(lista_alertas):
                     c_al1, c_al2 = st.columns([5, 1])
@@ -1570,9 +1597,6 @@ def pantalla_abordaje():
                 with pd.ExcelWriter(output_audit, engine='openpyxl') as writer: 
                     audit_pivot.to_excel(writer, sheet_name="Auditoria_Mensual", index=False)
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Abordaje_{date.today()}.xlsx")
-
-# =========================================================
-# (AQUÍ CONTINUARÍA TU SECCIÓN 9 PARA OTROS CARGOS...)
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
 # =========================================================
