@@ -988,6 +988,22 @@ def popup_forzar_ajuste_fecha_abo(fecha_solicitada, opciones_sujetos):
         st.success("¡Turno validado en memoria!")
         st.rerun()
 
+def style_malla_abordaje(df_pivot):
+    styles = pd.DataFrame('', index=df_pivot.index, columns=df_pivot.columns)
+    color_map = {"T1": "#D6EAF8", "T2": "#D5F5E3", "FLOTANTE": "#E8DAEF", "DESCANSO": "#1B2631"}
+    for col in df_pivot.columns:
+        es_fin_semana = False
+        try:
+            if pd.to_datetime(col).weekday() in [5, 6]: es_fin_semana = True
+        except: pass
+        for idx in df_pivot.index:
+            val = str(df_pivot.at[idx, col]).strip()
+            bg = color_map.get(val, "#1B2631")
+            txt = "white" if val == "DESCANSO" else "#17202A"
+            border = "1.5px solid #7F8C8D" if es_fin_semana else "0.5px solid #D5DBDB"
+            styles.at[idx, col] = f'background-color: {bg}; color: {txt}; font-weight: 700; border: {border};'
+    return df_pivot.style.apply(lambda _: styles, axis=None)
+
 def pantalla_abordaje():
     if "ajustes_manuales_abo" not in st.session_state: st.session_state.ajustes_manuales_abo = {}
     st.markdown("## 🚀 Panel de Programación - Abordaje Operativo")
