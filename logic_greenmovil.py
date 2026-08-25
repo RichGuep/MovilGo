@@ -66,7 +66,6 @@ def style_malla_green(df_pivot):
 # =========================================================
 # 2. CONEXIONES: DATA WAREHOUSE Y BASE DE DATOS LOCAL
 # =========================================================
-# 🔴 ATENCIÓN: PON AQUÍ TU CONTRASEÑA DEL DATA WAREHOUSE
 URL_DWH = "postgresql://richard.guevara:G8#Rh25@10.0.22.78:5432/GRMDW"
 load_dotenv(override=True)
 URL_LOCAL = os.getenv("DATABASE_URL", "postgresql://postgres:Rc130523@localhost:5432/movilgo").replace('"', '').replace("'", "")
@@ -76,8 +75,6 @@ except: engine_dwh = None
 
 try: 
     engine_local = create_engine(URL_LOCAL)
-    
-    # 🌟 MOTOR DE AUTO-CREACIÓN DE TABLAS (GREENMOVIL)
     def inicializar_tablas_greenmovil():
         try:
             with engine_local.begin() as conn:
@@ -93,9 +90,7 @@ try:
                 """))
         except Exception as e:
             print(f"Aviso de Inicialización BD (Greenmovil): {e}")
-
-    inicializar_tablas_greenmovil() # Ejecutamos la validación al arrancar
-
+    inicializar_tablas_greenmovil()
 except: engine_local = None
 
 def guardar_local(df, nombre_tabla):
@@ -287,12 +282,20 @@ def pantalla_parametrizador_green():
 # =========================================================
 # 5. NÚCLEO ALGORÍTMICO Y EDITOR CONTEXTUAL
 # =========================================================
+def get_minutes(time_str):
+    if pd.isna(time_str) or "OFF" in time_str: return 0
+    fmt = "%H:%M:%S" if len(str(time_str).split(":")) == 3 else "%H:%M"
+    try:
+        t = datetime.strptime(str(time_str), fmt)
+        return t.hour * 60 + t.minute
+    except: return 0
+
 def calcular_metricas_reforma(inicio_str, fin_str):
     if pd.isna(inicio_str) or pd.isna(fin_str) or "OFF" in inicio_str or "OFF" in fin_str: 
         return 0.0, 0.0, 0.0
-    fmt = "%H:%M:%S" if len(inicio_str.split(":")) == 3 else "%H:%M"
+    fmt = "%H:%M:%S" if len(str(inicio_str).split(":")) == 3 else "%H:%M"
     try:
-        t_i, t_f = datetime.strptime(inicio_str, fmt), datetime.strptime(fin_str, fmt)
+        t_i, t_f = datetime.strptime(str(inicio_str), fmt), datetime.strptime(str(fin_str), fmt)
         min_i, min_f = t_i.hour * 60 + t_i.minute, t_f.hour * 60 + t_f.minute
         minutos_totales = min_f - min_i if min_f >= min_i else (1440 - min_i) + min_f
         total_horas = minutos_totales / 60.0
@@ -315,7 +318,7 @@ def popup_forzar_green(fecha_solicitada, sujeto_sel, opciones_turnos, df_malla):
     
     df_malla['Fecha_str'] = pd.to_datetime(df_malla['Fecha']).dt.strftime('%Y-%m-%d')
     df_v = df_malla[(df_malla['Fecha_str'] >= ini_v) & (df_malla['Fecha_str'] <= fin_v)].copy()
-    df_v = df_v[~df_v['Sujeto'].str.contains("PENDIENTE", na=False)] # Filtramos las alertas de la vista
+    df_v = df_v[~df_v['Sujeto'].str.contains("PENDIENTE", na=False)] 
     
     if not df_v.empty:
         piv_v = df_v.pivot(index="Sujeto", columns="Fecha_str", values="Turno").fillna("DESCANSO")
@@ -337,8 +340,18 @@ def popup_forzar_green(fecha_solicitada, sujeto_sel, opciones_turnos, df_malla):
         st.success("¡Ajuste aplicado exitosamente! Cierra esta ventana y vuelve a previsualizar la malla.")
         st.rerun()
 
-def generar_malla_green(inicio, fin, sujetos, dict_grupos, t_nombres_lv, t_nombres_sd, df_q_lv, df_q_sd, descansos_ini, conceder_comp, tipo_ciclo, tipo_rotacion, accion_sob, mod_descanso):
+def generar_malla_green(inicio, fin, sujetos, dict_grupos, t_nombres_lv, t_nombres_sd, df_q_lv, df_q_sd, descansos_ini, conceder_comp, tipo_ciclo, tipo_rotacion, accion_sob, mod_descanso, config_h):
     filas, deudas = [], {s: 0 for s in sujetos}
+
+    # 🌟 PROTECCIÓN CIRCADIANA: Ordenamos los turnos cronológicamente por hora de inicio (AM a Noche)
+    t_ordenados_lv = sorted(t_nombres_lv, key=lambda x: get_minutes(config_h.get(x, {}).get("Inicio", "00:00")))
+    t_ordenados_sd = sorted(t_nombres_sd, key=lambda x: get_minutes(config_h.get(x, {}).get("Inicio", "00:00")))
+
+    # 🌟 MÁQUINA DE ESTADOS (Bloques de 4 días y Rotación)
+    fase_rotacion = {s: idx for idx, s in enumerate(sujetos)}
+    dias_en_turno = {s: 0 for s in sujetos}
+    ayer_descanso = {s: False for s in sujetos}
+    turno_actual = {s: None for s in sujetos}
 
     def get_quota(turno, is_weekend, grupo=None):
         df_q = df_q_sd if is_weekend else df_q_lv
@@ -353,32 +366,38 @@ def generar_malla_green(inicio, fin, sujetos, dict_grupos, t_nombres_lv, t_nombr
         is_weekend, fecha_str = fecha.weekday() >= 5, fecha.strftime('%Y-%m-%d')
 
         desp = delta_meses if tipo_ciclo == "Mensual" else (delta_meses // 3 if tipo_ciclo == "Trimestral" else 0)
-        d_rot = sem if tipo_rotacion == "Semanal" else (sem // 2 if tipo_rotacion == "Quincenal" else (delta_meses if tipo_rotacion == "Mensual" else 0))
 
-        # 🌟 NUEVA LÓGICA: SABATINO/DOMINICAL CON EQUILIBRIO MATEMÁTICO
         d_vivos = {}
         for idx_s, s in enumerate(sujetos):
             if "Sabatino" in mod_descanso: 
-                # Esto garantiza que la mitad del grupo descansa sábado y la otra domingo, y rotan la siguiente semana.
                 d_vivos[s] = "Domingo" if (sem + idx_s) % 2 != 0 else "Sábado"
             else: 
                 d_vivos[s] = DIAS_ES[(DIAS_ES.index(descansos_ini[s]) + desp) % 7]
 
-        turnos_hoy = t_nombres_sd if is_weekend else t_nombres_lv
-        deseados = {s: turnos_hoy[(idx_s + d_rot) % len(turnos_hoy)] for idx_s, s in enumerate(sujetos)} if turnos_hoy else {}
+        turnos_hoy = t_ordenados_sd if is_weekend else t_ordenados_lv
+        
+        # Lógica de Rotación Segura
+        deseados = {}
+        for s in sujetos:
+            if not turnos_hoy: continue
+            
+            if ayer_descanso[s] and dias_en_turno[s] >= 4 and tipo_rotacion != "Turno Fijo":
+                fase_rotacion[s] += 1
+                dias_en_turno[s] = 0 # Reinicia el bloque al rotar
+            
+            deseados[s] = turnos_hoy[fase_rotacion[s] % len(turnos_hoy)]
+
         asig = {s: "DESCANSO" for s, d in d_vivos.items() if d == dia_n}
         
-        # 🌟 CAUSACIÓN DEL COMPENSATORIO POR LEY
         if dia_n == "Domingo" and conceder_comp:
             for s in [x for x in sujetos if x not in asig]: deudas[s] += 1
         
-        # 🌟 DISTRIBUCIÓN DETERMINISTA DEL COMPENSATORIO EN LA SEMANA (L-V)
         if not is_weekend and conceder_comp:
             s_deuda = [s for s, d in deudas.items() if d > 0 and s not in asig]
             dia_idx = fecha.weekday()
             for s in s_deuda:
-                target_day = (len(str(s)) + sem) % 5 # Fórmula para dispersarlos de Lunes a Viernes
-                if dia_idx == target_day or dia_idx == 4: # El viernes obliga a cobrarlo si no lo tomó antes
+                target_day = (len(str(s)) + sem) % 5 
+                if dia_idx == target_day or dia_idx == 4: 
                     asig[s] = "COMPENSADO"
                     deudas[s] -= 1
 
@@ -389,7 +408,7 @@ def generar_malla_green(inicio, fin, sujetos, dict_grupos, t_nombres_lv, t_nombr
             if "Total Requerido" in (df_q_sd.columns if is_weekend else df_q_lv.columns):
                 for t_name in turnos_hoy:
                     req, asignados = get_quota(t_name, is_weekend), 0
-                    for s in [s for s in activos if deseados[s] == t_name]:
+                    for s in [s for s in activos if s in deseados and deseados[s] == t_name]:
                         if asignados < req: t_asig[s] = t_name; activos.remove(s); asignados += 1
                     while asignados < req and activos: s = activos.pop(0); t_asig[s] = t_name; asignados += 1
                     if asignados < req:
@@ -402,7 +421,7 @@ def generar_malla_green(inicio, fin, sujetos, dict_grupos, t_nombres_lv, t_nombr
                         req_g = get_quota(t_name, is_weekend, g)
                         if req_g == 0: continue
                         asignados, pool_g = 0, [s for s in activos if dict_grupos[s] == g]
-                        for s in [s for s in pool_g if deseados[s] == t_name]:
+                        for s in [s for s in pool_g if s in deseados and deseados[s] == t_name]:
                             if asignados < req_g: t_asig[s] = t_name; activos.remove(s); asignados += 1
                         while asignados < req_g and pool_g: s = pool_g.pop(0); activos.remove(s); t_asig[s] = t_name; asignados += 1
                         if asignados < req_g:
@@ -412,7 +431,6 @@ def generar_malla_green(inicio, fin, sujetos, dict_grupos, t_nombres_lv, t_nombr
 
         for s in activos: t_asig[s] = "DESCANSO" if accion_sob == "Descansar" else "SOPORTE"
         
-        # Validación extra de deudas
         if dia_n == "Domingo" and conceder_comp:
             for s in [s for s, t in t_asig.items() if t not in ["DESCANSO", "COMPENSADO"]]: deudas[s] += 1
             
@@ -422,6 +440,16 @@ def generar_malla_green(inicio, fin, sujetos, dict_grupos, t_nombres_lv, t_nombr
             final = asig.get(s, "DESCANSO")
             if "green_manual" in st.session_state and (s, fecha_str) in st.session_state.green_manual:
                 final = st.session_state.green_manual[(s, fecha_str)]
+                
+            # Actualizamos la memoria del estado
+            if final in ["DESCANSO", "COMPENSADO"]:
+                ayer_descanso[s] = True
+            else:
+                ayer_descanso[s] = False
+                if turno_actual[s] == final: dias_en_turno[s] += 1
+                else: dias_en_turno[s] = 1
+                turno_actual[s] = final
+
             filas.append({"Fecha": fecha, "Sujeto": s, "Grupo": dict_grupos[s], "Turno": final})
 
     return pd.DataFrame(filas)
@@ -432,10 +460,9 @@ def generar_reporte_green(df_final, config_h, df_base, descansos_ini, mod_descan
     df_reales['Fecha'] = pd.to_datetime(df_reales['Fecha'])
     
     for _, row in df_base.iterrows():
-        # 🌟 ESCUDO DE SEGURIDAD PARA LA SEDE
         n = row['Nombre']
         c = row['Cargo']
-        sed = row.get('Sede', 'N/A') # Si no existe la Sede, pone N/A
+        sed = row.get('Sede', 'N/A') 
         ced = row.get('Cedula', 'N/A')
         grp = row['EquipoAsignado']
         
@@ -448,9 +475,9 @@ def generar_reporte_green(df_final, config_h, df_base, descansos_ini, mod_descan
             if "green_manual" in st.session_state and (sujeto_b, f.strftime('%Y-%m-%d')) in st.session_state.green_manual:
                 t = st.session_state.green_manual[(sujeto_b, f.strftime('%Y-%m-%d'))]
 
-            info = config_h.get(t, {"Inicio": "OFF", "Fin": "OFF", "Alm": False})
+            info = config_h.get(t, {"Inicio": "OFF", "Fin": "OFF"})
+            # 🌟 ELIMINADO EL DESCUENTO DE HORA DE ALMUERZO SEGÚN REQUERIMIENTO
             hp, he, hn = calcular_metricas_reforma(info["Inicio"], info["Fin"])
-            if info.get("Alm", False) and hp > 0: hp, he = max(0.0, hp - 1.0), max(0.0, hp - 7.0)
             
             dia_asignado = "Sabatino/Dominical" if "Sabatino" in mod_descanso else descansos_ini.get(sujeto_b, "N/A")
 
@@ -487,7 +514,6 @@ def pantalla_mallas_green():
     st.write("---")
     st.markdown(f"### 🏗️ Conformación de Equipos para {cargo_sel}")
     
-    # 🌟 CREACIÓN DE COLUMNAS FANTASMA POR SEGURIDAD
     if 'EquipoAsignado' not in df_cargo.columns: df_cargo['EquipoAsignado'] = "Grupo Único"
     if 'Sede' not in df_cargo.columns: df_cargo['Sede'] = "N/A"
     if 'Email' not in df_cargo.columns: df_cargo['Email'] = ""
@@ -509,47 +535,105 @@ def pantalla_mallas_green():
     num_t_lv = c_tlv.number_input("Cantidad de Turnos (L-V):", 0, 18, 2)
     num_t_sd = c_tsd.number_input("Cantidad de Turnos (S-D):", 0, 18, 1)
 
+    # 🌟 MEMORIA DE ESTADO PARA TURNOS L-V
     st.markdown("**1. Configura Horarios (L-V)**")
-    df_t_lv_base = pd.DataFrame({"Turno": [f"Turno LV {i+1}" for i in range(num_t_lv)], "Inicio": ["08:00"]*num_t_lv, "Fin": ["17:00"]*num_t_lv, "Descuenta Almuerzo": [True]*num_t_lv})
-    df_t_lv = st.data_editor(df_t_lv_base, hide_index=True, key="dt_lv", use_container_width=True) if num_t_lv > 0 else pd.DataFrame()
+    if "df_t_lv_mem" not in st.session_state:
+        st.session_state.df_t_lv_mem = pd.DataFrame({"Turno": [f"Turno LV {i+1}" for i in range(2)], "Inicio": ["08:00"]*2, "Fin": ["17:00"]*2})
 
+    curr_len_lv = len(st.session_state.df_t_lv_mem)
+    if num_t_lv > curr_len_lv:
+        nuevos_lv = pd.DataFrame({"Turno": [f"Turno LV {i+1}" for i in range(curr_len_lv, num_t_lv)], "Inicio": ["08:00"]*(num_t_lv - curr_len_lv), "Fin": ["17:00"]*(num_t_lv - curr_len_lv)})
+        st.session_state.df_t_lv_mem = pd.concat([st.session_state.df_t_lv_mem, nuevos_lv], ignore_index=True)
+    elif num_t_lv < curr_len_lv:
+        st.session_state.df_t_lv_mem = st.session_state.df_t_lv_mem.head(num_t_lv)
+
+    df_t_lv = st.data_editor(st.session_state.df_t_lv_mem, hide_index=True, key="dt_lv", use_container_width=True) if num_t_lv > 0 else pd.DataFrame()
+    if num_t_lv > 0: st.session_state.df_t_lv_mem = df_t_lv
+
+    # 🌟 MEMORIA DE ESTADO PARA TURNOS S-D
     st.markdown("**2. Configura Horarios Especiales (S-D)**")
-    df_t_sd_base = pd.DataFrame({"Turno": [f"Turno FDS {i+1}" for i in range(num_t_sd)], "Inicio": ["08:00"]*num_t_sd, "Fin": ["14:00"]*num_t_sd, "Descuenta Almuerzo": [False]*num_t_sd})
-    df_t_sd = st.data_editor(df_t_sd_base, hide_index=True, key="dt_sd", use_container_width=True) if num_t_sd > 0 else pd.DataFrame()
+    if "df_t_sd_mem" not in st.session_state:
+        st.session_state.df_t_sd_mem = pd.DataFrame({"Turno": [f"Turno FDS {i+1}" for i in range(1)], "Inicio": ["08:00"], "Fin": ["14:00"]})
+
+    curr_len_sd = len(st.session_state.df_t_sd_mem)
+    if num_t_sd > curr_len_sd:
+        nuevos_sd = pd.DataFrame({"Turno": [f"Turno FDS {i+1}" for i in range(curr_len_sd, num_t_sd)], "Inicio": ["08:00"]*(num_t_sd - curr_len_sd), "Fin": ["14:00"]*(num_t_sd - curr_len_sd)})
+        st.session_state.df_t_sd_mem = pd.concat([st.session_state.df_t_sd_mem, nuevos_sd], ignore_index=True)
+    elif num_t_sd < curr_len_sd:
+        st.session_state.df_t_sd_mem = st.session_state.df_t_sd_mem.head(num_t_sd)
+
+    df_t_sd = st.data_editor(st.session_state.df_t_sd_mem, hide_index=True, key="dt_sd", use_container_width=True) if num_t_sd > 0 else pd.DataFrame()
+    if num_t_sd > 0: st.session_state.df_t_sd_mem = df_t_sd
 
     st.write("---")
     st.markdown("### 📊 Matriz de Requerimientos (Cuotas)")
     modo_cuotas = st.radio("Nivel de Asignación de Cuotas:", ["Global (Requisito total)", "Por Equipos (Requisito específico por equipo)"])
     cols_q = ["Turno"] + (grupos_unicos if "Equipos" in modo_cuotas else ["Total Requerido"])
     
+    # 🌟 MEMORIA PARA CUOTAS L-V
     st.markdown("**Cuotas Lunes a Viernes:**")
-    df_q_lv_base = pd.DataFrame(columns=cols_q)
-    if not df_t_lv.empty:
-        df_q_lv_base["Turno"] = df_t_lv["Turno"]
-        for c in cols_q[1:]: df_q_lv_base[c] = 1
-    df_q_lv = st.data_editor(df_q_lv_base, hide_index=True, key="dq_lv", use_container_width=True) if not df_t_lv.empty else pd.DataFrame()
+    if "df_q_lv_mem" not in st.session_state or list(st.session_state.df_q_lv_mem.columns) != cols_q:
+        df_q_lv_base = pd.DataFrame(columns=cols_q)
+        if not df_t_lv.empty:
+            df_q_lv_base["Turno"] = df_t_lv["Turno"]
+            for c in cols_q[1:]: df_q_lv_base[c] = 1
+        st.session_state.df_q_lv_mem = df_q_lv_base
+    else:
+        if not df_t_lv.empty:
+            t_actuales = st.session_state.df_q_lv_mem["Turno"].tolist()
+            t_nuevos = df_t_lv["Turno"].tolist()
+            if t_actuales != t_nuevos:
+                df_temp = pd.DataFrame(columns=cols_q)
+                df_temp["Turno"] = t_nuevos
+                for c in cols_q[1:]: df_temp[c] = 1
+                for idx, r in st.session_state.df_q_lv_mem.iterrows():
+                    if r["Turno"] in t_nuevos:
+                        row_idx = t_nuevos.index(r["Turno"])
+                        for c in cols_q[1:]: df_temp.at[row_idx, c] = r[c]
+                st.session_state.df_q_lv_mem = df_temp
 
+    df_q_lv = st.data_editor(st.session_state.df_q_lv_mem, hide_index=True, key="dq_lv", use_container_width=True) if not df_t_lv.empty else pd.DataFrame()
+    if not df_t_lv.empty: st.session_state.df_q_lv_mem = df_q_lv
+
+    # 🌟 MEMORIA PARA CUOTAS S-D
     st.markdown("**Cuotas Sábado y Domingo:**")
-    df_q_sd_base = pd.DataFrame(columns=cols_q)
-    if not df_t_sd.empty:
-        df_q_sd_base["Turno"] = df_t_sd["Turno"]
-        for c in cols_q[1:]: df_q_sd_base[c] = 1
-    df_q_sd = st.data_editor(df_q_sd_base, hide_index=True, key="dq_sd", use_container_width=True) if not df_t_sd.empty else pd.DataFrame()
+    if "df_q_sd_mem" not in st.session_state or list(st.session_state.df_q_sd_mem.columns) != cols_q:
+        df_q_sd_base = pd.DataFrame(columns=cols_q)
+        if not df_t_sd.empty:
+            df_q_sd_base["Turno"] = df_t_sd["Turno"]
+            for c in cols_q[1:]: df_q_sd_base[c] = 1
+        st.session_state.df_q_sd_mem = df_q_sd_base
+    else:
+        if not df_t_sd.empty:
+            t_actuales = st.session_state.df_q_sd_mem["Turno"].tolist()
+            t_nuevos = df_t_sd["Turno"].tolist()
+            if t_actuales != t_nuevos:
+                df_temp = pd.DataFrame(columns=cols_q)
+                df_temp["Turno"] = t_nuevos
+                for c in cols_q[1:]: df_temp[c] = 1
+                for idx, r in st.session_state.df_q_sd_mem.iterrows():
+                    if r["Turno"] in t_nuevos:
+                        row_idx = t_nuevos.index(r["Turno"])
+                        for c in cols_q[1:]: df_temp.at[row_idx, c] = r[c]
+                st.session_state.df_q_sd_mem = df_temp
+
+    df_q_sd = st.data_editor(st.session_state.df_q_sd_mem, hide_index=True, key="dq_sd", use_container_width=True) if not df_t_sd.empty else pd.DataFrame()
+    if not df_t_sd.empty: st.session_state.df_q_sd_mem = df_q_sd
 
     config_h, turnos_totales = {}, []
     if not df_t_lv.empty:
         turnos_totales.extend(df_t_lv["Turno"].tolist())
-        for _, r in df_t_lv.iterrows(): config_h[r["Turno"]] = {"Inicio": r["Inicio"], "Fin": r["Fin"], "Alm": r["Descuenta Almuerzo"]}
+        for _, r in df_t_lv.iterrows(): config_h[r["Turno"]] = {"Inicio": r["Inicio"], "Fin": r["Fin"]}
     if not df_t_sd.empty:
         turnos_totales.extend(df_t_sd["Turno"].tolist())
-        for _, r in df_t_sd.iterrows(): config_h[r["Turno"]] = {"Inicio": r["Inicio"], "Fin": r["Fin"], "Alm": r["Descuenta Almuerzo"]}
+        for _, r in df_t_sd.iterrows(): config_h[r["Turno"]] = {"Inicio": r["Inicio"], "Fin": r["Fin"]}
 
     st.write("---")
     st.markdown("### 📅 Estrategia de Descanso de Ley y Rotación")
     c_r1, c_r2, c_r3 = st.columns(3)
     sob = c_r1.radio("Acción Personal Sobrante:", ["Descansar", "Turno Soporte"])
     comp = c_r2.checkbox("⚖️ Pagar Domingos (Compensatorio)", True)
-    c_rot = c_r3.selectbox("🔄 Rotación de Turnos:", ["Semanal", "Quincenal", "Mensual", "Turno Fijo"])
+    c_rot = c_r3.selectbox("🔄 Rotación de Turnos:", ["Semanal", "Quincenal", "Mensual", "Turno Fijo"], help="Garantiza bloques mínimos de 4 días y la rotación obedece la ley circadiana AM a PM.")
     
     mod_descanso = st.radio("Modalidad de descanso:", ["Día Fijo", "Rotación Sabatino/Dominical (Turno Inteligente)"])
     c_ciclo = "Fijo"
@@ -563,8 +647,8 @@ def pantalla_mallas_green():
         st.success("✅ **Modo Sabatino/Dominical Activado:** El sistema alternará los descansos automáticamente.")
         for s in sujetos: desc_data[s] = "Domingo" 
 
-    config_h["SOPORTE"] = {"Inicio": "08:00", "Fin": "17:00", "Alm": True} if sob == "Turno Soporte" else {"Inicio": "OFF", "Fin": "OFF", "Alm": False}
-    config_h["DESCANSO"] = config_h["COMPENSADO"] = {"Inicio": "OFF", "Fin": "OFF", "Alm": False}
+    config_h["SOPORTE"] = {"Inicio": "08:00", "Fin": "17:00"} if sob == "Turno Soporte" else {"Inicio": "OFF", "Fin": "OFF"}
+    config_h["DESCANSO"] = config_h["COMPENSADO"] = {"Inicio": "OFF", "Fin": "OFF"}
 
     st.markdown("---")
     ci, cf = st.columns(2)
@@ -574,12 +658,12 @@ def pantalla_mallas_green():
     if st.button("👁️ PREVISUALIZAR MALLA GREENMOVIL", type="primary"):
         t_lv_list = df_t_lv["Turno"].tolist() if not df_t_lv.empty else []
         t_sd_list = df_t_sd["Turno"].tolist() if not df_t_sd.empty else []
-        st.session_state.green_malla = generar_malla_green(inicio, fin, sujetos, dict_grupos, t_lv_list, t_sd_list, df_q_lv, df_q_sd, desc_data, comp, c_ciclo, c_rot, sob, mod_descanso)
+        st.session_state.green_malla = generar_malla_green(inicio, fin, sujetos, dict_grupos, t_lv_list, t_sd_list, df_q_lv, df_q_sd, desc_data, comp, c_ciclo, c_rot, sob, mod_descanso, config_h)
 
     if 'green_malla' in st.session_state and not st.session_state.green_malla.empty:
         t_lv_list = df_t_lv["Turno"].tolist() if not df_t_lv.empty else []
         t_sd_list = df_t_sd["Turno"].tolist() if not df_t_sd.empty else []
-        df_fin = generar_malla_green(inicio, fin, sujetos, dict_grupos, t_lv_list, t_sd_list, df_q_lv, df_q_sd, desc_data, comp, c_ciclo, c_rot, sob, mod_descanso)
+        df_fin = generar_malla_green(inicio, fin, sujetos, dict_grupos, t_lv_list, t_sd_list, df_q_lv, df_q_sd, desc_data, comp, c_ciclo, c_rot, sob, mod_descanso, config_h)
         st.session_state.green_malla = df_fin
         
         t_malla = f"green_malla_{cargo_sel.lower().replace(' ', '_')}"
@@ -613,7 +697,6 @@ def pantalla_mallas_green():
         st.markdown(generar_html_imprimible(piv, f"Malla Operativa - {cargo_sel} - {inicio.strftime('%b %Y')}"), unsafe_allow_html=True)
         st.dataframe(style_malla_green(piv), use_container_width=True)
 
-        # 🌟 NUEVO EDITOR CONTEXTUAL 
         st.write("---")
         with st.expander("🔍 Editor Visual Avanzado (Pop-up Interactivo)"):
             c_f1, c_f2 = st.columns(2)
