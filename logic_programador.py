@@ -1070,6 +1070,26 @@ def style_malla_abordaje(df_pivot):
             styles.at[idx, col] = f'background-color: {bg}; color: {txt}; font-weight: 700; border: {border};'
     return df_pivot.style.apply(lambda _: styles, axis=None)
 
+def calcular_metricas_abordaje(turno):
+    if turno == "T1": return "04:30", "13:30", 8.0, 0.0, 1.5 
+    if turno == "T2": return "13:30", "22:30", 8.0, 0.0, 1.5 
+    if turno == "FLOTANTE": return "08:00", "17:00", 8.0, 0.0, 0.0 
+    return "OFF", "OFF", 0.0, 0.0, 0.0
+
+def generar_reporte_abordaje(df_final):
+    filas = []
+    df_final['Fecha'] = pd.to_datetime(df_final['Fecha'])
+    for _, row in df_final.iterrows():
+        fecha_dt = row['Fecha']
+        turno = row['Turno']
+        ini, fin, h_prog, h_extra, h_noc = calcular_metricas_abordaje(turno)
+        filas.append({
+            "Fecha": fecha_dt.strftime('%Y-%m-%d'), "Nombre": row['Nombre'], "Grupo": row['Grupo'], "Turno": turno,
+            "Hora inicio": ini, "Hora fin": fin, "Horas Programadas": h_prog, "Horas Extras": h_extra,
+            "Recargos Nocturnos": h_noc, "Mes": fecha_dt.strftime('%B'), "Semana": fecha_dt.isocalendar()[1]
+        })
+    return pd.DataFrame(filas)
+
 def pantalla_abordaje():
     if "ajustes_manuales_abo" not in st.session_state: st.session_state.ajustes_manuales_abo = {}
     st.markdown("## 🚀 Panel de Programación - Abordaje Operativo")
