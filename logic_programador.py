@@ -973,7 +973,7 @@ def pantalla_programador():
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Tecnicos_{date.today()}.xlsx")
 
 # =========================================================
-# 8. MOTOR Y PANEL DE ABORDAJE (ROTACIÓN EN DÍAS PERMITIDOS + POPUP AVANZADO)
+# 8. MOTOR Y PANEL DE ABORDAJE (ROTACIÓN + ALERTAS DE COBERTURA)
 # =========================================================
 
 def crear_personal_abordaje_dinamico(total_personas, num_flotantes, dias_permitidos):
@@ -1031,7 +1031,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         inmunes = set() 
         descanso_real_del_mes = {} 
         
-        # 1. Definir quién descansa hoy (Lógica de rotación en bucle cerrado)
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             descanso_base = p["Descanso_Base"]
@@ -1094,7 +1093,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 descansos_list.remove(drafted)
                 activos_list.append(drafted)
                 
-                # 🛑 REGLA ESTRICTA: Solo gana compensado si el día cancelado es literalmente su día asignado de la semana.
+                # REGLA ESTRICTA: Solo gana compensado si el día cancelado es literalmente su día asignado
                 if dia_n == descanso_real_del_mes[drafted]:
                     debe_compensado[drafted] = True
                     cancelados_mes[drafted] += 1
@@ -1116,7 +1115,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 desc_r.remove(drafted)
                 act_r.append(drafted)
                 
-            # 🛑 REGLA ESTRICTA: Solo gana compensado si el día cancelado es literalmente su día asignado de la semana.
             if dia_n == descanso_real_del_mes[drafted]:
                 debe_compensado[drafted] = True
                 cancelados_mes[drafted] += 1
@@ -1249,9 +1247,12 @@ def generar_reporte_abordaje(df_final):
         })
     return pd.DataFrame(filas)
 
-def verificar_alarmas_abordaje(df_final):
+# 🟢 MODIFICADA PARA ALERTAR SOBRE FATIGA Y COBERTURA (FALTANTES)
+def verificar_alarmas_abordaje(df_final, req_t1, req_t2, req_f):
     df_plano = df_final.sort_values(by=["Nombre", "Fecha"])
     alertas = []
+    
+    # 1. Alarmas de Fatiga
     for sujeto, group in df_plano.groupby("Nombre"):
         lista_turnos = group["Turno"].tolist()
         lista_fechas = group["Fecha"].tolist()
@@ -1262,6 +1263,26 @@ def verificar_alarmas_abordaje(df_final):
                     "Sujeto": sujeto,
                     "Fecha": lista_fechas[i].strftime('%Y-%m-%d')
                 })
+                
+    # 2. Alarmas de Cobertura Diaria (Huecos operativos)
+    df_plano["Fecha"] = pd.to_datetime(df_plano["Fecha"])
+    cob = df_plano.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
+    for c in ["T1", "T2", "FLOTANTE"]:
+        if c not in cob.columns: cob[c] = 0
+        
+    for d_f in cob.index:
+        faltan = []
+        if cob.at[d_f, "T1"] < req_t1: faltan.append(f"T1 ({cob.at[d_f, 'T1']}/{req_t1})")
+        if cob.at[d_f, "T2"] < req_t2: faltan.append(f"T2 ({cob.at[d_f, 'T2']}/{req_t2})")
+        if cob.at[d_f, "FLOTANTE"] < req_f: faltan.append(f"FLOTANTES ({cob.at[d_f, 'FLOTANTE']}/{req_f})")
+        
+        if faltan:
+            alertas.append({
+                "Mensaje": f"⚠️ **Falta Cobertura Operativa el {d_f.strftime('%Y-%m-%d')}:** Hay déficit en {', '.join(faltan)}.",
+                "Sujeto": None, # No preseleccionamos a nadie para que elijas libremente a quién asignar
+                "Fecha": d_f.strftime('%Y-%m-%d')
+            })
+            
     return alertas
 
 @st.dialog("🛠️ Gestor de Turno y Contexto Operativo (Abordaje)", width="large")
@@ -1466,7 +1487,8 @@ def pantalla_abordaje():
                 popup_forzar_ajuste_fecha_abo(f_libre_sel, sorted(list(df_final["Nombre"].unique())), df_context=df_final)
 
         st.write("---")
-        t_dash, t_fatiga, t_nomina, t_hist, t_audit = st.tabs(["📊 Dashboard de Costos", "⚠️ Alarmas de Fatiga", "📋 Reporte Nómina", "🗄️ Histórico BD", "🔎 Auditoría Personal"])
+        # 🟢 CAMBIO DE TÍTULO PARA INCLUIR COBERTURA EN LA PESTAÑA
+        t_dash, t_fatiga, t_nomina, t_hist, t_audit = st.tabs(["📊 Dashboard de Costos", "⚠️ Alarmas (Fatiga y Cobertura)", "📋 Reporte Nómina", "🗄️ Histórico BD", "🔎 Auditoría Personal"])
         rep_maestro_abo = generar_reporte_abordaje(df_final)
         
         with t_dash:
@@ -1487,7 +1509,8 @@ def pantalla_abordaje():
                 st.bar_chart(rep_maestro_abo.groupby("Nombre")['Costo Total ($)'].sum().reset_index(), x="Nombre", y="Costo Total ($)")
 
         with t_fatiga:
-            lista_alertas = verificar_alarmas_abordaje(df_final)
+            # 🟢 SE PASAN LOS REQUERIMIENTOS PARA EVALUAR FALTANTES
+            lista_alertas = verificar_alarmas_abordaje(df_final, req_t1, req_t2, req_f)
             if lista_alertas:
                 for idx_al, al in enumerate(lista_alertas):
                     c_al1, c_al2 = st.columns([5, 1])
@@ -1499,7 +1522,7 @@ def pantalla_abordaje():
                             sujeto_predef=al["Sujeto"], 
                             df_context=df_final
                         )
-            else: st.success("✅ Estructura libre de alertas de fatiga.")
+            else: st.success("✅ Estructura perfecta. Libre de alertas de fatiga y con 100% de cobertura.")
             
         with t_nomina:
             st.dataframe(rep_maestro_abo, use_container_width=True)
@@ -1547,6 +1570,9 @@ def pantalla_abordaje():
                 with pd.ExcelWriter(output_audit, engine='openpyxl') as writer: 
                     audit_pivot.to_excel(writer, sheet_name="Auditoria_Mensual", index=False)
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Abordaje_{date.today()}.xlsx")
+
+# =========================================================
+# (AQUÍ CONTINUARÍA TU SECCIÓN 9 PARA OTROS CARGOS...)
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
 # =========================================================
