@@ -680,7 +680,10 @@ def pantalla_programador():
     cols = st.columns(4)
     desc_data = {f"Grupo {i+1}": cols[i].selectbox(f"Descanso G{i+1}", DIAS_ES, index=[4,5,6,0][i]) for i in range(4)}
 
-    # 4. GENERACIÓN DE MALLA
+   # 4. GENERACIÓN DE MALLA
+    if 'm_base' not in st.session_state:
+        st.session_state.m_base = generar_malla_tecnicos_avanzado(inicio, fin, df_pers_editado, desc_data, conceder_compensatorio, tipo_ciclo_descanso, activar_t4)
+
     if st.button("👁️ PREVISUALIZAR MALLA (Sin Guardar)"):
         st.session_state.ajustes_manuales = {}
         st.session_state.m_personas_editada = {}
