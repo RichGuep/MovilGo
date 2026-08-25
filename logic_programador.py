@@ -881,16 +881,15 @@ def pantalla_programador():
 
         st.write("---")
         st.subheader("⚙️ Panel de Gestión y Corrección")
-        opt_b_modo = st.radio("🎯 Nivel de Cobertura a Modificar:", ["Ajustar Grupo (Macro)", "Ajustar Empleado (Micro)"], horizontal=True)
-        lista_nombres_unicos = sorted(list(df_final["Nombre"].unique()))
+        # El radio button de Macro/Micro se movió al interior del Popup, limpiando la UI externa.
         
-        with st.expander("🔍 Forzar cambio en cualquier fecha de la Malla"):
+        with st.expander("🔍 Forzar cambio libre en cualquier fecha de la Malla"):
             c_f1, c_f2 = st.columns(2)
             fechas_unicas = sorted([d.strftime('%Y-%m-%d') for d in pd.to_datetime(df_final['Fecha'].unique())])
             f_libre_sel = c_f1.selectbox("Seleccione la Fecha:", fechas_unicas, key="f_libre_dropdown_tec")
             if c_f2.button("⚙️ Abrir Gestor de Turno para esta Fecha", use_container_width=True):
-                opciones_s = lista_nombres_unicos if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
-                popup_forzar_ajuste_fecha(f_libre_sel, opciones_s, es_modo_persona=(opt_b_modo == "Ajustar Empleado (Micro)"), df_context=df_final)
+                # 🟢 Lanza popup y envía el dataframe final para dar contexto
+                popup_forzar_ajuste_fecha(f_libre_sel, df_context=df_final)
 
         st.write("---")
         t_dash, t_fatiga, t_nomina, t_hist, t_audit = st.tabs(["📊 Dashboard de Costos", "⚠️ Alarmas de Fatiga", "📋 Reporte Nómina", "🗄️ Consultar Histórico BD", "🔎 Auditoría Personal"])
@@ -914,17 +913,15 @@ def pantalla_programador():
         with t_fatiga:
             lista_alertas = verificar_alarmas_cambios_drasticos(df_final)
             if lista_alertas:
-                # 🟢 RENDEREIZADO CON BOTÓN DE CORRECCIÓN DIRECTA
+                # 🟢 NUEVO DISEÑO: Botón directo en la alarma pre-llenando el empleado y la fecha
                 for idx_al, al in enumerate(lista_alertas):
                     c_al1, c_al2 = st.columns([5, 1])
                     c_al1.warning(al["Mensaje"])
                     if c_al2.button("🛠️ Corregir", key=f"btn_corr_fatiga_tec_{idx_al}"):
                         popup_forzar_ajuste_fecha(
                             al["Fecha"], 
-                            lista_nombres_unicos, 
-                            es_modo_persona=True, 
-                            sujeto_predef=al["Sujeto"], 
-                            df_context=df_final
+                            df_context=df_final, 
+                            sujeto_predef=al["Sujeto"]
                         )
             else: st.success("✅ Estructura libre de alertas de fatiga.")
             
@@ -974,8 +971,6 @@ def pantalla_programador():
                 with pd.ExcelWriter(output_audit, engine='openpyxl') as writer: 
                     audit_pivot.to_excel(writer, sheet_name="Auditoria_Mensual", index=False)
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Tecnicos_{date.today()}.xlsx")
-
-
 
 # =========================================================
 # 8. MOTOR Y PANEL DE ABORDAJE (ROTACIÓN EN DÍAS PERMITIDOS + POPUP AVANZADO)
