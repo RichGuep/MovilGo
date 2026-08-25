@@ -887,7 +887,7 @@ def pantalla_programador():
                     else: st.warning("No hay registros.")
             except: st.info("BD vacía.")
 # =========================================================
-# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO)
+# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO Y DEFINITIVO)
 # =========================================================
 
 def crear_personal_abordaje_dinamico(total_personas, num_flotantes, num_grupos):
@@ -907,6 +907,10 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
     turno_actual = {}
     dias_en_turno = {}
     ayer_fue_descanso = {}
+    
+    # Memoria booleana: solo se acumula un compensado a la vez
+    debe_compensado = {} 
+    
     grupos_lista = list(descansos_grupos.keys())
     
     for idx, row in df_personal.iterrows():
@@ -914,63 +918,88 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
         turno_actual[nombre] = "T1" if idx % 2 == 0 else "T2"
         dias_en_turno[nombre] = 0
         ayer_fue_descanso[nombre] = False
+        debe_compensado[nombre] = False 
 
     for fecha in pd.date_range(inicio, fin):
         dia_n = DIAS_ES[fecha.weekday()]
         fecha_str = fecha.strftime('%Y-%m-%d')
         week = fecha.isocalendar()[1] 
-        
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
-        desp_desc = 0
-        if rotacion_descanso == "Mensual": desp_desc = delta_meses
-        elif rotacion_descanso == "Trimestral": desp_desc = delta_meses // 3
+        desp_desc = delta_meses if rotacion_descanso == "Mensual" else (delta_meses // 3 if rotacion_descanso == "Trimestral" else 0)
         
         asig_hoy = {}
+        descansos_teoricos = []
+        activos_teoricos = []
         
-        # 1. Asignar Descansos (Normales y Fines de Semana Largos)
+        # 1. Definir quién debería descansar hoy teóricamente
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             grupo = p["Grupo"]
             es_descanso = False
-            
             idx_g = grupos_lista.index(grupo) if grupo in grupos_lista else len(grupos_lista)
-            es_finde_largo = False
-            if activar_finde_largo and dia_n in ["Sábado", "Domingo"]:
-                if (week + idx_g) % 5 == 0: 
-                    es_finde_largo = True
+            es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_g) % 5 == 0
             
             if p["Rol"] == "Flotante":
                 dia_descanso_f = config_flotantes["dia_base"]
                 if config_flotantes["rotacion"] != "Fijo":
-                    idx_f = DIAS_ES.index(dia_descanso_f)
-                    dia_descanso_f = DIAS_ES[(idx_f + desp_desc) % 7]
+                    dia_descanso_f = DIAS_ES[(DIAS_ES.index(dia_descanso_f) + desp_desc) % 7]
                 if dia_descanso_f == dia_n or es_finde_largo: es_descanso = True
             else:
                 if grupo in descansos_grupos:
-                    idx_desc = DIAS_ES.index(descansos_grupos[grupo])
-                    dia_calculado = DIAS_ES[(idx_desc + desp_desc) % 7]
+                    dia_calculado = DIAS_ES[(DIAS_ES.index(descansos_grupos[grupo]) + desp_desc) % 7]
                     if dia_calculado == dia_n or es_finde_largo: es_descanso = True
                     
-            if es_descanso:
-                asig_hoy[nombre] = "DESCANSO"
-                ayer_fue_descanso[nombre] = True
-                dias_en_turno[nombre] = 0
-                
-        activos = [p["Nombre"] for _, p in df_personal.iterrows() if p["Nombre"] not in asig_hoy]
-        
-        # 2. Asignar Flotantes Activos
-        for nombre in activos.copy():
-            if df_personal[df_personal["Nombre"] == nombre]["Rol"].values[0] == "Flotante":
-                asig_hoy[nombre] = "FLOTANTE"
-                activos.remove(nombre)
-                ayer_fue_descanso[nombre] = False
+            if es_descanso: descansos_teoricos.append(nombre)
+            else: activos_teoricos.append(nombre)
 
-        # 3. Asignar Regulares (Con Lógica de Bloques)
+        flotantes_nombres = df_personal[df_personal["Rol"] == "Flotante"]["Nombre"].tolist()
+        regulares_nombres = df_personal[df_personal["Rol"] == "Regular"]["Nombre"].tolist()
+
+        act_f = [n for n in activos_teoricos if n in flotantes_nombres]
+        desc_f = [n for n in descansos_teoricos if n in flotantes_nombres]
+        act_r = [n for n in activos_teoricos if n in regulares_nombres]
+        desc_r = [n for n in descansos_teoricos if n in regulares_nombres]
+
+        # 2. RESCATE OPERATIVO: Flotantes
+        while len(act_f) < req_f and desc_f:
+            drafted = desc_f.pop(0)
+            act_f.append(drafted)
+            debe_compensado[drafted] = True # Trabaja en su descanso, se le debe un compensado
+            
+        while len(act_f) > req_f:
+            con_deuda = [n for n in act_f if debe_compensado[n]]
+            if not con_deuda: break
+            beneficiado = con_deuda[0]
+            act_f.remove(beneficiado)
+            asig_hoy[beneficiado] = "COMPENSADO"
+            debe_compensado[beneficiado] = False # Se le paga el compensado y la bandera se apaga
+
+        for n in act_f: asig_hoy[n] = "FLOTANTE"
+        for n in desc_f: asig_hoy[n] = "DESCANSO"
+
+        # 3. RESCATE OPERATIVO: Regulares
+        req_reg = req_t1 + req_t2
+        while len(act_r) < req_reg and desc_r:
+            drafted = desc_r.pop(0)
+            act_r.append(drafted)
+            debe_compensado[drafted] = True
+
+        while len(act_r) > req_reg:
+            con_deuda = [n for n in act_r if debe_compensado[n]]
+            if not con_deuda: break
+            beneficiado = con_deuda[0]
+            act_r.remove(beneficiado)
+            asig_hoy[beneficiado] = "COMPENSADO"
+            debe_compensado[beneficiado] = False
+
+        for n in desc_r: asig_hoy[n] = "DESCANSO"
+
+        # 4. Asignar T1 y T2 protegiendo fatiga
         faltan_t1 = req_t1
         faltan_t2 = req_t2
         flexibles = []
         
-        for p in activos:
+        for p in act_r:
             t_previo = turno_actual[p]
             if not ayer_fue_descanso[p] and 0 < dias_en_turno[p] < 4:
                 asig_hoy[p] = t_previo
@@ -990,27 +1019,32 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
             elif t_deseado == "T2" and faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
             else:
                 if faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1
-                else: asig_hoy[p] = "T2"; faltan_t2 -= 1
-                    
-        for p in activos:
-            t_final = asig_hoy.get(p, "T1")
-            if turno_actual[p] == t_final: dias_en_turno[p] += 1
-            else: dias_en_turno[p] = 1
-            turno_actual[p] = t_final
-            ayer_fue_descanso[p] = False
+                elif faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
+                else: asig_hoy[p] = t_previo
 
-        # 4. Construir Filas Finales
+        # 5. Actualizar Memoria y Filas
         for _, p in df_personal.iterrows():
-            turno_final = asig_hoy.get(p["Nombre"], "DESCANSO")
-            if "ajustes_manuales_abo" in st.session_state and (p["Nombre"], fecha_str) in st.session_state.ajustes_manuales_abo:
-                turno_final = st.session_state.ajustes_manuales_abo[(p["Nombre"], fecha_str)]
-            filas.append({"Fecha": fecha, "Grupo": p["Grupo"], "Nombre": p["Nombre"], "Turno": turno_final})
+            nombre = p["Nombre"]
+            t_final = asig_hoy.get(nombre, "DESCANSO")
+            
+            if t_final in ["DESCANSO", "COMPENSADO"]:
+                ayer_fue_descanso[nombre] = True
+                dias_en_turno[nombre] = 0
+            else:
+                if turno_actual[nombre] == t_final: dias_en_turno[nombre] += 1
+                else: dias_en_turno[nombre] = 1
+                turno_actual[nombre] = t_final
+                ayer_fue_descanso[nombre] = False
+
+            if "ajustes_manuales_abo" in st.session_state and (nombre, fecha_str) in st.session_state.ajustes_manuales_abo:
+                t_final = st.session_state.ajustes_manuales_abo[(nombre, fecha_str)]
+            filas.append({"Fecha": fecha, "Grupo": p["Grupo"], "Nombre": nombre, "Turno": t_final})
             
     return pd.DataFrame(filas)
 
 def style_malla_abordaje(df_pivot):
     styles = pd.DataFrame('', index=df_pivot.index, columns=df_pivot.columns)
-    color_map = {"T1": "#D6EAF8", "T2": "#D5F5E3", "FLOTANTE": "#E8DAEF", "DESCANSO": "#1B2631"}
+    color_map = {"T1": "#D6EAF8", "T2": "#D5F5E3", "FLOTANTE": "#E8DAEF", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"}
     for col in df_pivot.columns:
         es_fin_semana = False
         try:
@@ -1019,7 +1053,7 @@ def style_malla_abordaje(df_pivot):
         for idx in df_pivot.index:
             val = str(df_pivot.at[idx, col]).strip()
             bg = color_map.get(val, "#1B2631")
-            txt = "white" if val == "DESCANSO" else "#17202A"
+            txt = "white" if val in ["DESCANSO", "COMPENSADO"] else "#17202A"
             border = "1.5px solid #7F8C8D" if es_fin_semana else "0.5px solid #D5DBDB"
             
             if "✅ OK" in val: bg = "#2ECC71"; txt = "white"
@@ -1033,7 +1067,7 @@ def calcular_metricas_abordaje(turno):
     if turno == "T1": return "04:30", "13:30", 8.0, 0.0, 1.5 
     if turno == "T2": return "13:30", "22:30", 8.0, 0.0, 1.5 
     if turno == "FLOTANTE": return "08:00", "17:00", 8.0, 0.0, 0.0 
-    return "OFF", "OFF", 0.0, 0.0, 0.0
+    return "OFF", "OFF", 0.0, 0.0, 0.0 
 
 def generar_reporte_abordaje(df_final):
     filas = []
@@ -1064,7 +1098,7 @@ def verificar_alarmas_abordaje(df_final):
 def popup_forzar_ajuste_fecha_abo(fecha_solicitada, opciones_sujetos):
     st.markdown(f"📅 **Fecha de Operación:** `{fecha_solicitada}`")
     sujeto_sel = st.selectbox("🎯 Seleccione el Empleado a Modificar:", opciones_sujetos)
-    nuevo_turno = st.selectbox("🆕 Turno Destino Asignado:", ["T1", "T2", "FLOTANTE", "DESCANSO"], index=0)
+    nuevo_turno = st.selectbox("🆕 Turno Destino Asignado:", ["T1", "T2", "FLOTANTE", "DESCANSO", "COMPENSADO"], index=0)
     if st.button("🔄 Aplicar a Previsualización"):
         st.session_state.ajustes_manuales_abo[(sujeto_sel, fecha_solicitada)] = nuevo_turno
         st.success("¡Turno validado en memoria!")
@@ -1196,7 +1230,7 @@ def pantalla_abordaje():
         
         # 🔍 LÓGICA DE AUDITORÍA DIARIA
         cob = df_final.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
-        for c in ["T1", "T2", "FLOTANTE", "DESCANSO"]:
+        for c in ["T1", "T2", "FLOTANTE", "DESCANSO", "COMPENSADO"]:
             if c not in cob.columns: cob[c] = 0
             
         fila_semaforo = {}
@@ -1207,7 +1241,7 @@ def pantalla_abordaje():
                 t1_val = cob.at[col_dt, "T1"]
                 t2_val = cob.at[col_dt, "T2"]
                 f_val = cob.at[col_dt, "FLOTANTE"]
-                desc_val = cob.at[col_dt, "DESCANSO"]
+                desc_val = cob.at[col_dt, "DESCANSO"] + cob.at[col_dt, "COMPENSADO"]
                 
                 status = "✅ OK" if (t1_val >= req_t1 and t2_val >= req_t2 and f_val >= req_f) else "❌ FALTA TURNO"
                 fila_semaforo[col_fecha] = status
@@ -1278,9 +1312,6 @@ def pantalla_abordaje():
                     pivot_h.columns = [p.strftime('%Y-%m-%d') for p in pivot_h.columns]
                     st.dataframe(style_malla_abordaje(pivot_h), use_container_width=True)
             except: st.info("BD vacía.")
-
-# =========================================================
-# (AQUÍ CONTINUARÍA TU SECCIÓN 9 PARA OTROS CARGOS...)
 
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
