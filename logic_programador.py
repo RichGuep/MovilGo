@@ -370,6 +370,7 @@ def crear_personal_tecnicos_dinamico(q_sup, q_mas, q_ta, q_tb):
     
     for rol, qty in roles:
         for i in range(qty):
+            # Repartimos equitativamente en los 4 grupos
             grupo = GRUPOS_TEC[i % 4]
             filas.append({"Nombre": f"{rol}_{i+1:02d}", "Cargo": rol, "Grupo": grupo})
             
@@ -380,10 +381,11 @@ def generar_malla_tecnicos_avanzado(inicio, fin, df_personal, descansos_iniciale
     
     filas = []
     deudas = {g: 0 for g in GRUPOS_TEC}
+    
     turnos_historia = {g: i for i, g in enumerate(GRUPOS_TEC)} 
     ayer_descanso = {g: False for g in GRUPOS_TEC}
     
-    # 🟢 NUEVO: Filtrar solo los días permitidos por el usuario para la rotación
+    # Filtrar solo los días permitidos por el usuario para la rotación
     dias_permitidos = []
     for d in DIAS_ES: # Orden cronológico L-D
         if d in descansos_iniciales.values() and d not in dias_permitidos:
@@ -396,7 +398,7 @@ def generar_malla_tecnicos_avanzado(inicio, fin, df_personal, descansos_iniciale
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         fecha_str = fecha.strftime('%Y-%m-%d')
         es_fin_semana = (fecha.weekday() in [5, 6])
-        mes_str = fecha.strftime('%Y-%m')
+        mes_str = fecha.strftime('%Y-%m') # Agrupador mensual
         
         if tipo_ciclo_descanso == "Mensual": desplazamiento = delta_meses
         elif tipo_ciclo_descanso == "Trimestral": desplazamiento = delta_meses // 3
@@ -471,13 +473,16 @@ def generar_malla_tecnicos_avanzado(inicio, fin, df_personal, descansos_iniciale
                 
             asig_grupos[g] = turno_final 
 
+        # EXPANSIÓN A PERSONAL INDIVIDUAL
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             grupo = p["Grupo"]
             t_final = asig_grupos.get(grupo, "DESCANSO")
             
+            # Prioridad 1: Ajuste a la persona (Micro)
             if "m_personas_editada" in st.session_state and (nombre, fecha_str) in st.session_state.m_personas_editada:
                 t_final = st.session_state.m_personas_editada[(nombre, fecha_str)]
+            # Prioridad 2: Ajuste a todo el grupo (Macro)
             elif "ajustes_manuales" in st.session_state and (grupo, fecha_str) in st.session_state.ajustes_manuales:
                 t_final = st.session_state.ajustes_manuales[(grupo, fecha_str)]
                 
@@ -541,6 +546,7 @@ def ejecutar_auditoria_completa(df_plano):
         if c not in cob.columns: cob[c] = 0
     return cob
 
+# 🟢 MODIFICADA PARA EXTRAER SUJETO Y FECHA EXACTA
 def verificar_alarmas_cambios_drasticos(df_plano):
     df_plano = df_plano.sort_values(by=["Nombre", "Fecha"])
     alertas = []
@@ -590,13 +596,14 @@ def generar_reporte_detallado(df_final, config_horas):
         })
     return pd.DataFrame(filas_reporte)
 
+# 🟢 MODIFICADA PARA INCLUIR CONTEXTO VISUAL
 @st.dialog("🛠️ Gestor de Turno y Contexto Operativo", width="large")
 def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_persona=False, sujeto_predef=None, df_context=pd.DataFrame()):
     st.markdown(f"### 📅 Fecha de Operación a corregir: `{fecha_solicitada}`")
 
-    # 1. 🟢 TABLA DE CONTEXTO (3 DÍAS ANTES Y DESPUÉS)
+    # 1. TABLA DE CONTEXTO (3 DÍAS ANTES Y DESPUÉS)
     if not df_context.empty:
-        st.markdown("##### 🔎 Contexto de la Operación (Vista Macro de Grupos)")
+        st.markdown("##### 🔎 Contexto de la Operación")
         fecha_dt = pd.to_datetime(fecha_solicitada)
         f_ini = fecha_dt - timedelta(days=3)
         f_fin = fecha_dt + timedelta(days=3)
@@ -605,20 +612,20 @@ def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_person
         df_filtro = df_context[mask].copy()
         
         if not df_filtro.empty:
-            pivot_ctx = df_filtro.pivot_table(index="Grupo", columns="Fecha", values="Turno", aggfunc='first').fillna("DESCANSO")
+            pivot_ctx = df_filtro.pivot_table(index=["Grupo", "Nombre"], columns="Fecha", values="Turno", aggfunc='first').fillna("DESCANSO")
             pivot_ctx.columns = [p.strftime('%Y-%m-%d') for p in pivot_ctx.columns]
             st.dataframe(style_malla_tecnicos(pivot_ctx), use_container_width=True)
         st.write("---")
 
-    # 2. 🟢 FORMULARIO DE CORRECCIÓN
+    # 2. FORMULARIO DE CORRECCIÓN
     idx_def = opciones_sujetos.index(sujeto_predef) if sujeto_predef in opciones_sujetos else 0
     
     c1, c2 = st.columns(2)
     sujeto_sel = c1.selectbox("🎯 Empleado / Grupo a Modificar:", opciones_sujetos, index=idx_def)
     opciones_turnos = ["T1", "T2", "T3", "T4", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
-    nuevo_turno = c2.selectbox("🆕 Turno Destino Seguro:", opciones_turnos, index=0)
+    nuevo_turno = c2.selectbox("🆕 Turno Destino Asignado:", opciones_turnos, index=0)
     
-    if st.button("🔄 Aplicar Corrección a la Malla", use_container_width=True):
+    if st.button("🔄 Aplicar a Previsualización", use_container_width=True):
         fecha_actual_dt = pd.to_datetime(fecha_solicitada)
         fecha_ayer_str = (fecha_actual_dt - timedelta(days=1)).strftime('%Y-%m-%d')
         
@@ -724,51 +731,18 @@ def pantalla_programador():
     tipo_ciclo_descanso = st.selectbox("🔄 Rotación Temporal del Día de Descanso Base:", ["Fijo sin rotación", "Mensual", "Trimestral"])
     activar_t4 = st.toggle("⚡ Activar Esquema Eficiente (T4 - 7 Horas L-V)", value=False)
 
-    with st.expander("🔍 Forzar cambio en cualquier fecha de la Malla"):
-            c_f1, c_f2 = st.columns(2)
-            fechas_unicas = sorted([d.strftime('%Y-%m-%d') for d in pd.to_datetime(df_final['Fecha'].unique())])
-            f_libre_sel = c_f1.selectbox("Seleccione la Fecha:", fechas_unicas, key="f_libre_dropdown_tec")
-            if c_f2.button("⚙️ Abrir Gestor de Turno para esta Fecha", use_container_width=True):
-                opciones_s = lista_nombres_unicos if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
-                # 🟢 Se envía el df_final como contexto
-                popup_forzar_ajuste_fecha(f_libre_sel, opciones_s, es_modo_persona=(opt_b_modo == "Ajustar Empleado (Micro)"), df_context=df_final)
-
-        st.write("---")
-        t_dash, t_fatiga, t_nomina, t_hist, t_audit = st.tabs(["📊 Dashboard de Costos", "⚠️ Alarmas de Fatiga", "📋 Reporte Nómina", "🗄️ Consultar Histórico BD", "🔎 Auditoría Personal"])
-        rep_maestro = generar_reporte_detallado(df_final, config_h)
-
-        with t_dash:
-            if not rep_maestro.empty:
-                t_hrs = rep_maestro['Horas Programado'].sum()
-                t_ext = rep_maestro['Horas Extras'].sum()
-                costo_base = t_hrs * valor_hora
-                costo_extras = t_ext * (valor_hora * 1.25)
-                
-                c_m1, c_m2, c_m3 = st.columns(3)
-                c_m1.metric("💰 Costo Proyectado Base", f"${costo_base:,.0f} COP")
-                c_m2.metric("📈 Costo Proyectado Extras", f"${costo_extras:,.0f} COP")
-                c_m3.metric("⏱️ Total Horas Operativas", f"{t_hrs:,.0f} h")
-                
-                rep_maestro['Costo Total ($)'] = (rep_maestro['Horas Programado'] * valor_hora) + (rep_maestro['Horas Extras'] * valor_hora * 1.25)
-                st.bar_chart(rep_maestro.groupby("Nombre")['Costo Total ($)'].sum().reset_index(), x="Nombre", y="Costo Total ($)")
-            
-        with t_fatiga:
-            lista_alertas = verificar_alarmas_cambios_drasticos(df_final)
-            if lista_alertas:
-                # 🟢 NUEVO DISEÑO DE ALARMAS: Texto a la izquierda, Botón a la derecha
-                for idx_al, al in enumerate(lista_alertas):
-                    c_al1, c_al2 = st.columns([5, 1])
-                    c_al1.warning(al["Mensaje"])
-                    if c_al2.button("🛠️ Corregir", key=f"btn_corr_fatiga_{idx_al}"):
-                        # Fuerza el modo personal pre-rellenando los datos exactos del problema
-                        popup_forzar_ajuste_fecha(
-                            al["Fecha"], 
-                            lista_nombres_unicos, 
-                            es_modo_persona=True, 
-                            sujeto_predef=al["Sujeto"], 
-                            df_context=df_final
-                        )
-            else: st.success("✅ Estructura libre de alertas de fatiga.")
+    with st.expander("⏰ Configuración Rangos de Jornada", expanded=False):
+        config_h = {}
+        t_l = ["T1", "T2", "T3", "DISPONIBLE"] + (["T4"] if activar_t4 else [])
+        def_h = {"T1": [time(4,0), time(11,0)], "T2": [time(11,0), time(18,0)], "T3": [time(15,0), time(22,0)], "T4": [time(21,0), time(4,0)], "DISPONIBLE": [time(6,30), time(13,30)]}
+        cols = st.columns(3)
+        for i, t in enumerate(t_l):
+            with cols[i%3]:
+                ini = st.time_input(f"Inicia {t}", def_h[t][0], key=f"i{t}")
+                fin = st.time_input(f"Fin {t}", def_h[t][1], key=f"f{t}")
+                config_h[t] = {"Inicio": ini.strftime("%H:%M"), "Fin": fin.strftime("%H:%M")}
+        config_h["DESCANSO"] = config_h["COMPENSADO"] = {"Inicio": "OFF", "Fin": "OFF"}
+        if not activar_t4: config_h["T4"] = {"Inicio": "21:00", "Fin": "04:00"}
 
     # 3. ASIGNACIÓN DE DESCANSOS
     st.write("---")
@@ -835,7 +809,7 @@ def pantalla_programador():
 
         pivot_malla = df_mostrar.pivot_table(index=indice_pivot, columns="Fecha", values="Turno", aggfunc='first').fillna("DESCANSO")
         
-        # 🟢 LÓGICA DE AUDITORÍA DIARIA (SEMAFORO)
+        # LÓGICA DE AUDITORÍA DIARIA (SEMAFORO)
         cob = df_mostrar.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
         for c in ["T1", "T2", "T3", "T4", "DESCANSO", "COMPENSADO"]:
             if c not in cob.columns: cob[c] = 0
@@ -860,14 +834,12 @@ def pantalla_programador():
             else:
                 fila_semaforo[col_fecha] = "❌ FALTA TURNO"
 
-        # Ajuste dinámico del índice para la fila de auditoría
         idx_len = len(pivot_malla.index.names) if isinstance(pivot_malla.index, pd.MultiIndex) else 1
         idx_tuple = tuple(["🔍 AUDITORÍA"] + ["-"] * (idx_len - 1)) if idx_len > 1 else "🔍 AUDITORÍA 24/7"
         
         df_sem_row = pd.DataFrame([fila_semaforo], index=[idx_tuple])
         pivot_completo = pd.concat([pivot_malla, df_sem_row])
 
-        # FORMATEO DE COLUMNAS CON DÍAS E ÍCONOS
         DIAS_CORTOS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
         nuevas_cols = []
         for col in pivot_completo.columns:
@@ -898,7 +870,7 @@ def pantalla_programador():
             f_libre_sel = c_f1.selectbox("Seleccione la Fecha:", fechas_unicas, key="f_libre_dropdown_tec")
             if c_f2.button("⚙️ Abrir Gestor de Turno para esta Fecha", use_container_width=True):
                 opciones_s = lista_nombres_unicos if opt_b_modo == "Ajustar Empleado (Micro)" else GRUPOS_TEC
-                popup_forzar_ajuste_fecha(f_libre_sel, opciones_s, es_modo_persona=(opt_b_modo == "Ajustar Empleado (Micro)"))
+                popup_forzar_ajuste_fecha(f_libre_sel, opciones_s, es_modo_persona=(opt_b_modo == "Ajustar Empleado (Micro)"), df_context=df_final)
 
         st.write("---")
         t_dash, t_fatiga, t_nomina, t_hist, t_audit = st.tabs(["📊 Dashboard de Costos", "⚠️ Alarmas de Fatiga", "📋 Reporte Nómina", "🗄️ Consultar Histórico BD", "🔎 Auditoría Personal"])
@@ -922,7 +894,18 @@ def pantalla_programador():
         with t_fatiga:
             lista_alertas = verificar_alarmas_cambios_drasticos(df_final)
             if lista_alertas:
-                for al in lista_alertas: st.warning(al["Mensaje"])
+                # 🟢 RENDEREIZADO CON BOTÓN DE CORRECCIÓN DIRECTA
+                for idx_al, al in enumerate(lista_alertas):
+                    c_al1, c_al2 = st.columns([5, 1])
+                    c_al1.warning(al["Mensaje"])
+                    if c_al2.button("🛠️ Corregir", key=f"btn_corr_fatiga_tec_{idx_al}"):
+                        popup_forzar_ajuste_fecha(
+                            al["Fecha"], 
+                            lista_nombres_unicos, 
+                            es_modo_persona=True, 
+                            sujeto_predef=al["Sujeto"], 
+                            df_context=df_final
+                        )
             else: st.success("✅ Estructura libre de alertas de fatiga.")
             
         with t_nomina:
@@ -946,7 +929,6 @@ def pantalla_programador():
                     st.dataframe(style_malla_tecnicos(pivot_h), use_container_width=True)
             except: st.info("BD vacía.")
 
-        # 🟢 NUEVA LÓGICA DE AUDITORÍA PERSONAL
         with t_audit:
             st.markdown("#### 🔎 Auditoría de Turnos y Descansos por Mes")
             if not df_final.empty:
@@ -972,8 +954,11 @@ def pantalla_programador():
                 with pd.ExcelWriter(output_audit, engine='openpyxl') as writer: 
                     audit_pivot.to_excel(writer, sheet_name="Auditoria_Mensual", index=False)
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Tecnicos_{date.today()}.xlsx")
+
+
+
 # =========================================================
-# 8. MOTOR Y PANEL DE ABORDAJE (ROTACIÓN EN DÍAS PERMITIDOS)
+# 8. MOTOR Y PANEL DE ABORDAJE (ROTACIÓN EN DÍAS PERMITIDOS + POPUP AVANZADO)
 # =========================================================
 
 def crear_personal_abordaje_dinamico(total_personas, num_flotantes, dias_permitidos):
@@ -1031,7 +1016,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         inmunes = set() 
         descanso_real_del_mes = {} 
         
-        # 1. Definir quién descansa hoy (Lógica de rotación en bucle cerrado)
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             descanso_base = p["Descanso_Base"]
@@ -1060,9 +1044,8 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
             else:
                 if descanso_base in dias_permitidos:
                     idx_desc = dias_permitidos.index(descanso_base)
-                    # 🟢 AQUÍ ESTÁ LA MAGIA: El módulo matemático ahora se limita al tamaño de los días permitidos
                     dia_calculado = dias_permitidos[(idx_desc + desp_desc) % len(dias_permitidos)]
-                elif descanso_base in DIAS_ES: # Fallback por si lo editaron manual a un día no permitido
+                elif descanso_base in DIAS_ES: 
                     idx_desc = DIAS_ES.index(descanso_base)
                     dia_calculado = DIAS_ES[(idx_desc + desp_desc) % 7]
                 else:
@@ -1117,7 +1100,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
             debe_compensado[drafted] = True
             cancelados_mes[drafted] += 1
 
-        # 2. RESCATE OPERATIVO: Flotantes
         reclutar_personal(act_f, desc_f, req_f)
             
         while len(act_f) > req_f and (len(desc_f) + len(desc_r)) < max_descansos:
@@ -1133,7 +1115,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         for n in desc_f: 
             if n not in asig_hoy: asig_hoy[n] = "DESCANSO"
 
-        # 3. RESCATE OPERATIVO: Regulares
         req_reg = req_t1 + req_t2
         reclutar_personal(act_r, desc_r, req_reg)
 
@@ -1149,7 +1130,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         for n in desc_r: 
             if n not in asig_hoy: asig_hoy[n] = "DESCANSO"
 
-        # 4. Asignar T1 y T2 protegiendo fatiga
         faltan_t1 = req_t1
         faltan_t2 = req_t2
         flexibles = []
@@ -1177,7 +1157,6 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 elif faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
                 else: asig_hoy[p] = t_previo
 
-        # 5. Actualizar Memoria y Filas
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             t_final = asig_hoy.get(nombre, "DESCANSO")
@@ -1245,6 +1224,7 @@ def generar_reporte_abordaje(df_final):
         })
     return pd.DataFrame(filas)
 
+# 🟢 MODIFICADA PARA EXTRAER SUJETO Y FECHA PARA EL POPUP
 def verificar_alarmas_abordaje(df_final):
     df_plano = df_final.sort_values(by=["Nombre", "Fecha"])
     alertas = []
@@ -1253,15 +1233,42 @@ def verificar_alarmas_abordaje(df_final):
         lista_fechas = group["Fecha"].tolist()
         for i in range(1, len(lista_turnos)):
             if lista_turnos[i-1] == "T2" and lista_turnos[i] == "T1":
-                alertas.append({"Mensaje": f"🚨 **Transición Crítica Ilegal (T2 -> T1)** para **{sujeto}** el día {lista_fechas[i].strftime('%Y-%m-%d')}."})
+                alertas.append({
+                    "Mensaje": f"🚨 **Transición Crítica Ilegal (T2 -> T1)** para **{sujeto}** el día {lista_fechas[i].strftime('%Y-%m-%d')}.",
+                    "Sujeto": sujeto,
+                    "Fecha": lista_fechas[i].strftime('%Y-%m-%d')
+                })
     return alertas
 
-@st.dialog("🛠️ Forzar Cambio de Turno (Abordaje)", width="small")
-def popup_forzar_ajuste_fecha_abo(fecha_solicitada, opciones_sujetos):
-    st.markdown(f"📅 **Fecha de Operación:** `{fecha_solicitada}`")
-    sujeto_sel = st.selectbox("🎯 Seleccione el Empleado a Modificar:", opciones_sujetos)
-    nuevo_turno = st.selectbox("🆕 Turno Destino Asignado:", ["T1", "T2", "FLOTANTE", "DESCANSO", "COMPENSADO"], index=0)
-    if st.button("🔄 Aplicar a Previsualización"):
+# 🟢 MODIFICADA PARA INCLUIR CONTEXTO DE 3 DÍAS Y UI MEJORADA
+@st.dialog("🛠️ Gestor de Turno y Contexto Operativo (Abordaje)", width="large")
+def popup_forzar_ajuste_fecha_abo(fecha_solicitada, opciones_sujetos, sujeto_predef=None, df_context=pd.DataFrame()):
+    st.markdown(f"### 📅 Fecha de Operación a corregir: `{fecha_solicitada}`")
+
+    # 1. TABLA DE CONTEXTO (3 DÍAS ANTES Y DESPUÉS)
+    if not df_context.empty:
+        st.markdown("##### 🔎 Contexto de la Operación")
+        fecha_dt = pd.to_datetime(fecha_solicitada)
+        f_ini = fecha_dt - timedelta(days=3)
+        f_fin = fecha_dt + timedelta(days=3)
+        
+        mask = (df_context['Fecha'] >= f_ini) & (df_context['Fecha'] <= f_fin)
+        df_filtro = df_context[mask].copy()
+        
+        if not df_filtro.empty:
+            pivot_ctx = df_filtro.pivot_table(index=["Descanso_Actual", "Nombre"], columns="Fecha", values="Turno", aggfunc='first').fillna("DESCANSO")
+            pivot_ctx.columns = [p.strftime('%Y-%m-%d') for p in pivot_ctx.columns]
+            st.dataframe(style_malla_abordaje(pivot_ctx), use_container_width=True)
+        st.write("---")
+
+    # 2. FORMULARIO DE CORRECCIÓN
+    idx_def = opciones_sujetos.index(sujeto_predef) if sujeto_predef in opciones_sujetos else 0
+    
+    c1, c2 = st.columns(2)
+    sujeto_sel = c1.selectbox("🎯 Empleado a Modificar:", opciones_sujetos, index=idx_def)
+    nuevo_turno = c2.selectbox("🆕 Turno Destino Asignado:", ["T1", "T2", "FLOTANTE", "DESCANSO", "COMPENSADO"], index=0)
+    
+    if st.button("🔄 Aplicar a Previsualización", use_container_width=True):
         st.session_state.ajustes_manuales_abo[(sujeto_sel, fecha_solicitada)] = nuevo_turno
         st.success("¡Turno validado en memoria!")
         st.rerun()
@@ -1435,7 +1442,8 @@ def pantalla_abordaje():
             fechas_unicas = sorted([d.strftime('%Y-%m-%d') for d in pd.to_datetime(df_final['Fecha'].unique())])
             f_libre_sel = c_f1.selectbox("Seleccione la Fecha:", fechas_unicas, key="f_libre_dropdown_abo")
             if c_f2.button("⚙️ Abrir Gestor de Turno", use_container_width=True):
-                popup_forzar_ajuste_fecha_abo(f_libre_sel, sorted(list(df_final["Nombre"].unique())))
+                # 🟢 Lanza el popup enviando el df_final como contexto
+                popup_forzar_ajuste_fecha_abo(f_libre_sel, sorted(list(df_final["Nombre"].unique())), df_context=df_final)
 
         st.write("---")
         t_dash, t_fatiga, t_nomina, t_hist, t_audit = st.tabs(["📊 Dashboard de Costos", "⚠️ Alarmas de Fatiga", "📋 Reporte Nómina", "🗄️ Histórico BD", "🔎 Auditoría Personal"])
@@ -1461,7 +1469,17 @@ def pantalla_abordaje():
         with t_fatiga:
             lista_alertas = verificar_alarmas_abordaje(df_final)
             if lista_alertas:
-                for al in lista_alertas: st.warning(al["Mensaje"])
+                # 🟢 NUEVO: Renderizado en 2 columnas con botón de corrección directa
+                for idx_al, al in enumerate(lista_alertas):
+                    c_al1, c_al2 = st.columns([5, 1])
+                    c_al1.warning(al["Mensaje"])
+                    if c_al2.button("🛠️ Corregir", key=f"btn_corr_fatiga_abo_{idx_al}"):
+                        popup_forzar_ajuste_fecha_abo(
+                            al["Fecha"], 
+                            sorted(list(df_final["Nombre"].unique())), 
+                            sujeto_predef=al["Sujeto"], 
+                            df_context=df_final
+                        )
             else: st.success("✅ Estructura libre de alertas de fatiga.")
             
         with t_nomina:
@@ -1510,9 +1528,6 @@ def pantalla_abordaje():
                 with pd.ExcelWriter(output_audit, engine='openpyxl') as writer: 
                     audit_pivot.to_excel(writer, sheet_name="Auditoria_Mensual", index=False)
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Abordaje_{date.today()}.xlsx")
-
-# =========================================================
-# (AQUÍ CONTINUARÍA TU SECCIÓN 9 PARA OTROS CARGOS...)
 
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
