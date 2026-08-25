@@ -1209,7 +1209,16 @@ def pantalla_abordaje():
                             if exito: st.success(msj)
                             else: st.error(msj)
                     else: st.warning("Completa credenciales.")
-                
+
+        # Activar Fin de Semana Libre cada 5 semanas
+    activar_finde_largo = st.toggle("🎉 Otorgar Fin de Semana Libre (Sáb y Dom) cada 5 semanas por Grupo", value=False)
+    
+    st.write("---")
+    if st.button("👁️ PREVISUALIZAR MALLA (Sin Guardar)"):
+        st.session_state.m_base_abo = generar_malla_abordaje_avanzada(
+            inicio, fin, df_pers_editado, desc_data, config_flotantes, 
+            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo
+        )
         # =========================================================
         # 5. UI: PIVOT, FORZADO DE TURNOS Y DASHBOARD
         # =========================================================
