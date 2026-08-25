@@ -887,7 +887,7 @@ def pantalla_programador():
                     else: st.warning("No hay registros.")
             except: st.info("BD vacía.")
 # =========================================================
-# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO Y DEFINITIVO)
+# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO CON REGLAS LEGALES)
 # =========================================================
 
 def crear_personal_abordaje_dinamico(total_personas, num_flotantes, num_grupos):
@@ -908,10 +908,12 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
     dias_en_turno = {}
     ayer_fue_descanso = {}
     
-    # Memoria booleana: solo se acumula un compensado a la vez
     debe_compensado = {} 
+    dias_consecutivos = {} 
+    cancelados_mes = {}    
     
     grupos_lista = list(descansos_grupos.keys())
+    current_month = inicio.month
     
     for idx, row in df_personal.iterrows():
         nombre = row["Nombre"]
@@ -919,8 +921,14 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
         dias_en_turno[nombre] = 0
         ayer_fue_descanso[nombre] = False
         debe_compensado[nombre] = False 
+        dias_consecutivos[nombre] = 0
+        cancelados_mes[nombre] = 0
 
     for fecha in pd.date_range(inicio, fin):
+        if fecha.month != current_month:
+            current_month = fecha.month
+            for n in cancelados_mes: cancelados_mes[n] = 0
+
         dia_n = DIAS_ES[fecha.weekday()]
         fecha_str = fecha.strftime('%Y-%m-%d')
         week = fecha.isocalendar()[1] 
@@ -930,24 +938,31 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
         asig_hoy = {}
         descansos_teoricos = []
         activos_teoricos = []
+        inmunes = set() 
         
-        # 1. Definir quién debería descansar hoy teóricamente
+        # 1. Definir quién descansa hoy (Teórico + Obligatorio por Ley)
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             grupo = p["Grupo"]
             es_descanso = False
-            idx_g = grupos_lista.index(grupo) if grupo in grupos_lista else len(grupos_lista)
-            es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_g) % 5 == 0
             
-            if p["Rol"] == "Flotante":
-                dia_descanso_f = config_flotantes["dia_base"]
-                if config_flotantes["rotacion"] != "Fijo":
-                    dia_descanso_f = DIAS_ES[(DIAS_ES.index(dia_descanso_f) + desp_desc) % 7]
-                if dia_descanso_f == dia_n or es_finde_largo: es_descanso = True
+            # REGLA LEGAL: Máximo 6 días continuos
+            if dias_consecutivos[nombre] >= 6:
+                es_descanso = True
+                inmunes.add(nombre)
             else:
-                if grupo in descansos_grupos:
-                    dia_calculado = DIAS_ES[(DIAS_ES.index(descansos_grupos[grupo]) + desp_desc) % 7]
-                    if dia_calculado == dia_n or es_finde_largo: es_descanso = True
+                idx_g = grupos_lista.index(grupo) if grupo in grupos_lista else len(grupos_lista)
+                es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_g) % 5 == 0
+                
+                if p["Rol"] == "Flotante":
+                    dia_descanso_f = config_flotantes["dia_base"]
+                    if config_flotantes["rotacion"] != "Fijo":
+                        dia_descanso_f = DIAS_ES[(DIAS_ES.index(dia_descanso_f) + desp_desc) % 7]
+                    if dia_descanso_f == dia_n or es_finde_largo: es_descanso = True
+                else:
+                    if grupo in descansos_grupos:
+                        dia_calculado = DIAS_ES[(DIAS_ES.index(descansos_grupos[grupo]) + desp_desc) % 7]
+                        if dia_calculado == dia_n or es_finde_largo: es_descanso = True
                     
             if es_descanso: descansos_teoricos.append(nombre)
             else: activos_teoricos.append(nombre)
@@ -960,32 +975,37 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
         act_r = [n for n in activos_teoricos if n in regulares_nombres]
         desc_r = [n for n in descansos_teoricos if n in regulares_nombres]
 
+        def reclutar_personal(activos_list, descansos_list, requerimiento):
+            disponibles = [n for n in descansos_list if n not in inmunes]
+            disponibles.sort(key=lambda x: (cancelados_mes[x], dias_consecutivos[x]))
+            
+            while len(activos_list) < requerimiento and disponibles:
+                drafted = disponibles.pop(0)
+                descansos_list.remove(drafted)
+                activos_list.append(drafted)
+                debe_compensado[drafted] = True
+                cancelados_mes[drafted] += 1
+
         # 2. RESCATE OPERATIVO: Flotantes
-        while len(act_f) < req_f and desc_f:
-            drafted = desc_f.pop(0)
-            act_f.append(drafted)
-            debe_compensado[drafted] = True # Trabaja en su descanso, se le debe un compensado
+        reclutar_personal(act_f, desc_f, req_f)
             
         while len(act_f) > req_f:
-            con_deuda = [n for n in act_f if debe_compensado[n]]
+            con_deuda = sorted([n for n in act_f if debe_compensado[n]], key=lambda x: dias_consecutivos[x], reverse=True)
             if not con_deuda: break
             beneficiado = con_deuda[0]
             act_f.remove(beneficiado)
             asig_hoy[beneficiado] = "COMPENSADO"
-            debe_compensado[beneficiado] = False # Se le paga el compensado y la bandera se apaga
+            debe_compensado[beneficiado] = False
 
         for n in act_f: asig_hoy[n] = "FLOTANTE"
         for n in desc_f: asig_hoy[n] = "DESCANSO"
 
         # 3. RESCATE OPERATIVO: Regulares
         req_reg = req_t1 + req_t2
-        while len(act_r) < req_reg and desc_r:
-            drafted = desc_r.pop(0)
-            act_r.append(drafted)
-            debe_compensado[drafted] = True
+        reclutar_personal(act_r, desc_r, req_reg)
 
         while len(act_r) > req_reg:
-            con_deuda = [n for n in act_r if debe_compensado[n]]
+            con_deuda = sorted([n for n in act_r if debe_compensado[n]], key=lambda x: dias_consecutivos[x], reverse=True)
             if not con_deuda: break
             beneficiado = con_deuda[0]
             act_r.remove(beneficiado)
@@ -1027,17 +1047,20 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
             nombre = p["Nombre"]
             t_final = asig_hoy.get(nombre, "DESCANSO")
             
+            if "ajustes_manuales_abo" in st.session_state and (nombre, fecha_str) in st.session_state.ajustes_manuales_abo:
+                t_final = st.session_state.ajustes_manuales_abo[(nombre, fecha_str)]
+            
             if t_final in ["DESCANSO", "COMPENSADO"]:
                 ayer_fue_descanso[nombre] = True
                 dias_en_turno[nombre] = 0
+                dias_consecutivos[nombre] = 0 
             else:
+                dias_consecutivos[nombre] += 1 
                 if turno_actual[nombre] == t_final: dias_en_turno[nombre] += 1
                 else: dias_en_turno[nombre] = 1
                 turno_actual[nombre] = t_final
                 ayer_fue_descanso[nombre] = False
 
-            if "ajustes_manuales_abo" in st.session_state and (nombre, fecha_str) in st.session_state.ajustes_manuales_abo:
-                t_final = st.session_state.ajustes_manuales_abo[(nombre, fecha_str)]
             filas.append({"Fecha": fecha, "Grupo": p["Grupo"], "Nombre": nombre, "Turno": t_final})
             
     return pd.DataFrame(filas)
@@ -1228,7 +1251,7 @@ def pantalla_abordaje():
         pivot_persona = df_final.pivot(index=["Grupo", "Nombre"], columns="Fecha", values="Turno").fillna("DESCANSO")
         pivot_persona.columns = [p.strftime('%Y-%m-%d') if isinstance(p, (datetime, date, pd.Timestamp)) else str(p) for p in pivot_persona.columns]
         
-        # 🔍 LÓGICA DE AUDITORÍA DIARIA
+        # LÓGICA DE AUDITORÍA DIARIA
         cob = df_final.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
         for c in ["T1", "T2", "FLOTANTE", "DESCANSO", "COMPENSADO"]:
             if c not in cob.columns: cob[c] = 0
@@ -1313,6 +1336,8 @@ def pantalla_abordaje():
                     st.dataframe(style_malla_abordaje(pivot_h), use_container_width=True)
             except: st.info("BD vacía.")
 
+# =========================================================
+# (AQUÍ CONTINUARÍA TU SECCIÓN 9 PARA OTROS CARGOS...)
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
 # =========================================================
