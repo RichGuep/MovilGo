@@ -28,32 +28,26 @@ COLORES_MAP = {
     "✅ OK 24/7": "#2ECC71", "❌ FALTA TURNO": "#E74C3C"
 }
 
-def style_malla(df_pivot):
+def style_malla_abordaje(df_pivot):
     styles = pd.DataFrame('', index=df_pivot.index, columns=df_pivot.columns)
+    color_map = {"T1": "#D6EAF8", "T2": "#D5F5E3", "FLOTANTE": "#E8DAEF", "DESCANSO": "#1B2631"}
     for col in df_pivot.columns:
         es_fin_semana = False
-        es_festivo = False
         try:
-            fecha_dt = pd.to_datetime(col)
-            if fecha_dt.weekday() in [5, 6]: es_fin_semana = True
-            if fecha_dt in festivos_co: es_festivo = True
+            if pd.to_datetime(col).weekday() in [5, 6]: es_fin_semana = True
         except: pass
-
         for idx in df_pivot.index:
-            val = df_pivot.at[idx, col]
-            key = str(val).strip() if val and str(val).strip() != "" else "DESCANSO"
-            if key not in COLORES_MAP and "Turno 1" in key: bg = "#D6EAF8"
-            elif key not in COLORES_MAP and "Turno 2" in key: bg = "#D5F5E3"
-            elif key not in COLORES_MAP and "Turno 3" in key: bg = "#FADBD8"
-            else: bg = COLORES_MAP.get(key, "#1B2631")
-                
-            txt = "white" if key in ["DESCANSO", "COMPENSADO", "✅ OK 24/7", "❌ FALTA TURNO"] else "#17202A"
+            val = str(df_pivot.at[idx, col]).strip()
+            bg = color_map.get(val, "#1B2631")
+            txt = "white" if val == "DESCANSO" else "#17202A"
+            border = "1.5px solid #7F8C8D" if es_fin_semana else "0.5px solid #D5DBDB"
             
-            border_style = "0.5px solid #D5DBDB"
-            if es_festivo: border_style = "2px solid #E67E22"
-            elif es_fin_semana: border_style = "1.5px solid #7F8C8D"
-                
-            styles.at[idx, col] = f'background-color: {bg}; color: {txt}; font-weight: 700; border: {border_style};'
+            # Nuevos colores para la auditoría
+            if "✅ OK" in val: bg = "#2ECC71"; txt = "white"
+            elif "❌ FALTA" in val: bg = "#E74C3C"; txt = "white"
+            elif "🛌" in val: bg = "#F5B041"; txt = "#17202A"; border = "1px solid #17202A"
+
+            styles.at[idx, col] = f'background-color: {bg}; color: {txt}; font-weight: 700; border: {border};'
     return df_pivot.style.apply(lambda _: styles, axis=None)
 
 # =========================================================
