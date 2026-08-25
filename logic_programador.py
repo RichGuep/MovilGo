@@ -904,15 +904,13 @@ def crear_personal_abordaje_dinamico(total_personas, num_flotantes, num_grupos):
         
     return pd.DataFrame(filas)
 
-def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, config_flotantes, req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos):
+def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, config_flotantes, req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo=False):
     filas = []
-    
-    # --- 🧠 ESTADO INICIAL (MÁQUINA DE MEMORIA) ---
     turno_actual = {}
     dias_en_turno = {}
     ayer_fue_descanso = {}
+    grupos_lista = list(descansos_grupos.keys())
     
-    # Repartimos la planta inicial 50/50 para asegurar cobertura desde el día 1
     for idx, row in df_personal.iterrows():
         nombre = row["Nombre"]
         turno_actual[nombre] = "T1" if idx % 2 == 0 else "T2"
@@ -922,119 +920,93 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
     for fecha in pd.date_range(inicio, fin):
         dia_n = DIAS_ES[fecha.weekday()]
         fecha_str = fecha.strftime('%Y-%m-%d')
+        week = fecha.isocalendar()[1] # Semana del año
         
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
-        
         desp_desc = 0
         if rotacion_descanso == "Mensual": desp_desc = delta_meses
         elif rotacion_descanso == "Trimestral": desp_desc = delta_meses // 3
         
         asig_hoy = {}
         
-        # 1. Asignar Descansos
+        # 1. Asignar Descansos (Normales y Fines de Semana Largos)
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             grupo = p["Grupo"]
             es_descanso = False
+            
+            # Lógica: Fin de Semana Largo cada 5 semanas alternado por grupo
+            idx_g = grupos_lista.index(grupo) if grupo in grupos_lista else len(grupos_lista)
+            es_finde_largo = False
+            if activar_finde_largo and dia_n in ["Sábado", "Domingo"]:
+                if (week + idx_g) % 5 == 0: 
+                    es_finde_largo = True
             
             if p["Rol"] == "Flotante":
                 dia_descanso_f = config_flotantes["dia_base"]
                 if config_flotantes["rotacion"] != "Fijo":
                     idx_f = DIAS_ES.index(dia_descanso_f)
                     dia_descanso_f = DIAS_ES[(idx_f + desp_desc) % 7]
-                if dia_descanso_f == dia_n: es_descanso = True
+                if dia_descanso_f == dia_n or es_finde_largo: es_descanso = True
             else:
                 if grupo in descansos_grupos:
-                    idx_g = DIAS_ES.index(descansos_grupos[grupo])
-                    dia_calculado = DIAS_ES[(idx_g + desp_desc) % 7]
-                    if dia_calculado == dia_n: es_descanso = True
+                    idx_desc = DIAS_ES.index(descansos_grupos[grupo])
+                    dia_calculado = DIAS_ES[(idx_desc + desp_desc) % 7]
+                    if dia_calculado == dia_n or es_finde_largo: es_descanso = True
                     
             if es_descanso:
                 asig_hoy[nombre] = "DESCANSO"
                 ayer_fue_descanso[nombre] = True
-                dias_en_turno[nombre] = 0 # Se resetea el contador de bloque
+                dias_en_turno[nombre] = 0
                 
         activos = [p["Nombre"] for _, p in df_personal.iterrows() if p["Nombre"] not in asig_hoy]
         
         # 2. Asignar Flotantes Activos
         for nombre in activos.copy():
-            es_flotante = df_personal[df_personal["Nombre"] == nombre]["Rol"].values[0] == "Flotante"
-            if es_flotante:
+            if df_personal[df_personal["Nombre"] == nombre]["Rol"].values[0] == "Flotante":
                 asig_hoy[nombre] = "FLOTANTE"
                 activos.remove(nombre)
                 ayer_fue_descanso[nombre] = False
 
-        # 3. Asignar Regulares (Con Lógica de Bloques y Fatiga)
+        # 3. Asignar Regulares (Con Lógica de Bloques)
         faltan_t1 = req_t1
         faltan_t2 = req_t2
         flexibles = []
         
-        # a) ASIGNACIONES FORZOSAS (Bloqueos)
         for p in activos:
             t_previo = turno_actual[p]
-            
-            # Regla 1: Bloque mínimo de 4 días (si no viene de descanso)
             if not ayer_fue_descanso[p] and 0 < dias_en_turno[p] < 4:
                 asig_hoy[p] = t_previo
                 if t_previo == "T1": faltan_t1 -= 1
                 else: faltan_t2 -= 1
-                
-            # Regla 2: Prohibido bajar de T2 a T1 sin descanso previo
             elif t_previo == "T2" and not ayer_fue_descanso[p]:
                 asig_hoy[p] = "T2"
                 faltan_t2 -= 1
-                
             else:
-                # El empleado es "flexible": Viene de descanso, o lleva >= 4 días en T1 y podría subir a T2
                 flexibles.append(p)
                 
-        # b) ASIGNAR EMPLEADOS FLEXIBLES
         for p in flexibles:
             t_previo = turno_actual[p]
-            
-            # Si viene de descanso, intentamos rotarlo al turno contrario de su bloque anterior
-            if ayer_fue_descanso[p]:
-                t_deseado = "T2" if t_previo == "T1" else "T1"
-            else:
-                # Si no viene de descanso, significa que es T1 buscando subir a T2 por cumplir > 4 días
-                t_deseado = "T2"
+            t_deseado = "T2" if (ayer_fue_descanso[p] and t_previo == "T1") or not ayer_fue_descanso[p] else "T1"
                 
-            # Asignamos según disponibilidad para cumplir la cobertura requerida
-            if t_deseado == "T1" and faltan_t1 > 0:
-                asig_hoy[p] = "T1"
-                faltan_t1 -= 1
-            elif t_deseado == "T2" and faltan_t2 > 0:
-                asig_hoy[p] = "T2"
-                faltan_t2 -= 1
+            if t_deseado == "T1" and faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1
+            elif t_deseado == "T2" and faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
             else:
-                # Si su turno deseado ya está lleno, le damos lo que sobre
-                if faltan_t1 > 0:
-                    asig_hoy[p] = "T1"
-                    faltan_t1 -= 1
-                else:
-                    asig_hoy[p] = "T2"
-                    faltan_t2 -= 1
+                if faltan_t1 > 0: asig_hoy[p] = "T1"; faltan_t1 -= 1
+                else: asig_hoy[p] = "T2"; faltan_t2 -= 1
                     
-        # c) ACTUALIZAR MEMORIA Y ESTADOS
         for p in activos:
-            t_final = asig_hoy.get(p, "T1") # Fallback de seguridad
-            
-            if turno_actual[p] == t_final:
-                dias_en_turno[p] += 1
-            else:
-                dias_en_turno[p] = 1 # Inicia un nuevo bloque al cambiar de turno
-                
+            t_final = asig_hoy.get(p, "T1")
+            if turno_actual[p] == t_final: dias_en_turno[p] += 1
+            else: dias_en_turno[p] = 1
             turno_actual[p] = t_final
             ayer_fue_descanso[p] = False
 
         # 4. Construir Filas Finales
         for _, p in df_personal.iterrows():
             turno_final = asig_hoy.get(p["Nombre"], "DESCANSO")
-            
-            # Sobreescribir si hay un ajuste manual del programador
             if "ajustes_manuales_abo" in st.session_state and (p["Nombre"], fecha_str) in st.session_state.ajustes_manuales_abo:
                 turno_final = st.session_state.ajustes_manuales_abo[(p["Nombre"], fecha_str)]
-                
             filas.append({"Fecha": fecha, "Grupo": p["Grupo"], "Nombre": p["Nombre"], "Turno": turno_final})
             
     return pd.DataFrame(filas)
