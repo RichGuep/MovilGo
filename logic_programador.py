@@ -1031,6 +1031,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         inmunes = set() 
         descanso_real_del_mes = {} 
         
+        # 1. Definir quién descansa hoy (Lógica de rotación en bucle cerrado)
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             descanso_base = p["Descanso_Base"]
@@ -1092,8 +1093,11 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 drafted = disponibles.pop(0)
                 descansos_list.remove(drafted)
                 activos_list.append(drafted)
-                debe_compensado[drafted] = True
-                cancelados_mes[drafted] += 1
+                
+                # 🛑 REGLA ESTRICTA: Solo gana compensado si el día cancelado es literalmente su día asignado de la semana.
+                if dia_n == descanso_real_del_mes[drafted]:
+                    debe_compensado[drafted] = True
+                    cancelados_mes[drafted] += 1
 
         while (len(desc_f) + len(desc_r)) > max_descansos:
             disp_f = [n for n in desc_f if n not in inmunes]
@@ -1112,9 +1116,12 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 desc_r.remove(drafted)
                 act_r.append(drafted)
                 
-            debe_compensado[drafted] = True
-            cancelados_mes[drafted] += 1
+            # 🛑 REGLA ESTRICTA: Solo gana compensado si el día cancelado es literalmente su día asignado de la semana.
+            if dia_n == descanso_real_del_mes[drafted]:
+                debe_compensado[drafted] = True
+                cancelados_mes[drafted] += 1
 
+        # 2. RESCATE OPERATIVO: Flotantes
         reclutar_personal(act_f, desc_f, req_f)
             
         while len(act_f) > req_f and (len(desc_f) + len(desc_r)) < max_descansos:
@@ -1130,6 +1137,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         for n in desc_f: 
             if n not in asig_hoy: asig_hoy[n] = "DESCANSO"
 
+        # 3. RESCATE OPERATIVO: Regulares
         req_reg = req_t1 + req_t2
         reclutar_personal(act_r, desc_r, req_reg)
 
@@ -1145,6 +1153,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         for n in desc_r: 
             if n not in asig_hoy: asig_hoy[n] = "DESCANSO"
 
+        # 4. Asignar T1 y T2 protegiendo fatiga
         faltan_t1 = req_t1
         faltan_t2 = req_t2
         flexibles = []
@@ -1172,6 +1181,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 elif faltan_t2 > 0: asig_hoy[p] = "T2"; faltan_t2 -= 1
                 else: asig_hoy[p] = t_previo
 
+        # 5. Actualizar Memoria y Filas
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             t_final = asig_hoy.get(nombre, "DESCANSO")
@@ -1239,7 +1249,6 @@ def generar_reporte_abordaje(df_final):
         })
     return pd.DataFrame(filas)
 
-# 🟢 MODIFICADA PARA EXTRAER SUJETO Y FECHA PARA EL POPUP
 def verificar_alarmas_abordaje(df_final):
     df_plano = df_final.sort_values(by=["Nombre", "Fecha"])
     alertas = []
@@ -1255,12 +1264,10 @@ def verificar_alarmas_abordaje(df_final):
                 })
     return alertas
 
-# 🟢 MODIFICADA PARA INCLUIR CONTEXTO DE 3 DÍAS Y UI MEJORADA
 @st.dialog("🛠️ Gestor de Turno y Contexto Operativo (Abordaje)", width="large")
 def popup_forzar_ajuste_fecha_abo(fecha_solicitada, opciones_sujetos, sujeto_predef=None, df_context=pd.DataFrame()):
     st.markdown(f"### 📅 Fecha de Operación a corregir: `{fecha_solicitada}`")
 
-    # 1. TABLA DE CONTEXTO (3 DÍAS ANTES Y DESPUÉS)
     if not df_context.empty:
         st.markdown("##### 🔎 Contexto de la Operación")
         fecha_dt = pd.to_datetime(fecha_solicitada)
@@ -1276,7 +1283,6 @@ def popup_forzar_ajuste_fecha_abo(fecha_solicitada, opciones_sujetos, sujeto_pre
             st.dataframe(style_malla_abordaje(pivot_ctx), use_container_width=True)
         st.write("---")
 
-    # 2. FORMULARIO DE CORRECCIÓN
     idx_def = opciones_sujetos.index(sujeto_predef) if sujeto_predef in opciones_sujetos else 0
     
     c1, c2 = st.columns(2)
@@ -1452,12 +1458,11 @@ def pantalla_abordaje():
         st.dataframe(style_malla_abordaje(pivot_completo), use_container_width=True)
         
         st.write("---")
-        with st.expander("🔍 Forzar cambio en cualquier fecha de la Malla"):
+        with st.expander("🔍 Forzar cambio libre en cualquier fecha de la Malla"):
             c_f1, c_f2 = st.columns(2)
             fechas_unicas = sorted([d.strftime('%Y-%m-%d') for d in pd.to_datetime(df_final['Fecha'].unique())])
             f_libre_sel = c_f1.selectbox("Seleccione la Fecha:", fechas_unicas, key="f_libre_dropdown_abo")
             if c_f2.button("⚙️ Abrir Gestor de Turno", use_container_width=True):
-                # 🟢 Lanza el popup enviando el df_final como contexto
                 popup_forzar_ajuste_fecha_abo(f_libre_sel, sorted(list(df_final["Nombre"].unique())), df_context=df_final)
 
         st.write("---")
@@ -1484,7 +1489,6 @@ def pantalla_abordaje():
         with t_fatiga:
             lista_alertas = verificar_alarmas_abordaje(df_final)
             if lista_alertas:
-                # 🟢 NUEVO: Renderizado en 2 columnas con botón de corrección directa
                 for idx_al, al in enumerate(lista_alertas):
                     c_al1, c_al2 = st.columns([5, 1])
                     c_al1.warning(al["Mensaje"])
@@ -1543,7 +1547,6 @@ def pantalla_abordaje():
                 with pd.ExcelWriter(output_audit, engine='openpyxl') as writer: 
                     audit_pivot.to_excel(writer, sheet_name="Auditoria_Mensual", index=False)
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Abordaje_{date.today()}.xlsx")
-
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
 # =========================================================
