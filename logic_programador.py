@@ -887,7 +887,7 @@ def pantalla_programador():
                     else: st.warning("No hay registros.")
             except: st.info("BD vacía.")
 # =========================================================
-# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO CON REGLAS LEGALES)
+# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO CON LÍMITE DE DESCANSOS)
 # =========================================================
 
 def crear_personal_abordaje_dinamico(total_personas, num_flotantes, num_grupos):
@@ -902,7 +902,7 @@ def crear_personal_abordaje_dinamico(total_personas, num_flotantes, num_grupos):
         
     return pd.DataFrame(filas)
 
-def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, config_flotantes, req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo=False):
+def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, config_flotantes, req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo=False, max_descansos=6):
     filas = []
     turno_actual = {}
     dias_en_turno = {}
@@ -946,7 +946,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
             grupo = p["Grupo"]
             es_descanso = False
             
-            # REGLA LEGAL: Máximo 6 días continuos
+            # REGLA LEGAL: Máximo 6 días continuos trabajando
             if dias_consecutivos[nombre] >= 6:
                 es_descanso = True
                 inmunes.add(nombre)
@@ -986,33 +986,59 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, descansos_grupos, 
                 debe_compensado[drafted] = True
                 cancelados_mes[drafted] += 1
 
+        # LÍMITE ESTRICTO DE DESCANSOS DIARIOS
+        while (len(desc_f) + len(desc_r)) > max_descansos:
+            disp_f = [n for n in desc_f if n not in inmunes]
+            disp_r = [n for n in desc_r if n not in inmunes]
+            disp_total = disp_f + disp_r
+            
+            if not disp_total: break # Todos los que descansan son inmunes por ley
+            
+            # Sacamos del descanso al que tenga menos cancelados en el mes
+            disp_total.sort(key=lambda x: (cancelados_mes[x], dias_consecutivos[x]))
+            drafted = disp_total[0]
+            
+            if drafted in desc_f:
+                desc_f.remove(drafted)
+                act_f.append(drafted)
+            else:
+                desc_r.remove(drafted)
+                act_r.append(drafted)
+                
+            debe_compensado[drafted] = True
+            cancelados_mes[drafted] += 1
+
         # 2. RESCATE OPERATIVO: Flotantes
         reclutar_personal(act_f, desc_f, req_f)
             
-        while len(act_f) > req_f:
+        while len(act_f) > req_f and (len(desc_f) + len(desc_r)) < max_descansos:
             con_deuda = sorted([n for n in act_f if debe_compensado[n]], key=lambda x: dias_consecutivos[x], reverse=True)
             if not con_deuda: break
             beneficiado = con_deuda[0]
             act_f.remove(beneficiado)
+            desc_f.append(beneficiado) # Pasa a descansar (COMPENSADO)
             asig_hoy[beneficiado] = "COMPENSADO"
             debe_compensado[beneficiado] = False
 
         for n in act_f: asig_hoy[n] = "FLOTANTE"
-        for n in desc_f: asig_hoy[n] = "DESCANSO"
+        for n in desc_f: 
+            if n not in asig_hoy: asig_hoy[n] = "DESCANSO"
 
         # 3. RESCATE OPERATIVO: Regulares
         req_reg = req_t1 + req_t2
         reclutar_personal(act_r, desc_r, req_reg)
 
-        while len(act_r) > req_reg:
+        while len(act_r) > req_reg and (len(desc_f) + len(desc_r)) < max_descansos:
             con_deuda = sorted([n for n in act_r if debe_compensado[n]], key=lambda x: dias_consecutivos[x], reverse=True)
             if not con_deuda: break
             beneficiado = con_deuda[0]
             act_r.remove(beneficiado)
+            desc_r.append(beneficiado) # Pasa a descansar (COMPENSADO)
             asig_hoy[beneficiado] = "COMPENSADO"
             debe_compensado[beneficiado] = False
 
-        for n in desc_r: asig_hoy[n] = "DESCANSO"
+        for n in desc_r: 
+            if n not in asig_hoy: asig_hoy[n] = "DESCANSO"
 
         # 4. Asignar T1 y T2 protegiendo fatiga
         faltan_t1 = req_t1
@@ -1160,10 +1186,11 @@ def pantalla_abordaje():
     st.write("---")
     st.subheader("2. Parámetros de Operación y Rotación")
     
-    c_req1, c_req2, c_req3 = st.columns(3)
+    c_req1, c_req2, c_req3, c_req4 = st.columns(4)
     req_t1 = c_req1.number_input("Cobertura Requerida T1", 1, 50, 11)
     req_t2 = c_req2.number_input("Cobertura Requerida T2", 1, 50, 11)
     req_f = c_req3.number_input("Cobertura Flotantes", 0, 50, 4)
+    max_desc = c_req4.number_input("Límite Max. Descansos/Día", 1, 30, 6) # NUEVO PARÁMETRO
 
     c_i, c_f, c_v = st.columns(3)
     inicio = c_i.date_input("Inicio Planificación", date(2026, 7, 1), key="i_abo")
@@ -1208,13 +1235,13 @@ def pantalla_abordaje():
     if st.button("👁️ PREVISUALIZAR MALLA (Sin Guardar)"):
         st.session_state.m_base_abo = generar_malla_abordaje_avanzada(
             inicio, fin, df_pers_editado, desc_data, config_flotantes, 
-            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo
+            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo, max_desc
         )
         
     if 'm_base_abo' in st.session_state and not st.session_state.m_base_abo.empty:
         df_final = generar_malla_abordaje_avanzada(
             inicio, fin, df_pers_editado, desc_data, config_flotantes, 
-            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo
+            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo, max_desc
         )
         st.session_state.m_base_abo = df_final
         
@@ -1336,8 +1363,6 @@ def pantalla_abordaje():
                     st.dataframe(style_malla_abordaje(pivot_h), use_container_width=True)
             except: st.info("BD vacía.")
 
-# =========================================================
-# (AQUÍ CONTINUARÍA TU SECCIÓN 9 PARA OTROS CARGOS...)
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
 # =========================================================
