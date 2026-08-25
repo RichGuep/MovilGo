@@ -1090,6 +1090,42 @@ def generar_reporte_abordaje(df_final):
         })
     return pd.DataFrame(filas)
 
+def verificar_alarmas_abordaje(df_final):
+    df_plano = df_final.sort_values(by=["Nombre", "Fecha"])
+    alertas = []
+    for sujeto, group in df_plano.groupby("Nombre"):
+        lista_turnos = group["Turno"].tolist()
+        lista_fechas = group["Fecha"].tolist()
+        for i in range(1, len(lista_turnos)):
+            if lista_turnos[i-1] == "T2" and lista_turnos[i] == "T1":
+                alertas.append({"Mensaje": f"🚨 **Transición Crítica Ilegal (T2 -> T1)** para **{sujeto}** el día {lista_fechas[i].strftime('%Y-%m-%d')}."})
+    return alertas
+
+def generar_reporte_abordaje(df_final):
+    filas = []
+    df_final['Fecha'] = pd.to_datetime(df_final['Fecha'])
+    for _, row in df_final.iterrows():
+        fecha_dt = row['Fecha']
+        turno = row['Turno']
+        
+        # Calculamos los horarios y horas según el turno asignado
+        ini, fin, h_prog, h_extra, h_noc = calcular_metricas_abordaje(turno)
+        
+        filas.append({
+            "Fecha": fecha_dt.strftime('%Y-%m-%d'), 
+            "Nombre": row['Nombre'], 
+            "Grupo": row['Grupo'], 
+            "Turno": turno,
+            "Hora inicio": ini, 
+            "Hora fin": fin, 
+            "Horas Programadas": h_prog, 
+            "Horas Extras": h_extra,
+            "Recargos Nocturnos": h_noc, 
+            "Mes": fecha_dt.strftime('%B'), 
+            "Semana": fecha_dt.isocalendar()[1]
+        })
+    return pd.DataFrame(filas)
+
 def pantalla_abordaje():
     if "ajustes_manuales_abo" not in st.session_state: st.session_state.ajustes_manuales_abo = {}
     st.markdown("## 🚀 Panel de Programación - Abordaje Operativo")
