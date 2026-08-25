@@ -598,10 +598,10 @@ def generar_reporte_detallado(df_final, config_horas):
 
 # 🟢 MODIFICADA PARA INCLUIR CONTEXTO VISUAL
 @st.dialog("🛠️ Gestor de Turno y Contexto Operativo", width="large")
-def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_persona=False, sujeto_predef=None, df_context=pd.DataFrame()):
+def popup_forzar_ajuste_fecha(fecha_solicitada, df_context=pd.DataFrame(), sujeto_predef=None):
     st.markdown(f"### 📅 Fecha de Operación a corregir: `{fecha_solicitada}`")
 
-    # 1. TABLA DE CONTEXTO (3 DÍAS ANTES Y DESPUÉS)
+    # 1. 🟢 TABLA DE CONTEXTO (3 DÍAS ANTES Y DESPUÉS)
     if not df_context.empty:
         st.markdown("##### 🔎 Contexto de la Operación")
         fecha_dt = pd.to_datetime(fecha_solicitada)
@@ -617,11 +617,31 @@ def popup_forzar_ajuste_fecha(fecha_solicitada, opciones_sujetos, es_modo_person
             st.dataframe(style_malla_tecnicos(pivot_ctx), use_container_width=True)
         st.write("---")
 
-    # 2. FORMULARIO DE CORRECCIÓN
-    idx_def = opciones_sujetos.index(sujeto_predef) if sujeto_predef in opciones_sujetos else 0
+    # 2. 🟢 SELECTOR MACRO/MICRO INTEGRADO
+    tipo_ajuste = st.radio("🎯 Nivel de Ajuste:", ["Ajustar Empleado (Micro)", "Ajustar Grupo Completo (Macro)"], horizontal=True)
     
+    if tipo_ajuste == "Ajustar Empleado (Micro)":
+        opciones_sujetos = sorted(list(df_context["Nombre"].unique())) if not df_context.empty else []
+        es_modo_persona = True
+    else:
+        opciones_sujetos = GRUPOS_TEC
+        es_modo_persona = False
+        
+    # Lógica para pre-seleccionar inteligentemente
+    idx_def = 0
+    if sujeto_predef in opciones_sujetos:
+        idx_def = opciones_sujetos.index(sujeto_predef)
+    elif sujeto_predef and not es_modo_persona and not df_context.empty:
+        # Si venimos de una alarma (sujeto_predef = Persona) pero cambiamos a Macro, deduce el Grupo
+        try:
+            grupo_deducido = df_context[df_context["Nombre"] == sujeto_predef]["Grupo"].iloc[0]
+            if grupo_deducido in opciones_sujetos:
+                idx_def = opciones_sujetos.index(grupo_deducido)
+        except: pass
+
+    # 3. 🟢 FORMULARIO DE CORRECCIÓN
     c1, c2 = st.columns(2)
-    sujeto_sel = c1.selectbox("🎯 Empleado / Grupo a Modificar:", opciones_sujetos, index=idx_def)
+    sujeto_sel = c1.selectbox("Elemento a Modificar:", opciones_sujetos, index=idx_def)
     opciones_turnos = ["T1", "T2", "T3", "T4", "DESCANSO", "COMPENSADO", "DISPONIBLE"]
     nuevo_turno = c2.selectbox("🆕 Turno Destino Asignado:", opciones_turnos, index=0)
     
