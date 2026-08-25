@@ -1086,7 +1086,7 @@ def pantalla_programador():
                     st.dataframe(style_malla_tecnicos(pivot_h), use_container_width=True)
             except: st.info("BD vacía.")
 # =========================================================
-# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO CON FILTRO MENSUAL)
+# 8. MOTOR Y PANEL DE ABORDAJE (ROTACIÓN EN DÍAS PERMITIDOS)
 # =========================================================
 
 def crear_personal_abordaje_dinamico(total_personas, num_flotantes, dias_permitidos):
@@ -1104,7 +1104,7 @@ def crear_personal_abordaje_dinamico(total_personas, num_flotantes, dias_permiti
         
     return pd.DataFrame(filas)
 
-def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo=False, max_descansos=6):
+def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo=False, max_descansos=6, dias_permitidos=None):
     filas = []
     turno_actual = {}
     dias_en_turno = {}
@@ -1114,6 +1114,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
     dias_consecutivos = {} 
     cancelados_mes = {}    
     
+    if not dias_permitidos: dias_permitidos = DIAS_ES
     current_month = inicio.month
     
     for idx, row in df_personal.iterrows():
@@ -1143,7 +1144,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         inmunes = set() 
         descanso_real_del_mes = {} 
         
-        # 1. Definir quién descansa hoy
+        # 1. Definir quién descansa hoy (Lógica de rotación en bucle cerrado)
         for _, p in df_personal.iterrows():
             nombre = p["Nombre"]
             descanso_base = p["Descanso_Base"]
@@ -1156,21 +1157,34 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
             
             if p["Rol"] == "Flotante":
                 dia_descanso_f = config_flotantes["dia_base"]
-                idx_f = DIAS_ES.index(dia_descanso_f)
                 if config_flotantes["rotacion"] != "Fijo":
-                    dia_descanso_f = DIAS_ES[(idx_f + desp_desc) % 7]
+                    if dia_descanso_f in dias_permitidos:
+                        idx_f = dias_permitidos.index(dia_descanso_f)
+                        dia_descanso_f = dias_permitidos[(idx_f + desp_desc) % len(dias_permitidos)]
+                    else:
+                        idx_f = DIAS_ES.index(dia_descanso_f)
+                        dia_descanso_f = DIAS_ES[(idx_f + desp_desc) % 7]
                     
                 dia_asignado_actual = dia_descanso_f
-                es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_f) % 5 == 0
+                idx_ref = dias_permitidos.index(dia_descanso_f) if dia_descanso_f in dias_permitidos else 0
+                es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_ref) % 5 == 0
+                
                 if dia_descanso_f == dia_n or es_finde_largo: es_descanso = True
             else:
-                if descanso_base in DIAS_ES:
+                if descanso_base in dias_permitidos:
+                    idx_desc = dias_permitidos.index(descanso_base)
+                    # 🟢 AQUÍ ESTÁ LA MAGIA: El módulo matemático ahora se limita al tamaño de los días permitidos
+                    dia_calculado = dias_permitidos[(idx_desc + desp_desc) % len(dias_permitidos)]
+                elif descanso_base in DIAS_ES: # Fallback por si lo editaron manual a un día no permitido
                     idx_desc = DIAS_ES.index(descanso_base)
                     dia_calculado = DIAS_ES[(idx_desc + desp_desc) % 7]
+                else:
+                    idx_desc = 0
+                    dia_calculado = "Domingo"
                     
-                    dia_asignado_actual = dia_calculado
-                    es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_desc) % 5 == 0
-                    if dia_calculado == dia_n or es_finde_largo: es_descanso = True
+                dia_asignado_actual = dia_calculado
+                es_finde_largo = activar_finde_largo and dia_n in ["Sábado", "Domingo"] and (week + idx_desc) % 5 == 0
+                if dia_calculado == dia_n or es_finde_largo: es_descanso = True
                     
             descanso_real_del_mes[nombre] = dia_asignado_actual
             
@@ -1430,13 +1444,13 @@ def pantalla_abordaje():
     if st.button("👁️ PREVISUALIZAR MALLA (Sin Guardar)"):
         st.session_state.m_base_abo = generar_malla_abordaje_avanzada(
             inicio, fin, df_pers_editado, config_flotantes, 
-            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo, max_desc
+            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo, max_desc, dias_permitidos
         )
         
     if 'm_base_abo' in st.session_state and not st.session_state.m_base_abo.empty:
         df_final = generar_malla_abordaje_avanzada(
             inicio, fin, df_pers_editado, config_flotantes, 
-            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo, max_desc
+            req_t1, req_t2, req_f, rotacion_descanso, rotacion_turnos, activar_finde_largo, max_desc, dias_permitidos
         )
         st.session_state.m_base_abo = df_final
         
@@ -1468,9 +1482,8 @@ def pantalla_abordaje():
         # 4. UI: PIVOT, FORZADO DE TURNOS Y DASHBOARD
         # =========================================================
         st.write("---")
-        st.subheader("👤 Malla de Turnos Detallada por Persona")
+        st.subheader("👤 Malla de Turnos Detallada por Mes y Persona")
         
-        # 🟢 NUEVO FILTRO INTELIGENTE DE MESES
         meses_disponibles = sorted(df_final['Mes'].unique())
         opciones_mes = ["Todos los meses"] + meses_disponibles
         mes_seleccionado = st.selectbox("📅 Filtrar Malla por Mes:", opciones_mes)
@@ -1510,7 +1523,6 @@ def pantalla_abordaje():
         
         pivot_completo = pd.concat([pivot_persona, df_sem_row, df_desc_row])
         
-        # 🟢 FORMATEO DE COLUMNAS CON DÍAS E ÍCONOS
         DIAS_CORTOS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
         nuevas_cols = []
         for col in pivot_completo.columns:
@@ -1612,6 +1624,8 @@ def pantalla_abordaje():
                     audit_pivot.to_excel(writer, sheet_name="Auditoria_Mensual", index=False)
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Abordaje_{date.today()}.xlsx")
 
+# =========================================================
+# (AQUÍ CONTINUARÍA TU SECCIÓN 9 PARA OTROS CARGOS...)
 
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
