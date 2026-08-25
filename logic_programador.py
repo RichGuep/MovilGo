@@ -887,7 +887,7 @@ def pantalla_programador():
                     else: st.warning("No hay registros.")
             except: st.info("BD vacía.")
 # =========================================================
-# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO CON MESES Y FESTIVOS)
+# 8. MOTOR Y PANEL DE ABORDAJE (COMPLETO CON FILTRO MENSUAL)
 # =========================================================
 
 def crear_personal_abordaje_dinamico(total_personas, num_flotantes, dias_permitidos):
@@ -933,7 +933,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
 
         dia_n = DIAS_ES[fecha.weekday()]
         fecha_str = fecha.strftime('%Y-%m-%d')
-        mes_str = fecha.strftime('%Y-%m') # 🧠 NUEVO: Para agrupar la tabla por mes
+        mes_str = fecha.strftime('%Y-%m') 
         week = fecha.isocalendar()[1] 
         delta_meses = (fecha.year - inicio.year) * 12 + (fecha.month - inicio.month)
         desp_desc = delta_meses if rotacion_descanso == "Mensual" else (delta_meses // 3 if rotacion_descanso == "Trimestral" else 0)
@@ -942,7 +942,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
         descansos_teoricos = []
         activos_teoricos = []
         inmunes = set() 
-        descanso_real_del_mes = {} # 🧠 NUEVO: Guardará qué día le tocó descansar en este mes específico
+        descanso_real_del_mes = {} 
         
         # 1. Definir quién descansa hoy
         for _, p in df_personal.iterrows():
@@ -1096,8 +1096,7 @@ def generar_malla_abordaje_avanzada(inicio, fin, df_personal, config_flotantes, 
                 turno_actual[nombre] = t_final
                 ayer_fue_descanso[nombre] = False
 
-            # Inyectamos el Mes y el Descanso Actualizado
-            filas.append({"Fecha": fecha, "Mes": mes_str, "Descanso_Actual": descanso_real_del_mes[nombre], "Nombre": nombre, "Turno": t_final})
+            filas.append({"Fecha": fecha, "Mes": mes_str, "Descanso_Base": p["Descanso_Base"], "Descanso_Actual": descanso_real_del_mes[nombre], "Nombre": nombre, "Turno": t_final})
             
     return pd.DataFrame(filas)
 
@@ -1105,14 +1104,13 @@ def style_malla_abordaje(df_pivot):
     styles = pd.DataFrame('', index=df_pivot.index, columns=df_pivot.columns)
     color_map = {"T1": "#D6EAF8", "T2": "#D5F5E3", "FLOTANTE": "#E8DAEF", "DESCANSO": "#1B2631", "COMPENSADO": "#2E4053"}
     for col in df_pivot.columns:
-        # Detectar el formato visual de la columna
         es_fin_semana = "🏖️" in str(col)
         es_festivo = "🇨🇴" in str(col)
         
         for idx in df_pivot.index:
             val = str(df_pivot.at[idx, col]).strip()
             
-            if val == "": # Celdas vacías por el salto de mes
+            if val == "": 
                 bg = "#FFFFFF"; txt = "#FFFFFF"; border = "none"
             else:
                 bg = color_map.get(val, "#1B2631") if val in color_map else "#FFFFFF"
@@ -1122,7 +1120,7 @@ def style_malla_abordaje(df_pivot):
                 else: txt = "white" if val in ["DESCANSO", "COMPENSADO"] else "#17202A"
                 
                 border = "1.5px solid #7F8C8D" if es_fin_semana else "0.5px solid #D5DBDB"
-                if es_festivo: border = "2px solid #E67E22" # Borde naranja fuerte para festivos
+                if es_festivo: border = "2px solid #E67E22" 
 
             styles.at[idx, col] = f'background-color: {bg}; color: {txt}; font-weight: 700; border: {border};'
     return df_pivot.style.apply(lambda _: styles, axis=None)
@@ -1271,12 +1269,23 @@ def pantalla_abordaje():
         # 4. UI: PIVOT, FORZADO DE TURNOS Y DASHBOARD
         # =========================================================
         st.write("---")
-        st.subheader("👤 Malla de Turnos Detallada por Mes y Persona")
+        st.subheader("👤 Malla de Turnos Detallada por Persona")
         
-        # Generar Pivot Agrupando por MES y DESCANSO ACTUAL
-        pivot_persona = df_final.pivot(index=["Mes", "Descanso_Actual", "Nombre"], columns="Fecha", values="Turno").fillna("")
+        # 🟢 NUEVO FILTRO INTELIGENTE DE MESES
+        meses_disponibles = sorted(df_final['Mes'].unique())
+        opciones_mes = ["Todos los meses"] + meses_disponibles
+        mes_seleccionado = st.selectbox("📅 Filtrar Malla por Mes:", opciones_mes)
+
+        if mes_seleccionado != "Todos los meses":
+            df_mostrar = df_final[df_final['Mes'] == mes_seleccionado].copy()
+            indice_pivot = ["Descanso_Actual", "Nombre"]
+        else:
+            df_mostrar = df_final.copy()
+            indice_pivot = ["Descanso_Base", "Nombre"]
+
+        pivot_persona = df_mostrar.pivot(index=indice_pivot, columns="Fecha", values="Turno").fillna("")
         
-        cob = df_final.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
+        cob = df_mostrar.groupby(["Fecha", "Turno"]).size().unstack(fill_value=0)
         for c in ["T1", "T2", "FLOTANTE", "DESCANSO", "COMPENSADO"]:
             if c not in cob.columns: cob[c] = 0
             
@@ -1297,12 +1306,12 @@ def pantalla_abordaje():
                 fila_semaforo[col_fecha] = "❌ FALTA TURNO"
                 fila_descansos[col_fecha] = "🛌 0 Descansos"
 
-        df_sem_row = pd.DataFrame([fila_semaforo], index=[("🔍 AUDITORÍA", "-", "COBERTURA 24/7")])
-        df_desc_row = pd.DataFrame([fila_descansos], index=[("🔍 AUDITORÍA", "-", "TOTAL DESCANSOS")])
+        df_sem_row = pd.DataFrame([fila_semaforo], index=[("🔍 AUDITORÍA", "COBERTURA 24/7")])
+        df_desc_row = pd.DataFrame([fila_descansos], index=[("🔍 AUDITORÍA", "TOTAL DESCANSOS")])
         
         pivot_completo = pd.concat([pivot_persona, df_sem_row, df_desc_row])
         
-        # FORMATEO DE COLUMNAS CON DÍAS E ÍCONOS
+        # 🟢 FORMATEO DE COLUMNAS CON DÍAS E ÍCONOS
         DIAS_CORTOS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
         nuevas_cols = []
         for col in pivot_completo.columns:
@@ -1319,7 +1328,7 @@ def pantalla_abordaje():
         
         pivot_completo.columns = nuevas_cols
         
-        st.markdown(generar_html_imprimible(pivot_persona, f"Malla Abordaje - {inicio.strftime('%b %Y')}"), unsafe_allow_html=True)
+        st.markdown(generar_html_imprimible(pivot_persona, f"Malla Abordaje - {mes_seleccionado}"), unsafe_allow_html=True)
         st.dataframe(style_malla_abordaje(pivot_completo), use_container_width=True)
         
         st.write("---")
@@ -1404,8 +1413,6 @@ def pantalla_abordaje():
                     audit_pivot.to_excel(writer, sheet_name="Auditoria_Mensual", index=False)
                 st.download_button("📥 Descargar Auditoría", output_audit.getvalue(), f"Auditoria_Mensual_Abordaje_{date.today()}.xlsx")
 
-# =========================================================
-# (AQUÍ CONTINUARÍA TU SECCIÓN 9 PARA OTROS CARGOS...)
 
 # =========================================================
 # 9. MOTOR Y PANEL PARA OTROS CARGOS (ULTIMATE EDITION)
